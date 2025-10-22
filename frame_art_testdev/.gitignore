@@ -1,0 +1,8 @@
+# Ignore test images
+*.jpg
+*.jpeg
+*.png
+
+# Keep the scripts
+!*.py
+!*.md
