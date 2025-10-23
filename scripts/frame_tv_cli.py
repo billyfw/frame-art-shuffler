@@ -38,12 +38,16 @@ def _parse_args() -> argparse.Namespace:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    upload = subparsers.add_parser("upload", help="Upload artwork and optionally delete others")
+    upload = subparsers.add_parser(
+        "upload", 
+        help="Upload artwork and optionally delete others",
+        description="Upload artwork to Frame TV. Example: %(prog)s upload /path/to/art.jpg --delete-others --brightness 5"
+    )
     upload.add_argument("artpath", help="Path to the artwork file (.jpg/.png)")
-    upload.add_argument("--delete-others", action="store_true", help="Delete other artworks after upload")
-    upload.add_argument("--matte", help="Optional matte identifier")
+    upload.add_argument("--delete-others", action="store_true", help="Delete other artworks after upload (default: keep existing)")
+    upload.add_argument("--matte", help="Optional matte identifier (e.g., 'shadowbox_black')")
     upload.add_argument("--skip-ensure-art", action="store_true", help="Skip enabling art mode before upload")
-    upload.add_argument("--brightness", type=int, help="Set brightness after upload (1-10 or 50)")
+    upload.add_argument("--brightness", type=int, help="Set brightness after upload (1-10 for standard, 50 for max)")
     upload.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
 
     subparsers.add_parser("on", help="Turn screen on (stays in art mode)")
