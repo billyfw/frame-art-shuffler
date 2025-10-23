@@ -100,10 +100,12 @@ def set_art_on_tv_deleteothers(
     _log_file_details(file_path, payload)
 
     file_type = _detect_file_type(file_path)
+    file_size = len(payload)
 
     # Upload with retries - recreate session on each attempt since connection may be broken
     response = None
     last_error: Optional[Exception] = None
+    content_id: Optional[str] = None
     
     for attempt in range(_UPLOAD_RETRIES):
         if attempt:
@@ -120,40 +122,138 @@ def set_art_on_tv_deleteothers(
                 if brightness is not None and attempt == 0:  # Only set on first attempt
                     _set_brightness(art, brightness, debug=debug)
 
+                # Get current image count before upload
+                images_before = None
+                try:
+                    images_before = art.available()
+                    if debug:
+                        _LOGGER.debug("Images on TV before upload: %s", len(images_before) if images_before else 0)
+                except Exception as err:  # pylint: disable=broad-except
+                    if debug:
+                        _LOGGER.debug("Could not get image count before upload: %s", err)
+
                 # Upload with this fresh connection
                 kwargs = {"file_type": file_type}
                 if matte:
                     kwargs.update({"matte": matte, "portrait_matte": matte})
-                response = art.upload(payload, **kwargs)
                 
-                # If we got here, upload succeeded - extract content_id and continue
-                content_id = _extract_content_id(response)
-                if debug:
-                    _LOGGER.debug("Upload returned content_id=%s", content_id)
-
-                time.sleep(wait_after_upload)
-
-                displayed = _display_uploaded_art(
-                    art,
-                    content_id,
-                    wait_after_upload=wait_after_upload,
-                    debug=debug,
-                )
-
-                if not displayed:
-                    _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
-
-                if delete_others:
-                    _delete_other_images(art, content_id, debug=debug)
-
-                return content_id
-                
+                try:
+                    response = art.upload(payload, **kwargs)
+                    
+                    # If we got here, upload succeeded - extract content_id and continue
+                    content_id = _extract_content_id(response)
+                    if debug:
+                        _LOGGER.debug("Upload returned content_id=%s", content_id)
+                    
+                    break  # Success, exit retry loop
+                    
+                except Exception as upload_err:  # pylint: disable=broad-except
+                    error_msg = str(upload_err)
+                    
+                    # Check if this is a timeout
+                    is_timeout = "timeout" in error_msg.lower() or "timed out" in error_msg.lower()
+                    
+                    if is_timeout:
+                        _LOGGER.info("Upload attempt %s timed out - checking if image appeared on TV...", attempt + 1)
+                        
+                        # Try to check if the upload actually succeeded despite timeout
+                        timeout_recovered = False
+                        try:
+                            time.sleep(6)  # Give TV more time to finish processing
+                            images_after = art.available()
+                            
+                            if images_after and images_before is not None:
+                                # Check if a new image appeared by comparing counts
+                                count_before = len(images_before)
+                                count_after = len(images_after)
+                                
+                                if count_after > count_before:
+                                    # New image(s) appeared! Find the new one by comparing lists
+                                    before_ids = {img.get('content_id') for img in images_before}
+                                    new_images = [img for img in images_after if img.get('content_id') not in before_ids]
+                                    
+                                    if new_images:
+                                        # Found new image(s), take the first one
+                                        content_id = new_images[0].get('content_id')
+                                        _LOGGER.info("Upload timed out but new image appeared on TV (content_id=%s)", content_id)
+                                        timeout_recovered = True
+                                        break  # Success, exit retry loop
+                                    
+                                    # Fallback: if count increased but can't identify which, use newest
+                                    _LOGGER.warning("Count increased but couldn't identify new image, using newest")
+                                    content_id = images_after[-1].get('content_id')
+                                    if content_id:
+                                        timeout_recovered = True
+                                        break
+                                else:
+                                    _LOGGER.warning("Upload timed out and no new image appeared - upload actually failed")
+                            
+                            # If we don't have before count, try to find by comparing with after
+                            elif images_after:
+                                _LOGGER.info("Upload timed out, no before count available, using newest image...")
+                                content_id = images_after[-1].get('content_id')
+                                _LOGGER.warning("Upload timed out, using newest image as best guess (content_id=%s)", content_id)
+                                if content_id:
+                                    timeout_recovered = True
+                                    break
+                            else:
+                                _LOGGER.warning("Upload timed out and TV has no images")
+                            
+                        except Exception as check_err:  # pylint: disable=broad-except
+                            _LOGGER.warning("Could not check TV gallery after timeout: %s", check_err)
+                        
+                        # If timeout recovery failed, this was a real failure - will retry
+                        if not timeout_recovered:
+                            last_error = upload_err
+                            if attempt < _UPLOAD_RETRIES - 1:
+                                _LOGGER.info("Upload actually failed (not just timeout), will retry...")
+                            else:
+                                _LOGGER.error("Upload failed after %s attempts", _UPLOAD_RETRIES)
+                                raise
+                    else:
+                        # Not a timeout - some other error, will retry
+                        last_error = upload_err
+                        if attempt < _UPLOAD_RETRIES - 1:
+                            _LOGGER.warning("Upload attempt %s failed: %s", attempt + 1, upload_err)
+                        else:
+                            # Last attempt, will raise below
+                            raise
+                        
         except Exception as err:  # pylint: disable=broad-except
             last_error = err
-            _LOGGER.warning("Upload attempt %s failed: %s", attempt + 1, err)
+            if attempt == _UPLOAD_RETRIES - 1:
+                # Last attempt failed
+                break
     
-    # All retries exhausted
-    raise FrameArtUploadError(f"Upload failed after {_UPLOAD_RETRIES} attempts: {last_error}")
+    # Check if we got a content_id (either from successful upload or timeout recovery)
+    if not content_id:
+        raise FrameArtUploadError(f"Upload failed after {_UPLOAD_RETRIES} attempts: {last_error}")
+    
+    # We have a content_id, continue with display
+    try:
+        with _FrameTVSession(ip) as session:
+            art = session.art
+            
+            time.sleep(wait_after_upload)
+
+            displayed = _display_uploaded_art(
+                art,
+                content_id,
+                wait_after_upload=wait_after_upload,
+                debug=debug,
+            )
+
+            if not displayed:
+                _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
+
+            if delete_others:
+                _delete_other_images(art, content_id, debug=debug)
+
+            return content_id
+    except Exception as err:  # pylint: disable=broad-except
+        # Upload worked but post-processing failed
+        _LOGGER.error("Upload succeeded (content_id=%s) but post-processing failed: %s", content_id, err)
+        raise FrameArtUploadError(f"Upload succeeded but failed to display/cleanup: {err}") from err
 
 
 def set_tv_brightness(ip: str, brightness: int) -> None:
