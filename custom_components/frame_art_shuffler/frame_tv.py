@@ -83,7 +83,7 @@ def set_art_on_tv_deleteothers(
     ip: str,
     artpath: str,
     *,
-    delete_others: bool = True,
+    delete_others: bool = False,
     ensure_art_mode: bool = True,
     matte: Optional[str] = None,
     wait_after_upload: float = _INITIAL_UPLOAD_SETTLE,
