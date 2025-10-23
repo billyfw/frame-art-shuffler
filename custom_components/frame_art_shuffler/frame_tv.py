@@ -3,7 +3,8 @@
 This module provides art-focused functions for Frame TV control:
 - set_art_on_tv_deleteothers: Upload and display artwork, manage gallery
 - set_tv_brightness: Adjust art mode brightness (1-10, or 50 for max)
-- is_tv_on: Check if TV is in art mode
+- is_art_mode_enabled: Check if TV is in art mode (screen may be on/off)
+- is_screen_on: Check if screen is actually displaying content
 - tv_on/tv_off: Screen power control (stays in art mode)
 - set_art_mode: Switch TV to art mode (from TV mode or other state)
 
@@ -35,6 +36,8 @@ _BRIGHTNESS_VERIFY_DELAY = 1
 _VALID_BRIGHTNESS = set(range(1, 11)) | {50}
 _WARN_FILE_MB = 5
 _LARGE_FILE_MB = 10
+_POWER_COMMAND_RETRIES = 2
+_POWER_RETRY_DELAY = 1
 
 
 class FrameArtError(Exception):
@@ -182,8 +185,8 @@ def set_tv_brightness(ip: str, brightness: int) -> None:
             _LOGGER.info("Brightness command sent to %s (verification timed out)", ip)
 
 
-def is_tv_on(ip: str) -> bool:
-    """Return True when the TV reports art mode is active."""
+def is_art_mode_enabled(ip: str) -> bool:
+    """Return True when the TV reports art mode is active (screen may be on or off)."""
 
     with _FrameTVSession(ip) as session:
         try:
@@ -195,32 +198,85 @@ def is_tv_on(ip: str) -> bool:
             return False
 
 
+def is_screen_on(ip: str) -> bool:
+    """Return True when the TV screen is actually on and displaying content.
+    
+    This checks the TV's power state, not just art mode status.
+    Note: This requires the REST API to be responsive, which may fail if the TV
+    is in a low-power state or the screen is off.
+    """
+    
+    token_path = _token_path(ip)
+    try:
+        remote = _build_client(ip, token_path)
+        remote.open()
+        
+        # Try to get power status from the REST API
+        # If we can connect and the TV responds, screen is likely on
+        try:
+            rest_api = remote._get_rest_api()  # type: ignore[attr-defined]
+            device_info = rest_api.rest_device_info()
+            
+            # If we got device info, TV is responsive (screen likely on)
+            remote.close()
+            return device_info is not None
+        except Exception:  # pylint: disable=broad-except
+            # REST API not responsive - screen is likely off
+            remote.close()
+            return False
+            
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.debug("Screen status check failed for %s: %s", ip, err)
+        return False
+
+
+# Backwards compatibility alias
+def is_tv_on(ip: str) -> bool:
+    """Deprecated: Use is_art_mode_enabled() instead.
+    
+    This function checks if art mode is enabled, not if the screen is on.
+    For screen state, use is_screen_on().
+    """
+    return is_art_mode_enabled(ip)
+
+
 def tv_on(ip: str) -> None:
     """Turn Frame TV screen back on (wake from screen-off state)."""
 
     token_path = _token_path(ip)
-    remote = _build_client(ip, token_path)
-    try:
-        remote.open()
-        # A short hold of KEY_POWER turns the screen back on
-        # (shorter than the 3-second hold used to turn off)
-        remote.send_key("KEY_POWER")
-    except Exception as err:  # pylint: disable=broad-except
-        raise FrameArtConnectionError(f"Failed to turn on TV screen {ip}: {err}") from err
-    finally:
+    last_error: Optional[Exception] = None
+    
+    for attempt in range(_POWER_COMMAND_RETRIES):
+        if attempt > 0:
+            _LOGGER.debug("Retrying tv_on attempt %s/%s", attempt + 1, _POWER_COMMAND_RETRIES)
+            time.sleep(_POWER_RETRY_DELAY)
+        
         try:
+            remote = _build_client(ip, token_path)
+            remote.open()
+            remote.send_key("KEY_POWER")
             remote.close()
-        except Exception:  # pragma: no cover
-            pass
+            return  # Success
+        except Exception as err:  # pylint: disable=broad-except
+            last_error = err
+            _LOGGER.debug("tv_on attempt %s failed: %s", attempt + 1, err)
+    
+    # All retries exhausted
+    raise FrameArtConnectionError(f"Failed to turn on TV screen {ip} after {_POWER_COMMAND_RETRIES} attempts: {last_error}") from last_error
 
 
 def set_art_mode(ip: str) -> None:
-    """Switch TV to art mode (if currently in TV mode or other state).
+    """Switch TV to art mode by sending KEY_POWER.
     
-    This enables art mode on a TV that is already powered on but not displaying artwork.
+    When the TV is powered on and showing content (TV channels, apps, etc.), sending
+    KEY_POWER will switch it to art mode. This is the reliable programmatic method
+    discovered from the Nick Waterton examples.
+    
     If the TV is already in art mode, this is a no-op.
+    If the TV is off, this will turn it on (behavior depends on TV settings).
     """
     
+    # First check if already in art mode
     with _FrameTVSession(ip) as session:
         try:
             status = session.art.get_artmode()
@@ -229,41 +285,59 @@ def set_art_mode(ip: str) -> None:
             if status == _ART_MODE_ON:
                 _LOGGER.info("TV %s already in art mode", ip)
                 return
-            
-            # Enable art mode
-            session.art.set_artmode(True)
-            time.sleep(2)  # Give TV time to switch modes
-            
-            # Verify it worked
-            new_status = session.art.get_artmode()
-            if new_status != _ART_MODE_ON:
-                raise FrameArtUploadError(
-                    f"Failed to enable art mode on {ip}: status is {new_status}"
-                )
-            
-            _LOGGER.info("TV %s switched to art mode", ip)
-            
         except Exception as err:  # pylint: disable=broad-except
-            raise FrameArtUploadError(f"Unable to set art mode on {ip}: {err}") from err
+            _LOGGER.debug("Could not check art mode status: %s", err)
+            # Continue anyway and try to switch
+    
+    # Send KEY_POWER to switch to art mode
+    token_path = _token_path(ip)
+    try:
+        remote = _build_client(ip, token_path)
+        remote.open()
+        remote.send_key("KEY_POWER")
+        remote.close()
+        _LOGGER.info("Sent KEY_POWER to switch %s to art mode", ip)
+        
+        # Give TV time to switch
+        time.sleep(3)
+        
+        # Verify it worked
+        with _FrameTVSession(ip) as session:
+            new_status = session.art.get_artmode()
+            if new_status == _ART_MODE_ON:
+                _LOGGER.info("TV %s successfully switched to art mode", ip)
+            else:
+                _LOGGER.warning("TV %s may not have switched to art mode (status: %s)", ip, new_status)
+                
+    except Exception as err:  # pylint: disable=broad-except
+        raise FrameArtUploadError(f"Failed to switch {ip} to art mode: {err}") from err
 
 
 def tv_off(ip: str) -> None:
     """Power off Frame TV screen while staying in art mode (hold KEY_POWER for 3 seconds)."""
 
     token_path = _token_path(ip)
-    remote = _build_client(ip, token_path)
-    try:
-        remote.open()
-        # For Frame TVs, hold KEY_POWER for 3 seconds to turn screen off while staying in art mode
-        # This mimics the Samsung Smart TV integration's Frame-specific behavior
-        remote.hold_key("KEY_POWER", 3)
-    except Exception as err:  # pylint: disable=broad-except
-        raise FrameArtConnectionError(f"Failed to turn off TV screen {ip}: {err}") from err
-    finally:
+    last_error: Optional[Exception] = None
+    
+    for attempt in range(_POWER_COMMAND_RETRIES):
+        if attempt > 0:
+            _LOGGER.debug("Retrying tv_off attempt %s/%s", attempt + 1, _POWER_COMMAND_RETRIES)
+            time.sleep(_POWER_RETRY_DELAY)
+        
         try:
+            remote = _build_client(ip, token_path)
+            remote.open()
+            # For Frame TVs, hold KEY_POWER for 3 seconds to turn screen off while staying in art mode
+            # This mimics the Samsung Smart TV integration's Frame-specific behavior
+            remote.hold_key("KEY_POWER", 3)
             remote.close()
-        except Exception:  # pragma: no cover
-            pass
+            return  # Success
+        except Exception as err:  # pylint: disable=broad-except
+            last_error = err
+            _LOGGER.debug("tv_off attempt %s failed: %s", attempt + 1, err)
+    
+    # All retries exhausted
+    raise FrameArtConnectionError(f"Failed to turn off TV screen {ip} after {_POWER_COMMAND_RETRIES} attempts: {last_error}") from last_error
 
 
 def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, debug: bool) -> bool:

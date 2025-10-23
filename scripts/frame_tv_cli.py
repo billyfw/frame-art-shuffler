@@ -19,7 +19,9 @@ from custom_components.frame_art_shuffler.frame_tv import (  # noqa: E402
     FrameArtError,
     set_art_on_tv_deleteothers,
     set_tv_brightness,
-    is_tv_on,
+    is_art_mode_enabled,
+    is_screen_on,
+    is_tv_on,  # Keep for backwards compatibility
     tv_on,
     tv_off,
     set_art_mode,
@@ -47,7 +49,8 @@ def _parse_args() -> argparse.Namespace:
     subparsers.add_parser("on", help="Turn screen on (stays in art mode)")
     subparsers.add_parser("off", help="Turn screen off (stays in art mode - holds KEY_POWER for 3s)")
     subparsers.add_parser("art-mode", help="Switch TV to art mode (if currently in TV mode)")
-    subparsers.add_parser("status", help="Check if the TV is ready for art mode")
+    subparsers.add_parser("status", help="Check if art mode is enabled")
+    subparsers.add_parser("screen-status", help="Check if screen is on (displaying content)")
 
     brightness = subparsers.add_parser("brightness", help="Set art-mode brightness (1-10 or 50)")
     brightness.add_argument("value", type=int, help="Brightness level")
@@ -93,10 +96,17 @@ def main() -> int:
             return 0
 
         if args.command == "status":
-            if is_tv_on(ip):
-                print("TV is in art mode")
+            if is_art_mode_enabled(ip):
+                print("Art mode is enabled")
                 return 0
-            print("TV is not in art mode")
+            print("Art mode is not enabled")
+            return 1
+
+        if args.command == "screen-status":
+            if is_screen_on(ip):
+                print("Screen is on (displaying content)")
+                return 0
+            print("Screen is off (standby/power saving)")
             return 1
 
         if args.command == "brightness":
