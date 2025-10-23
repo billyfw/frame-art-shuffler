@@ -40,7 +40,7 @@ def _parse_args() -> argparse.Namespace:
 
     upload = subparsers.add_parser("upload", help="Upload artwork and optionally delete others")
     upload.add_argument("artpath", help="Path to the artwork file (.jpg/.png)")
-    upload.add_argument("--keep-others", action="store_true", help="Do not delete other artworks after upload")
+    upload.add_argument("--delete-others", action="store_true", help="Delete other artworks after upload")
     upload.add_argument("--matte", help="Optional matte identifier")
     upload.add_argument("--skip-ensure-art", action="store_true", help="Skip enabling art mode before upload")
     upload.add_argument("--brightness", type=int, help="Set brightness after upload (1-10 or 50)")
@@ -71,7 +71,7 @@ def main() -> int:
             content_id = set_art_on_tv_deleteothers(
                 ip,
                 args.artpath,
-                delete_others=not args.keep_others,
+                delete_others=args.delete_others,
                 ensure_art_mode=not args.skip_ensure_art,
                 matte=args.matte,
                 brightness=args.brightness,
