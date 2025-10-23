@@ -73,7 +73,7 @@ def main() -> int:
     try:
         if args.command == "upload":
             content_id = set_art_on_tv_deleteothers(
-                ip,
+                ip,i still 
                 args.artpath,
                 delete_others=args.delete_others,
                 ensure_art_mode=not args.skip_ensure_art,
