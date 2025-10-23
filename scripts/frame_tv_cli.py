@@ -82,12 +82,12 @@ def main() -> int:
 
         if args.command == "on":
             tv_on(ip)
-            print("Power on command sent")
+            print("Screen on (command sent if screen was off)")
             return 0
 
         if args.command == "off":
             tv_off(ip)
-            print("Power off command sent")
+            print("Screen off (KEY_POWER hold sent)")
             return 0
 
         if args.command == "art-mode":
