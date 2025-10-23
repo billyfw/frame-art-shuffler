@@ -16,6 +16,7 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+.tmp/
 
 # Samsung Frame TV tokens (device-specific authentication)
 # Each machine should pair independently with the TV
