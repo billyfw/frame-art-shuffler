@@ -14,7 +14,7 @@ remote.hold_key("KEY_POWER", 3)
 
 - **Holds** the `KEY_POWER` button for **3 seconds**
 - This is Frame TV-specific behavior (discovered from HA core `samsungtv` integration)
-- **Result**: Screen turns off, TV stays in art mode
+- **Result**: Screen turns off while TV stays in art mode
 - **Same as**: Samsung Smart TV integration's `media_player.turn_off` for Frame TVs
 
 ### Power On (`tv_on`)
@@ -24,17 +24,30 @@ remote.send_key("KEY_POWER")
 ```
 
 - Sends a single `KEY_POWER` press
-- **Result**: Screen turns back on from screen-off state
-- TV remains in art mode
+- **Result**: When screen is off → turns screen back on
+- **Result**: When showing TV content → **switches to art mode**
+- TV behavior depends on current state
+
+### Switch to Art Mode (`set_art_mode`)
+
+```python
+remote.send_key("KEY_POWER")
+```
+
+- Sends a single `KEY_POWER` press (same as `tv_on`)
+- **Result**: Switches TV from TV/app content to art mode
+- **Works reliably** even when actively watching TV or using apps
+- Discovered from Nick Waterton's `async_art_ensure_art_mode.py` example
 
 ## Why This Matters
 
 Frame TVs have special power behavior:
 
 1. **Art mode is a standby state** - the TV is "on" but in low power
-2. **Short KEY_POWER press** - wakes screen from screen-off
-3. **Long KEY_POWER hold (3s)** - turns screen off while maintaining art mode
-4. **Other keys** (KEY_HOME, KEY_MENU) - fully wake the TV from art mode
+2. **KEY_POWER press when showing content** - switches TV to art mode
+3. **KEY_POWER hold (3s) when in art mode** - turns screen off while staying in art mode
+4. **KEY_POWER press when screen off** - turns screen back on
+5. **Other keys** (KEY_HOME, KEY_MENU) - fully wake the TV from art mode to normal TV operation
 
 ## Source Code Reference
 

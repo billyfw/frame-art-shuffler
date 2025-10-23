@@ -13,7 +13,7 @@ Samsung Frame TVs have specific behavior regarding art mode and remote control c
 - **Art Mode is Standby**: When the TV displays artwork, it's in a low-power standby state, not fully on
 - **Power Off = Screen Off**: The `tv_off()` function holds `KEY_POWER` for 3 seconds, which turns the screen off while keeping the TV in art mode (matching the behavior of the Samsung Smart TV integration's `media_player.turn_off`)
 - **Power On = Screen On**: The `tv_on()` function sends `KEY_POWER` to turn the screen back on. If the TV was in art mode, it returns to art mode. If it was in TV mode, it returns to TV mode.
-- **Switching to Art Mode**: Use `set_art_mode()` to explicitly switch from TV mode to art mode when the TV is already powered on
+- **Switching to Art Mode**: Use `set_art_mode()` to switch from TV mode to art mode programmatically. This function sends KEY_POWER to the TV, which switches it to art mode when the TV is showing content. This is reliable and works even when actively watching TV or using apps.
 - **Remote Keys Wake the TV**: Sending other remote control keys (like `KEY_HOME`, `KEY_MENU`) will fully wake the TV from art mode
 - **Art Operations Don't Wake TV**: Operations like `set_tv_brightness()`, `set_art_on_tv_deleteothers()`, and `is_tv_on()` work with the art websocket and keep the TV in art mode
 
@@ -58,10 +58,13 @@ The integration exposes a small helper library (`frame_tv.py`) with the followin
 
 - `set_art_on_tv_deleteothers(ip, artpath, delete_others=True)` – Upload an image, show it in art mode, and optionally delete every other art item on the TV.
 - `set_tv_brightness(ip, brightness)` – Change art-mode brightness (validated range 1–50; Frame TVs historically accept 1–10 and 50).
-- `is_tv_on(ip)` – Return `True` when art mode is reachable and the TV reports `on`.
+- `is_art_mode_enabled(ip)` – Return `True` when art mode is enabled (screen may be on or off).
+- `is_screen_on(ip)` – Return `True` when the screen is actually on and displaying content.
 - `tv_on(ip)` – Turn the screen on (wake from screen-off state) by sending `KEY_POWER`. The TV remains in art mode if it was previously in art mode.
 - `tv_off(ip)` – Turn the screen off while staying in art mode by holding `KEY_POWER` for 3 seconds (matches Samsung Smart TV integration's `media_player.turn_off` behavior).
-- `set_art_mode(ip)` – Switch the TV to art mode if it's currently in TV mode or another state. If already in art mode, this is a no-op.
+- `set_art_mode(ip)` – Switch the TV to art mode by sending KEY_POWER. Works reliably even when TV is actively playing content. If already in art mode, this is a no-op.
+
+**Note**: `is_tv_on(ip)` is deprecated but kept for backwards compatibility. Use `is_art_mode_enabled(ip)` instead.
 
 All functions raise subclasses of `FrameArtError` when operations fail, allowing Home Assistant platforms or automations to handle retries and surface errors gracefully.
 
@@ -104,7 +107,8 @@ from custom_components.frame_art_shuffler.frame_tv import (
 	FrameArtError,
 	set_art_on_tv_deleteothers,
 	set_tv_brightness,
-	is_tv_on,
+	is_art_mode_enabled,
+	is_screen_on,
 	tv_on,
 	tv_off,
 	set_art_mode,
@@ -114,15 +118,13 @@ TV_IP = "192.168.1.249"
 IMAGE_PATH = "/path/to/artwork.jpg"
 
 try:
-	# Turn screen on if needed (e.g., from screen-off state)
-	tv_on(TV_IP)
-
-	# If TV was in TV mode, switch to art mode
-	set_art_mode(TV_IP)
-
-	# Check art-mode status
-	if not is_tv_on(TV_IP):
-		print("TV not in art mode yet")
+	# Check if screen is on
+	if not is_screen_on(TV_IP):
+		tv_on(TV_IP)  # Turn screen on if needed
+	
+	# Ensure we're in art mode
+	if not is_art_mode_enabled(TV_IP):
+		set_art_mode(TV_IP)
 
 	# Upload and display artwork, deleting the rest of the gallery
 	content_id = set_art_on_tv_deleteothers(TV_IP, IMAGE_PATH, delete_others=True)
@@ -160,12 +162,19 @@ Available commands:
 - `on` – Turn screen on (wakes from screen-off state).
 - `off` – Turn screen off (holds KEY_POWER for 3 seconds, stays in art mode).
 - `art-mode` – Switch TV to art mode (if currently in TV mode or other state).
-- `status` – Exit with code 0 if art mode is reachable, 1 otherwise.
+- `status` – Check if art mode is enabled. Exit code 0 if enabled, 1 otherwise.
+- `screen-status` – Check if screen is on (displaying content). Exit code 0 if on, 1 if off.
 - `brightness <value>` – Set the art-mode brightness (valid values: 1–10 or 50).
 
 Example:
 
 ```bash
+# Check if screen is on
+python scripts/frame_tv_cli.py 192.168.1.249 screen-status
+
+# Check if art mode is enabled
+python scripts/frame_tv_cli.py 192.168.1.249 status
+
 # Switch TV to art mode if it's in TV mode
 python scripts/frame_tv_cli.py 192.168.1.249 art-mode
 
