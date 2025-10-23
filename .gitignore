@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv/
+.idea/
+.vscode/
+.DS_Store
+.mypy_cache/
+.coverage
+htmlcov/
+.mr.developer.cfg
+*.egg-info/
+dist/
+build/
+
+# Samsung Frame TV tokens (device-specific authentication)
+# Each machine should pair independently with the TV
+custom_components/frame_art_shuffler/tokens/*.token
