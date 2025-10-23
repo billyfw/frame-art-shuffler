@@ -241,8 +241,25 @@ def is_tv_on(ip: str) -> bool:
 
 
 def tv_on(ip: str) -> None:
-    """Turn Frame TV screen back on (wake from screen-off state)."""
-
+    """Turn Frame TV screen back on (wake from screen-off state).
+    
+    Sends KEY_POWER to turn screen on when it's off.
+    
+    Note: KEY_POWER is a toggle that behaves differently based on current state:
+    - Screen OFF → Screen ON (desired behavior)
+    - Screen ON in TV mode → Switches to art mode
+    - Screen ON in art mode → Switches to TV mode (unwanted!)
+    
+    To prevent toggling out of art mode when screen is already on, we check
+    screen state first. If screen is already on, this is a no-op.
+    """
+    
+    # Check if screen is already on - if so, don't send KEY_POWER
+    # (it would toggle us out of art mode into TV mode)
+    if is_screen_on(ip):
+        _LOGGER.info("TV %s screen already on, not sending KEY_POWER", ip)
+        return
+    
     token_path = _token_path(ip)
     last_error: Optional[Exception] = None
     
@@ -274,9 +291,14 @@ def set_art_mode(ip: str) -> None:
     
     If the TV is already in art mode, this is a no-op.
     If the TV is off, this will turn it on (behavior depends on TV settings).
+    
+    Note: KEY_POWER is a toggle, so we must verify current state before sending it.
+    If we cannot determine the current state, we do not send the command to avoid
+    accidentally toggling out of art mode.
     """
     
     # First check if already in art mode
+    # KEY_POWER is a toggle, so we MUST know the current state
     with _FrameTVSession(ip) as session:
         try:
             status = session.art.get_artmode()
@@ -286,8 +308,9 @@ def set_art_mode(ip: str) -> None:
                 _LOGGER.info("TV %s already in art mode", ip)
                 return
         except Exception as err:  # pylint: disable=broad-except
-            _LOGGER.debug("Could not check art mode status: %s", err)
-            # Continue anyway and try to switch
+            _LOGGER.warning("Could not verify art mode status for %s: %s. Not sending KEY_POWER to avoid toggling out of art mode.", ip, err)
+            # Do NOT continue - KEY_POWER is a toggle so we need to know current state
+            raise FrameArtUploadError(f"Cannot determine art mode status for {ip}, refusing to send KEY_POWER") from err
     
     # Send KEY_POWER to switch to art mode
     token_path = _token_path(ip)
