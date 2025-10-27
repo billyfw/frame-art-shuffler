@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from samsungtvws import SamsungTVWS
+from samsungtvws.remote import SamsungTVWS
 
 from .const import DEFAULT_PORT, DEFAULT_TIMEOUT, TOKEN_DIR
 
