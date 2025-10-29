@@ -36,6 +36,7 @@ _BRIGHTNESS_VERIFY_DELAY = 1
 _VALID_BRIGHTNESS = set(range(1, 11)) | {50}
 _WARN_FILE_MB = 5
 _LARGE_FILE_MB = 10
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 _POWER_COMMAND_RETRIES = 2
 _POWER_RETRY_DELAY = 1
 
@@ -102,6 +103,12 @@ def set_art_on_tv_deleteothers(
     file_type = _detect_file_type(file_path)
     file_size = len(payload)
 
+    if file_size > _MAX_UPLOAD_BYTES:
+        size_mb = file_size / (1024 * 1024)
+        raise FrameArtUploadError(
+            f"Art file {file_path.name} is {size_mb:.2f} MB; maximum supported size is 5.00 MB"
+        )
+
     # Upload with retries - recreate session on each attempt since connection may be broken
     response = None
     last_error: Optional[Exception] = None
@@ -134,8 +141,8 @@ def set_art_on_tv_deleteothers(
 
                 # Upload with this fresh connection
                 kwargs = {"file_type": file_type}
-                if matte:
-                    kwargs.update({"matte": matte, "portrait_matte": matte})
+                matte_value = matte if matte is not None else "none"
+                kwargs.update({"matte": matte_value, "portrait_matte": matte_value})
                 
                 try:
                     response = art.upload(payload, **kwargs)
