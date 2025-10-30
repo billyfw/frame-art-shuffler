@@ -127,13 +127,13 @@ else:
 ### Smart Preparation
 ```python
 # Ensure TV is ready for art operations
-def prepare_tv_for_art(tv_ip: str):
+def prepare_tv_for_art(tv_ip: str, tv_mac: str):
     """Ensure TV is on and in art mode."""
     
     # Turn screen on if needed
     if not is_screen_on(tv_ip):
         print("Turning screen on...")
-        tv_on(tv_ip)
+        tv_on(tv_ip, tv_mac)
         time.sleep(2)  # Give it a moment
     
     # Switch to art mode if needed
@@ -145,7 +145,7 @@ def prepare_tv_for_art(tv_ip: str):
     print("TV ready for art operations!")
 
 # Use it
-prepare_tv_for_art("192.168.1.249")
+prepare_tv_for_art("192.168.1.249", "28:AF:42:18:64:08")
 set_tv_brightness("192.168.1.249", 7)
 ```
 
@@ -170,7 +170,7 @@ if is_screen_on(tv_ip):
 
 ### 1. "Wake up and show art"
 ```bash
-python scripts/frame_tv_cli.py 192.168.1.249 on
+python scripts/frame_tv_cli.py 192.168.1.249 on --mac 28:AF:42:18:64:08
 python scripts/frame_tv_cli.py 192.168.1.249 art-mode
 python scripts/frame_tv_cli.py 192.168.1.249 upload artwork.jpg
 ```

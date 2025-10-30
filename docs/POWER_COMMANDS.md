@@ -20,13 +20,15 @@ remote.hold_key("KEY_POWER", 3)
 ### Power On (`tv_on`)
 
 ```python
-remote.send_key("KEY_POWER")
+_send_wake_on_lan("28:AF:42:18:64:08")
+time.sleep(2)
+# Done - no KEY_POWER sent
 ```
 
-- Sends a single `KEY_POWER` press
-- **Result**: When screen is off → turns screen back on
-- **Result**: When showing TV content → **switches to art mode**
-- TV behavior depends on current state
+- Sends a Wake-on-LAN packet to wake the TV's network interface
+- The TV wakes to its default state (typically art mode if that was last active)
+- **Does NOT send KEY_POWER** to avoid unpredictable toggle behavior
+- If you need to ensure art mode after waking, call `set_art_mode()` separately
 
 ### Switch to Art Mode (`set_art_mode`)
 
@@ -81,8 +83,8 @@ async def _async_send_power_off(self) -> None:
 # Test power off (screen should turn off, TV stays in art mode)
 python scripts/frame_tv_cli.py 192.168.1.249 off
 
-# Test power on (screen should turn back on)
-python scripts/frame_tv_cli.py 192.168.1.249 on
+# Test power on (Wake-on-LAN only)
+python scripts/frame_tv_cli.py 192.168.1.249 on --mac 28:AF:42:18:64:08
 
 # Verify art mode still works
 python scripts/frame_tv_cli.py 192.168.1.249 brightness 5

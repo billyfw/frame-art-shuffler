@@ -57,6 +57,7 @@ def test_tv_off_from_tv_mode(ip: str):
     
     print("Calling tv_off() (holding KEY_POWER for 3 seconds)...")
     tv_off(ip)
+    print("tv_off() command sent")
     print("Command sent.")
     
     print("\nWaiting 5 seconds for TV to respond...")
@@ -84,6 +85,7 @@ def test_tv_off_from_art_mode(ip: str):
     
     print("Calling tv_off() (holding KEY_POWER for 3 seconds)...")
     tv_off(ip)
+    print("tv_off() command sent")
     print("Command sent.")
     
     print("\nWaiting 5 seconds for TV to respond...")

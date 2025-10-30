@@ -50,7 +50,13 @@ def _parse_args() -> argparse.Namespace:
     upload.add_argument("--brightness", type=int, help="Set brightness after upload (1-10 for standard, 50 for max)")
     upload.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
 
-    subparsers.add_parser("on", help="Turn screen on (stays in art mode)")
+    on_parser = subparsers.add_parser(
+        "on",
+        help="Wake the TV via Wake-on-LAN and turn the screen on (stays in art mode)",
+        description="Wake TV from network standby. Example: %(prog)s on --mac 28:AF:42:18:64:08 --debug"
+    )
+    on_parser.add_argument("--mac", required=True, help="Frame TV MAC address for Wake-on-LAN (e.g., 28:AF:42:18:64:08)")
+    on_parser.add_argument("--debug", action="store_true", help="Show diagnostic TV state info after Wake-on-LAN")
     subparsers.add_parser("off", help="Turn screen off (stays in art mode - holds KEY_POWER for 3s)")
     subparsers.add_parser("art-mode", help="Switch TV to art mode (if currently in TV mode)")
     subparsers.add_parser("status", help="Check if art mode is enabled")
@@ -85,13 +91,17 @@ def main() -> int:
             return 0
 
         if args.command == "on":
-            tv_on(ip)
-            print("Screen on (command sent if screen was off)")
+            if args.debug:
+                import logging
+                logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+            
+            tv_on(ip, args.mac)
+            print("Wake-on-LAN sent; TV should wake to default state")
             return 0
 
         if args.command == "off":
             tv_off(ip)
-            print("Screen off (KEY_POWER hold sent)")
+            print("Screen off command sent (no verification performed)")
             return 0
 
         if args.command == "art-mode":

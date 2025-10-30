@@ -80,14 +80,15 @@ def _get_brightness_value(art: Any) -> int:
 
 ### Power Commands (Separate from Art)
 ```python
-def tv_on(ip: str):
-    token_path = _token_path(ip)
-    remote = _build_client(ip, token_path)
-    try:
-        remote.open()
-        remote.send_key("KEY_POWERON")
-    finally:
-        remote.close()
+def tv_on(ip: str, mac_address: str):
+  _send_wake_on_lan(mac_address)
+  token_path = _token_path(ip)
+  remote = _build_client(ip, token_path)
+  try:
+    remote.open()
+    remote.send_key("KEY_POWERON")
+  finally:
+    remote.close()
 ```
 
 ## Testing Results
