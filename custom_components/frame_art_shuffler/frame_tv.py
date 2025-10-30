@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import socket
 import time
 from pathlib import Path
 from typing import Any, Optional, cast
@@ -37,8 +39,13 @@ _VALID_BRIGHTNESS = set(range(1, 11)) | {50}
 _WARN_FILE_MB = 5
 _LARGE_FILE_MB = 10
 _MAX_UPLOAD_BYTES = 5 * 1024 * 1024
-_POWER_COMMAND_RETRIES = 2
-_POWER_RETRY_DELAY = 1
+_POWER_COMMAND_RETRIES = 4
+_POWER_RETRY_DELAY = 2
+_POWER_COMMAND_TIMEOUT = 8
+_SCREEN_CHECK_TIMEOUT = 6
+_WOL_BROADCAST_IP = "255.255.255.255"
+_WOL_BROADCAST_PORT = 9
+_WOL_WAKE_DELAY = 2
 
 
 class FrameArtError(Exception):
@@ -305,36 +312,44 @@ def is_art_mode_enabled(ip: str) -> bool:
             return False
 
 
-def is_screen_on(ip: str) -> bool:
+def is_screen_on(ip: str, timeout: Optional[float] = None) -> bool:
     """Return True when the TV screen is actually on and displaying content.
-    
+
     This checks the TV's power state, not just art mode status.
     Note: This requires the REST API to be responsive, which may fail if the TV
     is in a low-power state or the screen is off.
     """
-    
+
     token_path = _token_path(ip)
+    remote: Optional[SamsungTVWS] = None
     try:
-        remote = _build_client(ip, token_path)
+        remote = _build_client(ip, token_path, timeout=timeout)
         remote.open()
-        
-        # Try to get power status from the REST API
-        # If we can connect and the TV responds, screen is likely on
+
+        rest_api = remote._get_rest_api()  # type: ignore[attr-defined]
         try:
-            rest_api = remote._get_rest_api()  # type: ignore[attr-defined]
-            device_info = rest_api.rest_device_info()
-            
-            # If we got device info, TV is responsive (screen likely on)
-            remote.close()
-            return device_info is not None
+            power_state = rest_api.rest_power_state()
+            return bool(power_state)
         except Exception:  # pylint: disable=broad-except
-            # REST API not responsive - screen is likely off
-            remote.close()
-            return False
-            
+            device_info = rest_api.rest_device_info()
+            state = (
+                str(device_info.get("device", {}).get("PowerState", "")).lower()
+                if isinstance(device_info, dict)
+                else ""
+            )
+            if state in {"on", "off"}:
+                return state == "on"
+            return bool(device_info)
+
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.debug("Screen status check failed for %s: %s", ip, err)
         return False
+    finally:
+        if remote is not None:
+            try:
+                remote.close()
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
 
 
 # Backwards compatibility alias
@@ -347,48 +362,41 @@ def is_tv_on(ip: str) -> bool:
     return is_art_mode_enabled(ip)
 
 
-def tv_on(ip: str) -> None:
-    """Turn Frame TV screen back on (wake from screen-off state).
+def tv_on(ip: str, mac_address: str) -> bool:
+    """Wake Frame TV via Wake-on-LAN.
     
-    Sends KEY_POWER to turn screen on when it's off.
+    Sends a Wake-on-LAN packet to wake the TV's network interface. The TV should
+    wake to its default state (typically art mode if that was the last active mode).
     
-    Note: KEY_POWER is a toggle that behaves differently based on current state:
-    - Screen OFF → Screen ON (desired behavior)
-    - Screen ON in TV mode → Switches to art mode
-    - Screen ON in art mode → Switches to TV mode (unwanted!)
+    This function intentionally does NOT send KEY_POWER to avoid toggle issues where
+    the TV might switch from art mode to TV content mode unexpectedly.
     
-    To prevent toggling out of art mode when screen is already on, we check
-    screen state first. If screen is already on, this is a no-op.
+    Returns True when Wake-on-LAN was sent successfully. For diagnostic purposes,
+    logs the TV's screen and art mode state after waking.
+    
+    If you need to ensure the TV is in art mode after waking, call set_art_mode()
+    separately.
     """
-    
-    # Check if screen is already on - if so, don't send KEY_POWER
-    # (it would toggle us out of art mode into TV mode)
-    if is_screen_on(ip):
-        _LOGGER.info("TV %s screen already on, not sending KEY_POWER", ip)
-        return
-    
-    token_path = _token_path(ip)
-    last_error: Optional[Exception] = None
-    
-    for attempt in range(_POWER_COMMAND_RETRIES):
-        if attempt > 0:
-            _LOGGER.debug("Retrying tv_on attempt %s/%s", attempt + 1, _POWER_COMMAND_RETRIES)
-            time.sleep(_POWER_RETRY_DELAY)
-        
-        try:
-            remote = _build_client(ip, token_path)
-            remote.open()
-            remote.send_key("KEY_POWER")
-            remote.close()
-            return  # Success
-        except Exception as err:  # pylint: disable=broad-except
-            last_error = err
-            _LOGGER.debug("tv_on attempt %s failed: %s", attempt + 1, err)
-    
-    # All retries exhausted
-    raise FrameArtConnectionError(f"Failed to turn on TV screen {ip} after {_POWER_COMMAND_RETRIES} attempts: {last_error}") from last_error
 
-
+    _send_wake_on_lan(mac_address)
+    _LOGGER.info("Wake-on-LAN packet sent to %s", mac_address)
+    
+    # Give TV time to wake up
+    if _WOL_WAKE_DELAY:
+        time.sleep(_WOL_WAKE_DELAY)
+    
+    # Check state for diagnostic purposes (don't take action based on it)
+    try:
+        screen_on = is_screen_on(ip, timeout=_SCREEN_CHECK_TIMEOUT)
+        art_enabled = is_art_mode_enabled(ip)
+        _LOGGER.info(
+            "TV %s state after Wake-on-LAN: screen_on=%s, art_mode=%s",
+            ip, screen_on, art_enabled
+        )
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.debug("Could not check TV state after Wake-on-LAN: %s", err)
+    
+    return True
 def set_art_mode(ip: str) -> None:
     """Switch TV to art mode by sending KEY_POWER.
     
@@ -455,19 +463,37 @@ def tv_off(ip: str) -> None:
             time.sleep(_POWER_RETRY_DELAY)
         
         try:
-            remote = _build_client(ip, token_path)
+            remote = _build_client(ip, token_path, timeout=_POWER_COMMAND_TIMEOUT)
             remote.open()
             # For Frame TVs, hold KEY_POWER for 3 seconds to turn screen off while staying in art mode
             # This mimics the Samsung Smart TV integration's Frame-specific behavior
             remote.hold_key("KEY_POWER", 3)
             remote.close()
-            return  # Success
+            return
         except Exception as err:  # pylint: disable=broad-except
             last_error = err
             _LOGGER.debug("tv_off attempt %s failed: %s", attempt + 1, err)
     
     # All retries exhausted
     raise FrameArtConnectionError(f"Failed to turn off TV screen {ip} after {_POWER_COMMAND_RETRIES} attempts: {last_error}") from last_error
+
+
+def _send_wake_on_lan(mac_address: str) -> None:
+    """Broadcast a Wake-on-LAN packet to wake the Frame TV network interface."""
+
+    cleaned = re.sub(r"[^0-9A-Fa-f]", "", mac_address)
+    if len(cleaned) != 12:
+        raise FrameArtConnectionError(f"Invalid MAC address for Wake-on-LAN: {mac_address}")
+
+    payload = bytes.fromhex("FF" * 6 + cleaned * 16)
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(payload, (_WOL_BROADCAST_IP, _WOL_BROADCAST_PORT))
+        _LOGGER.debug("Wake-on-LAN packet sent to %s", mac_address)
+    except OSError as err:
+        raise FrameArtConnectionError(f"Failed to send Wake-on-LAN packet to {mac_address}: {err}") from err
 
 
 def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, debug: bool) -> bool:
@@ -619,12 +645,12 @@ def _token_path(ip: str) -> Path:
     return TOKEN_DIR / f"{safe_ip}.token"
 
 
-def _build_client(ip: str, token_path: Path) -> SamsungTVWS:
+def _build_client(ip: str, token_path: Path, timeout: Optional[float] = None) -> SamsungTVWS:
     try:
         return SamsungTVWS(
             host=ip,
             port=DEFAULT_PORT,
-            timeout=DEFAULT_TIMEOUT,
+            timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
             token_file=str(token_path),
             name="SamsungTvRemote",
         )

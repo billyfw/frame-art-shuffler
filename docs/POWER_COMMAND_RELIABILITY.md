@@ -19,7 +19,7 @@ Power off command sent  # Works now
 
 ## Root Cause
 
-The `tv_on()` and `tv_off()` functions use the remote control interface, which requires initializing a `SamsungTVWS` client. During initialization, the library:
+The `tv_on()` (after sending Wake-on-LAN) and `tv_off()` functions use the remote control interface, which requires initializing a `SamsungTVWS` client. During initialization, the library:
 
 1. Connects to the REST API endpoint (`http://TV_IP:8001/api/v2/`)
 2. Calls `get_model_year()` to determine TV capabilities
@@ -38,11 +38,14 @@ The `tv_on()` and `tv_off()` functions use the remote control interface, which r
 
 ## Solution: Automatic Retry
 
-Added retry logic to `tv_on()` and `tv_off()`:
+Added Wake-on-LAN support and retry logic to `tv_on()` plus retries for `tv_off()`:
 
 ```python
-_POWER_COMMAND_RETRIES = 2  # Try up to 2 times
-_POWER_RETRY_DELAY = 1      # Wait 1 second between retries
+_POWER_COMMAND_RETRIES = 4  # Try up to 4 times
+_POWER_RETRY_DELAY = 2      # Wait 2 seconds between retries
+
+_send_wake_on_lan(mac_address)
+time.sleep(_WOL_WAKE_DELAY)
 
 for attempt in range(_POWER_COMMAND_RETRIES):
     if attempt > 0:
