@@ -1,10 +1,17 @@
 """Constants for the Frame Art Shuffler integration."""
 
-from pathlib import Path
-
 DOMAIN = "frame_art_shuffler"
 DEFAULT_PORT = 8002
 DEFAULT_TIMEOUT = 30
 
-# Tokens live alongside the integration so they ship with the add-on/config backup.
-TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
+DEFAULT_METADATA_RELATIVE_PATH = "www/frame_art/metadata.json"
+TOKEN_DIR_NAME = "frame_art_tokens"
+
+CONF_HOME = "home"
+CONF_INSTANCE_ID = "instance_id"
+CONF_METADATA_PATH = "metadata_path"
+CONF_TOKEN_DIR = "token_dir"
+CONF_TAGS = "tags"
+CONF_EXCLUDE_TAGS = "exclude_tags"
+CONF_SHUFFLE_FREQUENCY = "shuffle_frequency_minutes"
+CONF_TV_ID = "tv_id"

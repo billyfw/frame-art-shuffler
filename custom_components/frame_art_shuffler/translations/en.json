@@ -1,0 +1,11 @@
+{
+  "entity": {
+    "sensor": {
+      "frame_art_shuffler": {
+        "frame_art_tv": {
+          "name": "Frame TV"
+        }
+      }
+    }
+  }
+}

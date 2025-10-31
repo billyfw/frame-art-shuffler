@@ -1,0 +1,6 @@
+{
+  "name": "Frame Art Shuffler",
+  "domains": ["frame_art_shuffler"],
+  "homeassistant": "2024.6.0",
+  "render_readme": true
+}

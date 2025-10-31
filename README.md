@@ -196,6 +196,38 @@ python scripts/frame_tv_cli.py 192.168.1.249 off
 
 The CLI shares the same token cache directory, so you only need to approve the TV once per device.
 
+## HACS installation
+
+You can install the integration manually via HACS while it’s under active development:
+
+1. In Home Assistant, open **HACS → Integrations → Custom repositories**.
+2. Add `https://github.com/billywaldman/frame-art-shuffler` as an **Integration** repository.
+3. Search for “Frame Art Shuffler” in the HACS Integrations list and install it.
+4. Restart Home Assistant to load the integration.
+5. Go to **Settings → Devices & Services → Add Integration** and pick **Frame Art Shuffler**.
+6. Enter a unique Home name. The first instance to claim the name “owns” the shared library in `metadata.json`.
+
+### Managing TVs via Options flow
+
+After creating the integration entry, Home Assistant registers a sensor entity for each TV (state shows the IP address with tags and metadata exposed as attributes). You can monitor these to verify metadata updates without waiting for future control entities.
+
+Open **Configure** on the integration card to manage TVs:
+
+- **Add TV**: Provide name, IP/hostname, MAC address, and shuffle frequency. The flow automatically pairs the TV to create a token file in the configured token directory. Disable pairing only if you already copied tokens manually.
+- **Edit TV**: Update settings; the metadata file refreshes and future automation can react.
+- **Delete TV**: Removes the TV from the metadata file.
+
+If token pairing ever breaks (for example, after clearing the TV's authorized devices), open the integration entry and choose **Re-authenticate**; the flow recreates the token file while preserving metadata.
+
+## Testing checklist
+
+1. Install via HACS and create the integration entry with a new Home name.
+2. In the Options flow, add a TV and confirm a token file appears under `config/frame_art_tokens/`.
+3. Check `www/frame_art/metadata.json` for the new TV entry.
+4. Edit the TV in the options flow and confirm the metadata updates.
+5. Delete the TV and verify the entry disappears from `metadata.json`.
+6. Watch the Home Assistant logs for pairing success or errors (`Logger: custom_components.frame_art_shuffler`).
+
 ## About the `.venv` directory
 
 The `.venv/` folder in the project root is a Python virtual environment created for this repository. It bundles an isolated copy of the Python interpreter plus the packages this integration depends on (for example, `samsungtvws`). Activating it ensures commands use the right interpreter and libraries without affecting your system-wide Python installation or other projects.
