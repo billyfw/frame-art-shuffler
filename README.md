@@ -201,7 +201,6 @@ The CLI shares the same token cache directory, so you only need to approve the T
 You can install the integration manually via HACS while it’s under active development:
 
 1. In Home Assistant, open **HACS → Integrations → Custom repositories**.
-2. Add `https://github.com/billywaldman/frame-art-shuffler` as an **Integration** repository.
 3. Search for “Frame Art Shuffler” in the HACS Integrations list and install it.
 4. Restart Home Assistant to load the integration.
 5. Go to **Settings → Devices & Services → Add Integration** and pick **Frame Art Shuffler**.
