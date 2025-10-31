@@ -24,6 +24,8 @@
 - Provide helpers `claim_home(home, instance_id)` and `release_home(home, instance_id)` inside the integration. Releasing can be added later; note it as a backlog item.
 
 ## Phase 1 – HACS-Ready Integration Foundation
+**Status:** ✅ Completed (October 2025)
+
 **Goal:** deliver a minimal integration that installs via HACS, claims a unique home, pairs TVs, and writes scoped entries to `metadata.json`.
 
 Key tasks:

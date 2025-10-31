@@ -23,9 +23,11 @@ from typing import Any, Optional, cast
 
 from samsungtvws.remote import SamsungTVWS
 
-from .const import DEFAULT_PORT, DEFAULT_TIMEOUT, TOKEN_DIR
+from .const import DEFAULT_PORT, DEFAULT_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
+
+TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
 
 _ART_MODE_ON = "on"
 _UPLOAD_RETRIES = 3
@@ -58,6 +60,14 @@ class FrameArtConnectionError(FrameArtError):
 
 class FrameArtUploadError(FrameArtError):
     """Raised when an upload or art operation fails."""
+
+
+def set_token_directory(path: Path) -> None:
+    """Override the token storage directory used by SamsungTVWS."""
+
+    global TOKEN_DIR  # noqa: PLW0603 - module-level configuration mutation is intentional
+    TOKEN_DIR = path
+    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class _FrameTVSession:
