@@ -8,7 +8,8 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -36,6 +37,17 @@ async def async_setup_entry(
 
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
+
+    device_registry = dr.async_get(hass)
+    home_identifier = entry.data.get(CONF_HOME)
+
+    if home_identifier:
+        device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, f"home_{home_identifier}")},
+            manufacturer="Frame Art Shuffler",
+            name=f"Frame Art ({home_identifier})",
+        )
 
     tracked: dict[str, FrameArtTVEntity] = {}
 
@@ -72,11 +84,11 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._tv_id = tv_id
         self._home_identifier = entry.data.get(CONF_HOME)
+        identifier = f"{self._home_identifier}_{tv_id}" if self._home_identifier else tv_id
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}"
 
         device_kwargs: dict[str, Any] = {
-            "identifiers": {(DOMAIN, tv_id)},
-            "entry_type": DeviceEntryType.SERVICE,
+            "identifiers": {(DOMAIN, identifier)},
             "name": self._derive_name(),
             "manufacturer": "Samsung",
         }

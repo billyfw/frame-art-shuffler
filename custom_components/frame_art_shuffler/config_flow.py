@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
 import uuid
@@ -151,10 +152,10 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             token_dir = Path(entry.data[CONF_TOKEN_DIR])
             token_dir.mkdir(parents=True, exist_ok=True)
             token_path = token_dir / f"{safe_token_filename(tv.get('ip', tv_id))}.token"
-            success = await self.hass.async_add_executor_job(
-                pair_tv,
+            success = await self._async_pair_tv(
                 tv.get("ip", ""),
                 token_path,
+                mac=tv.get("mac"),
             )
             if success:
                 self._async_schedule_refresh(entry.entry_id)
@@ -350,7 +351,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     token_dir = Path(self.config_entry.data[CONF_TOKEN_DIR])
                     token_dir.mkdir(parents=True, exist_ok=True)
                     token_path = token_dir / f"{safe_token_filename(host)}.token"
-                    success = await self._async_pair_tv(host, token_path)
+                    success = await self._async_pair_tv(host, token_path, mac=normalized_mac)
                     if not success:
                         errors["base"] = "pairing_failed"
 
@@ -399,8 +400,9 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             errors=errors,
         )
 
-    async def _async_pair_tv(self, host: str, token_path: Path) -> bool:
-        return await self.hass.async_add_executor_job(pair_tv, host, token_path)
+    async def _async_pair_tv(self, host: str, token_path: Path, *, mac: str | None = None) -> bool:
+        bound = partial(pair_tv, host, token_path, mac=mac)
+        return await self.hass.async_add_executor_job(bound)
 
     def _async_schedule_refresh(self) -> None:
         domain_data = self.hass.data.get(DOMAIN)

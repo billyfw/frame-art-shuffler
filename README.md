@@ -206,9 +206,34 @@ You can install the integration manually via HACS while it’s under active deve
 5. Go to **Settings → Devices & Services → Add Integration** and pick **Frame Art Shuffler**.
 6. Enter a unique Home name. The first instance to claim the name “owns” the shared library in `metadata.json`.
 
+### Developing without publishing a release
+
+When you want to iterate on the integration without cutting a new GitHub release, copy (or symlink) the component straight into your Home Assistant config directory. The helper script `scripts/dev_deploy.sh` automates these steps by bumping the manifest to a unique `+dev` version, syncing the files over SSH, and reloading the config entry. To run it with defaults (Home Assistant at `homeassistant.local`):
+
+```bash
+./scripts/dev_deploy.sh
+```
+
+To perform the process manually instead:
+
+1. Stop Home Assistant or ensure you can restart it after copying files.
+2. From the HA host, create the custom-component folder if it doesn't exist:
+	```bash
+	mkdir -p /config/custom_components
+	```
+3. Copy this repository’s `custom_components/frame_art_shuffler` folder into `/config/custom_components/` (or create a symlink if you mount the repo on the HA host).
+4. If HACS already installed the integration, open **HACS → Integrations**, select Frame Art Shuffler, and choose **Reinstall** with the *local* version checkbox so HACS tracks your working copy.
+5. Restart Home Assistant. The updated Python files load immediately; no release or version bump is required while you are testing locally.
+
+Tips:
+
+- When iterating rapidly, set `version` in `manifest.json` to something like `0.1.0-dev` so you can distinguish local builds in the UI.
+- Use the Home Assistant developer tools → **Reload** helpers for quick retests (or call `homeassistant.reload_config_entry` with the Frame Art Shuffler entry ID) after editing code.
+- Keep `metadata.json` and `frame_art_tokens/` backed up so a failed experiment doesn’t lose your art library or pairing tokens.
+
 ### Managing TVs via Options flow
 
-After creating the integration entry, Home Assistant registers a sensor entity for each TV (state shows the IP address with tags and metadata exposed as attributes). You can monitor these to verify metadata updates without waiting for future control entities.
+After creating the integration entry, Home Assistant registers a dedicated device and status sensor for each TV (state shows the IP address with tags and metadata exposed as attributes). You can monitor these to verify metadata updates without waiting for future control entities.
 
 Open **Configure** on the integration card to manage TVs:
 
