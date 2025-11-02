@@ -12,7 +12,6 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_HOME,
     CONF_SHUFFLE_FREQUENCY,
     DOMAIN,
 )
@@ -70,8 +69,8 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
     def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
         super().__init__(coordinator)
         self._tv_id = tv_id
-        self._home_identifier = entry.data.get(CONF_HOME)
-        identifier = f"{self._home_identifier}_{tv_id}" if self._home_identifier else tv_id
+        # Use just tv_id as identifier (no home prefix)
+        identifier = tv_id
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}"
 
         self._attr_device_info = DeviceInfo(

@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_entry import get_tv_config, update_tv_config
-from .const import CONF_HOME, DOMAIN
+from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 from .flow_utils import validate_host
 from .metadata import normalize_mac
@@ -31,7 +31,6 @@ async def async_setup_entry(
     """Set up Frame Art text entities for a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
-    home = entry.data[CONF_HOME]
 
     tracked: dict[str, list[TextEntity]] = {}
 
@@ -52,10 +51,10 @@ async def async_setup_entry(
                 continue
 
             entities = [
-                FrameArtTagsEntity(coordinator, entry, tv_id, home),
-                FrameArtExcludeTagsEntity(coordinator, entry, tv_id, home),
-                FrameArtIPEntity(coordinator, entry, tv_id, home),
-                FrameArtMACEntity(coordinator, entry, tv_id, home),
+                FrameArtTagsEntity(coordinator, entry, tv_id),
+                FrameArtExcludeTagsEntity(coordinator, entry, tv_id),
+                FrameArtIPEntity(coordinator, entry, tv_id),
+                FrameArtMACEntity(coordinator, entry, tv_id),
             ]
             tracked[tv_id] = entities
             new_entities.extend(entities)
@@ -77,7 +76,6 @@ class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
         key: str,
         name: str,
         icon: str,
@@ -86,7 +84,6 @@ class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
         """Initialize the text entity."""
         super().__init__(coordinator)
         self._tv_id = tv_id
-        self._home = home
         self._entry = entry
         self._key = key
         self._attr_icon = icon
@@ -99,8 +96,8 @@ class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
         
-        # Use same identifier format as sensor.py
-        identifier = f"{home}_{tv_id}"
+        # Use tv_id as identifier (no home prefix)
+        identifier = tv_id
 
         self._attr_unique_id = f"{tv_id}_{key}"
         self._attr_device_info = DeviceInfo(
@@ -165,14 +162,12 @@ class FrameArtIPEntity(FrameArtTextEntityBase):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
     ) -> None:
         """Initialize the IP entity."""
         super().__init__(
             coordinator,
             entry,
             tv_id,
-            home,
             "ip",
             "IP Address",
             "mdi:ip-network",
@@ -203,14 +198,12 @@ class FrameArtMACEntity(FrameArtTextEntityBase):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
     ) -> None:
         """Initialize the MAC entity."""
         super().__init__(
             coordinator,
             entry,
             tv_id,
-            home,
             "mac",
             "MAC Address",
             "mdi:ethernet",
@@ -238,14 +231,12 @@ class FrameArtTagsEntity(FrameArtTextEntityBase):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
     ) -> None:
         """Initialize the tags entity."""
         super().__init__(
             coordinator,
             entry,
             tv_id,
-            home,
             "tags",
             "Tags - Include",
             "mdi:tag-multiple",
@@ -260,14 +251,12 @@ class FrameArtExcludeTagsEntity(FrameArtTextEntityBase):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
     ) -> None:
         """Initialize the exclude tags entity."""
         super().__init__(
             coordinator,
             entry,
             tv_id,
-            home,
             "exclude_tags",
             "Tags - Exclude",
             "mdi:tag-off",

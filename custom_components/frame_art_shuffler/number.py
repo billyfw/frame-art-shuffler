@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_entry import get_tv_config, update_tv_config
-from .const import CONF_HOME, DOMAIN
+from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ async def async_setup_entry(
     """Set up Frame Art number entities for a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
-    home = entry.data[CONF_HOME]
 
     tracked: dict[str, FrameArtShuffleFrequencyEntity] = {}
 
@@ -51,7 +50,6 @@ async def async_setup_entry(
                 coordinator,
                 entry,
                 tv_id,
-                home,
             )
             tracked[tv_id] = entity
             new_entities.append(entity)
@@ -80,20 +78,18 @@ class FrameArtShuffleFrequencyEntity(CoordinatorEntity, NumberEntity):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
     ) -> None:
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._tv_id = tv_id
-        self._home = home
         self._entry = entry
 
         # Get TV name from config entry
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
         
-        # Use same identifier format as sensor.py
-        identifier = f"{home}_{tv_id}"
+        # Use tv_id as identifier (no home prefix)
+        identifier = tv_id
 
         self._attr_unique_id = f"{tv_id}_shuffle_frequency"
         self._attr_device_info = DeviceInfo(

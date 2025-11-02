@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers import device_registry as dr
 
 from .config_entry import get_tv_config
-from .const import CONF_HOME, DOMAIN
+from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,7 +29,6 @@ async def async_setup_entry(
     """Set up Frame Art button entities for a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
-    home = entry.data[CONF_HOME]
 
     tracked: dict[str, FrameArtRemoveTVButton] = {}
 
@@ -49,7 +48,7 @@ async def async_setup_entry(
             if not tv_id or tv_id in tracked:
                 continue
 
-            entity = FrameArtRemoveTVButton(coordinator, entry, tv_id, home)
+            entity = FrameArtRemoveTVButton(coordinator, entry, tv_id)
             tracked[tv_id] = entity
             new_entities.append(entity)
 
@@ -74,19 +73,18 @@ class FrameArtRemoveTVButton(CoordinatorEntity, ButtonEntity):
         coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
-        home: str,
     ) -> None:
         """Initialize the button entity."""
         super().__init__(coordinator)
         self._tv_id = tv_id
-        self._home = home
         self._entry = entry
 
         # Get TV name from config entry
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
         
-        identifier = f"{home}_{tv_id}"
+        # Use tv_id as identifier (no home prefix)
+        identifier = tv_id
 
         self._attr_unique_id = f"{tv_id}_remove"
         self._attr_device_info = DeviceInfo(
@@ -101,7 +99,7 @@ class FrameArtRemoveTVButton(CoordinatorEntity, ButtonEntity):
         device_registry = dr.async_get(self.hass)
         
         # Find the device for this TV
-        identifier = f"{self._home}_{self._tv_id}"
+        identifier = self._tv_id
         device = device_registry.async_get_device(identifiers={(DOMAIN, identifier)})
         
         if device:

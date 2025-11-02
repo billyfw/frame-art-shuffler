@@ -19,7 +19,6 @@ metadata = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = metadata
 spec.loader.exec_module(metadata)
 
-HomeAlreadyClaimedError = metadata.HomeAlreadyClaimedError
 MetadataStore = metadata.MetadataStore
 TVNotFoundError = metadata.TVNotFoundError
 
@@ -29,41 +28,10 @@ def metadata_path(tmp_path: Path) -> Path:
     return tmp_path / "metadata.json"
 
 
-def test_claim_home_new(metadata_path: Path) -> None:
-    store = MetadataStore(metadata_path)
-
-    claim = store.claim_home("home1", "instance1", "My Home")
-
-    assert claim.home == "home1"
-    assert claim.instance_id == "instance1"
-    assert claim.friendly_name == "My Home"
-    assert claim.is_new is True
-
-
-def test_claim_home_existing_same_instance(metadata_path: Path) -> None:
-    store = MetadataStore(metadata_path)
-
-    store.claim_home("home1", "instance1")
-    claim = store.claim_home("home1", "instance1")
-
-    assert claim.is_new is False
-
-
-def test_claim_home_conflict(metadata_path: Path) -> None:
-    store = MetadataStore(metadata_path)
-
-    store.claim_home("home1", "instance1")
-
-    with pytest.raises(HomeAlreadyClaimedError):
-        store.claim_home("home1", "instance2")
-
-
 def test_upsert_and_list_tv(metadata_path: Path) -> None:
     store = MetadataStore(metadata_path)
-    store.claim_home("home1", "instance1")
 
     tv = store.upsert_tv(
-        "home1",
         {
             "name": "Living Room",
             "ip": "192.168.1.10",
@@ -73,27 +41,24 @@ def test_upsert_and_list_tv(metadata_path: Path) -> None:
         },
     )
 
-    tvs = store.list_tvs("home1")
+    tvs = store.list_tvs()
     assert len(tvs) == 1
     assert tvs[0]["name"] == "Living Room"
-    assert tvs[0]["home"] == "home1"
     assert tvs[0]["id"] == tv["id"]
 
 
 def test_remove_tv(metadata_path: Path) -> None:
     store = MetadataStore(metadata_path)
-    store.claim_home("home1", "instance1")
 
-    tv = store.upsert_tv("home1", {"name": "TV", "ip": "1.1.1.1", "mac": "aa:bb:cc:dd:ee:ff"})
+    tv = store.upsert_tv({"name": "TV", "ip": "1.1.1.1", "mac": "aa:bb:cc:dd:ee:ff"})
 
-    store.remove_tv("home1", tv["id"])
+    store.remove_tv(tv["id"])
 
-    assert store.list_tvs("home1") == []
+    assert store.list_tvs() == []
 
 
 def test_remove_tv_missing(metadata_path: Path) -> None:
     store = MetadataStore(metadata_path)
-    store.claim_home("home1", "instance1")
 
     with pytest.raises(TVNotFoundError):
-        store.remove_tv("home1", "missing")
+        store.remove_tv("missing")
