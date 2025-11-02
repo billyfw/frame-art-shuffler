@@ -1,0 +1,11 @@
+remove_tv:
+  name: Remove TV
+  description: Remove a TV from the Frame Art Shuffler integration
+  fields:
+    device_id:
+      name: Device
+      description: The TV device to remove
+      required: true
+      selector:
+        device:
+          integration: frame_art_shuffler

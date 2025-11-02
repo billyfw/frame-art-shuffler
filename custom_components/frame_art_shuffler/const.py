@@ -8,7 +8,6 @@ DEFAULT_METADATA_RELATIVE_PATH = "www/frame_art/metadata.json"
 TOKEN_DIR_NAME = "frame_art_tokens"
 
 CONF_HOME = "home"
-CONF_INSTANCE_ID = "instance_id"
 CONF_METADATA_PATH = "metadata_path"
 CONF_TOKEN_DIR = "token_dir"
 CONF_TAGS = "tags"

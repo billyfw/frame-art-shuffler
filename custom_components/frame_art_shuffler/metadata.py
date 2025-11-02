@@ -80,6 +80,11 @@ def _load_metadata(path: Path) -> Dict[str, Any]:
     return payload
 
 
+def _snapshot_metadata(path: Path) -> Dict[str, Any]:
+    """Create a deep copy snapshot of current metadata for rollback."""
+    return copy.deepcopy(_load_metadata(path))
+
+
 def _write_metadata(path: Path, data: Dict[str, Any]) -> None:
     _ensure_parent(path)
     # Write to a temporary file first to avoid corrupting metadata.json
@@ -139,6 +144,10 @@ class MetadataStore:
     @property
     def path(self) -> Path:
         return self._path
+    
+    def snapshot(self) -> Dict[str, Any]:
+        """Create a snapshot of current metadata for rollback."""
+        return _snapshot_metadata(self._path)
 
     # ---------------------------------------------------------------------
     # Home claim helpers
@@ -212,6 +221,32 @@ class MetadataStore:
             raise TVNotFoundError(f"TV {tv_id} not found for home {home}")
         data["tvs"] = remaining
         _write_metadata(self._path, data)
+
+    def update_tv(self, home: str, tv_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Update specific fields of a TV and return the updated TV dict."""
+        data = _load_metadata(self._path)
+        tvs = data.setdefault("tvs", [])
+        
+        for tv in tvs:
+            if tv.get("home") == home and tv.get("id") == tv_id:
+                # Update allowed fields
+                if "ip" in updates:
+                    tv["ip"] = updates["ip"]
+                if "mac" in updates:
+                    tv["mac"] = normalize_mac(updates["mac"])
+                if "name" in updates:
+                    tv["name"] = updates["name"]
+                if "tags" in updates:
+                    tv["tags"] = updates["tags"]
+                if "notTags" in updates:
+                    tv["notTags"] = updates["notTags"]
+                if "shuffle" in updates:
+                    tv["shuffle"] = updates["shuffle"]
+                
+                _write_metadata(self._path, data)
+                return tv
+        
+        raise TVNotFoundError(f"TV {tv_id} not found for home {home}")
 
     def get_tv(self, home: str, tv_id: str) -> Dict[str, Any]:
         for tv in self.list_tvs(home):

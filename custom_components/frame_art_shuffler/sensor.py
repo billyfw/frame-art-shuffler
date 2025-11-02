@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
@@ -21,10 +19,10 @@ from .const import (
 from .coordinator import FrameArtCoordinator
 
 
-TV_DESCRIPTION = EntityDescription(
-    key="frame_art_tv",
-    icon="mdi:television",
-    translation_key="frame_art_tv",
+TV_DESCRIPTION = SensorEntityDescription(
+    key="current_artwork",
+    icon="mdi:image-frame",
+    translation_key="current_artwork",
 )
 
 
@@ -37,17 +35,6 @@ async def async_setup_entry(
 
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
-
-    device_registry = dr.async_get(hass)
-    home_identifier = entry.data.get(CONF_HOME)
-
-    if home_identifier:
-        device_registry.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, f"home_{home_identifier}")},
-            manufacturer="Frame Art Shuffler",
-            name=f"Frame Art ({home_identifier})",
-        )
 
     tracked: dict[str, FrameArtTVEntity] = {}
 
@@ -87,15 +74,12 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         identifier = f"{self._home_identifier}_{tv_id}" if self._home_identifier else tv_id
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}"
 
-        device_kwargs: dict[str, Any] = {
-            "identifiers": {(DOMAIN, identifier)},
-            "name": self._derive_name(),
-            "manufacturer": "Samsung",
-        }
-        if self._home_identifier:
-            device_kwargs["via_device"] = (DOMAIN, f"home_{self._home_identifier}")
-
-        self._attr_device_info = DeviceInfo(**device_kwargs)
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, identifier)},
+            name=self._derive_name(),
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
 
     def _derive_name(self) -> str:
         tv = self._current_tv
@@ -116,7 +100,16 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         tv = self._current_tv
         if not tv:
             return None
-        return tv.get(CONF_HOST) or tv.get("ip")
+        # Try to get current artwork from shuffle data or return "No artwork"
+        shuffle = tv.get("shuffle", {})
+        if isinstance(shuffle, dict):
+            current = shuffle.get("currentImage") or shuffle.get("current")
+            if current:
+                # Extract filename from path if it's a full path
+                if isinstance(current, str) and "/" in current:
+                    return current.split("/")[-1]
+                return str(current)
+        return "Unknown"
 
     @property
     def name(self) -> str | None:
