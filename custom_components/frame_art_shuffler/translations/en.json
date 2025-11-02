@@ -1,9 +1,14 @@
 {
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Integration already configured. To add TVs, click the gear icon (⚙️) on the Frame Art integration card."
+    }
+  },
   "entity": {
     "sensor": {
       "frame_art_shuffler": {
-        "frame_art_tv": {
-          "name": "Frame TV"
+        "current_artwork": {
+          "name": "Current Artwork"
         }
       }
     }

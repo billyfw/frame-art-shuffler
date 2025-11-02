@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Optional
-import uuid
 
 import voluptuous as vol
 
@@ -18,7 +16,6 @@ from homeassistant.data_entry_flow import FlowResult
 from .const import (
     CONF_EXCLUDE_TAGS,
     CONF_HOME,
-    CONF_INSTANCE_ID,
     CONF_METADATA_PATH,
     CONF_SHUFFLE_FREQUENCY,
     CONF_TAGS,
@@ -30,24 +27,12 @@ from .const import (
 )
 from .flow_utils import parse_tag_string, pair_tv, safe_token_filename, validate_host
 from .metadata import (
-    HomeAlreadyClaimedError,
     MetadataStore,
     TVNotFoundError,
     normalize_mac,
 )
-from .notify import async_notify_addon_tv_change
 
 CONF_SKIP_PAIRING = "skip_pairing"
-
-ACTION_ADD_TV = "add_tv"
-ACTION_EDIT_TV = "edit_tv"
-ACTION_DELETE_TV = "delete_tv"
-
-
-@dataclass
-class _OptionsFlowState:
-    mode: Optional[str] = None
-    selected_tv_id: Optional[str] = None
 
 
 def _default_metadata_path(hass: HomeAssistant) -> Path:
@@ -65,7 +50,6 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._home: Optional[str] = None
-        self._instance_id: Optional[str] = None
         self._metadata_path: Optional[Path] = None
         self._token_dir: Optional[Path] = None
         self._reauth_entry: Optional[config_entries.ConfigEntry] = None
@@ -84,31 +68,19 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 metadata_path = _default_metadata_path(self.hass)
                 token_dir = _default_token_dir(self.hass)
-                instance_id = uuid.uuid4().hex
-                store = MetadataStore(metadata_path)
-                try:
-                    await self.hass.async_add_executor_job(
-                        store.claim_home, home, instance_id, home
-                    )
-                except HomeAlreadyClaimedError:
-                    errors[CONF_HOME] = "home_claimed"
-                except Exception:  # pragma: no cover - unexpected file errors
-                    errors["base"] = "metadata_error"
-                else:
-                    self._home = home
-                    self._instance_id = instance_id
-                    self._metadata_path = metadata_path
-                    self._token_dir = token_dir
-                    data = {
-                        CONF_HOME: home,
-                        CONF_INSTANCE_ID: instance_id,
-                        CONF_METADATA_PATH: str(metadata_path),
-                        CONF_TOKEN_DIR: str(token_dir),
-                    }
-                    return self.async_create_entry(
-                        title=f"Frame Art ({home})",
-                        data=data,
-                    )
+                
+                self._home = home
+                self._metadata_path = metadata_path
+                self._token_dir = token_dir
+                data = {
+                    CONF_HOME: home,
+                    CONF_METADATA_PATH: str(metadata_path),
+                    CONF_TOKEN_DIR: str(token_dir),
+                }
+                return self.async_create_entry(
+                    title=f"Frame Art ({home})",
+                    data=data,
+                )
 
         schema = vol.Schema({vol.Required(CONF_HOME): str})
         return self.async_show_form(
@@ -191,11 +163,10 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow for managing TVs within the claimed home."""
+    """Options flow for adding TVs."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.config_entry = config_entry
-        self._state = _OptionsFlowState()
 
     @property
     def _home(self) -> str:
@@ -212,104 +183,21 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         return await self.hass.async_add_executor_job(self._store().list_tvs, self._home)
 
     async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        tvs = await self._list_tvs()
-        with_tvs = bool(tvs)
-        actions = {ACTION_ADD_TV: "Add TV"}
-        if with_tvs:
-            actions[ACTION_EDIT_TV] = "Edit TV"
-            actions[ACTION_DELETE_TV] = "Delete TV"
-
-        if user_input is not None:
-            action = user_input.get("action")
-            if action == ACTION_ADD_TV:
-                self._state.mode = ACTION_ADD_TV
-                return await self.async_step_add_tv()
-            if action == ACTION_EDIT_TV and with_tvs:
-                self._state.mode = ACTION_EDIT_TV
-                return await self.async_step_select_tv()
-            if action == ACTION_DELETE_TV and with_tvs:
-                self._state.mode = ACTION_DELETE_TV
-                return await self.async_step_select_tv()
-            if action == "finish":
-                return self.async_create_entry(title="", data={})
-
-        schema = vol.Schema(
-            {
-                vol.Required("action", default=ACTION_ADD_TV): vol.In(actions),
-            }
-        )
-        return self.async_show_form(step_id="init", data_schema=schema)
-
-    async def async_step_select_tv(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        tvs = await self._list_tvs()
-        if not tvs:
-            return self.async_abort(reason="no_tvs")
-
-        choices = {tv["id"]: f"{tv.get('name', 'Unnamed')} ({tv.get('ip', '?')})" for tv in tvs}
-
-        if user_input is not None:
-            tv_id = user_input.get(CONF_TV_ID)
-            if tv_id in choices:
-                self._state.selected_tv_id = tv_id
-                if self._state.mode == ACTION_EDIT_TV:
-                    return await self.async_step_edit_tv()
-                return await self.async_step_confirm_delete()
-
-        schema = vol.Schema({vol.Required(CONF_TV_ID): vol.In(choices)})
-        return self.async_show_form(step_id="select_tv", data_schema=schema)
-
-    async def async_step_confirm_delete(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        tv_id = self._state.selected_tv_id
-        if not tv_id:
-            return self.async_abort(reason="unknown_tv")
-
-        if user_input is not None:
-            if user_input.get("confirm"):
-                store = self._store()
-                await self.hass.async_add_executor_job(store.remove_tv, self._home, tv_id)
-                await async_notify_addon_tv_change(
-                    self.hass,
-                    event="deleted",
-                    home=self._home,
-                    tv={"id": tv_id},
-                )
-                self._async_schedule_refresh()
-            return self.async_create_entry(title="", data={})
-
-        schema = vol.Schema({vol.Required("confirm", default=False): bool})
-        return self.async_show_form(
-            step_id="confirm_delete",
-            data_schema=schema,
-            description_placeholders={"tv_id": tv_id},
-        )
+        """Show the Add TV form directly."""
+        return await self.async_step_add_tv(user_input)
 
     async def async_step_add_tv(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        return await self._handle_tv_form(user_input, is_edit=False)
-
-    async def async_step_edit_tv(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
-        return await self._handle_tv_form(user_input, is_edit=True)
-
-    async def _handle_tv_form(self, user_input: Optional[Dict[str, Any]], *, is_edit: bool) -> FlowResult:
-        tv: Optional[Dict[str, Any]] = None
-        if is_edit:
-            tv_id = self._state.selected_tv_id
-            if not tv_id:
-                return self.async_abort(reason="unknown_tv")
-            store = self._store()
-            try:
-                tv = await self.hass.async_add_executor_job(store.get_tv, self._home, tv_id)
-            except Exception:  # pragma: no cover - unexpected read error
-                return self.async_abort(reason="unknown_tv")
-        else:
-            tv_id = None
-
+        """Handle adding a new TV."""
         errors: Dict[str, str] = {}
+        
+        # Preserve user input for re-rendering on error
+        preserved_input = user_input or {}
 
         if user_input is not None:
             host_input = user_input.get(CONF_HOST, "")
             name = (user_input.get(CONF_NAME) or "").strip()
-            mac_input = user_input.get(CONF_MAC)
-            freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 0)
+            mac_input = user_input.get(CONF_MAC, "")
+            freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
             skip_pairing = user_input.get(CONF_SKIP_PAIRING, False)
@@ -318,6 +206,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 host = validate_host(host_input)
             except ValueError:
                 errors[CONF_HOST] = "invalid_host"
+                host = host_input
             if not name:
                 errors[CONF_NAME] = "name_required"
 
@@ -338,20 +227,21 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
 
             if not errors:
                 tv_payload = {
-                    "id": tv_id,
                     "name": name,
                     "ip": host,
                     "mac": normalized_mac,
                     "tags": tags,
                     "notTags": exclude_tags,
-                    "shuffle": {CONF_SHUFFLE_FREQUENCY: frequency},
+                    "shuffle": {"frequencyMinutes": frequency},
                 }
 
                 if not skip_pairing:
                     token_dir = Path(self.config_entry.data[CONF_TOKEN_DIR])
                     token_dir.mkdir(parents=True, exist_ok=True)
                     token_path = token_dir / f"{safe_token_filename(host)}.token"
-                    success = await self._async_pair_tv(host, token_path, mac=normalized_mac)
+                    success = await self.hass.async_add_executor_job(
+                        partial(pair_tv, host, token_path, mac=normalized_mac)
+                    )
                     if not success:
                         errors["base"] = "pairing_failed"
 
@@ -362,40 +252,23 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         self._home,
                         tv_payload,
                     )
-                    await async_notify_addon_tv_change(
-                        self.hass,
-                        event="updated" if tv_id else "created",
-                        home=self._home,
-                        tv=updated_tv,
-                    )
                     self._async_schedule_refresh()
                     return self.async_create_entry(title="", data={})
 
-        defaults = {
-            CONF_NAME: tv.get("name") if tv else "",
-            CONF_HOST: tv.get("ip") if tv else "",
-            CONF_MAC: tv.get("mac") if tv else "",
-            CONF_TAGS: ", ".join(tv.get("tags", [])) if tv else "",
-            CONF_EXCLUDE_TAGS: ", ".join(tv.get("notTags", [])) if tv else "",
-            CONF_SHUFFLE_FREQUENCY: tv.get("shuffle", {}).get(CONF_SHUFFLE_FREQUENCY, 30)
-            if tv
-            else 30,
-            CONF_SKIP_PAIRING: True if tv else False,
-        }
-
+        # Use preserved input as defaults when re-rendering form with errors
         schema = vol.Schema(
             {
-                vol.Required(CONF_NAME, default=defaults[CONF_NAME]): str,
-                vol.Required(CONF_HOST, default=defaults[CONF_HOST]): str,
-                vol.Required(CONF_MAC, default=defaults[CONF_MAC]): str,
-                vol.Optional(CONF_TAGS, default=defaults[CONF_TAGS]): str,
-                vol.Optional(CONF_EXCLUDE_TAGS, default=defaults[CONF_EXCLUDE_TAGS]): str,
-                vol.Required(CONF_SHUFFLE_FREQUENCY, default=defaults[CONF_SHUFFLE_FREQUENCY]): vol.Coerce(int),
-                vol.Optional(CONF_SKIP_PAIRING, default=defaults[CONF_SKIP_PAIRING]): bool,
+                vol.Required(CONF_NAME, default=preserved_input.get(CONF_NAME, "")): str,
+                vol.Required(CONF_HOST, default=preserved_input.get(CONF_HOST, "")): str,
+                vol.Required(CONF_MAC, default=preserved_input.get(CONF_MAC, "")): str,
+                vol.Optional(CONF_TAGS, default=preserved_input.get(CONF_TAGS, "")): str,
+                vol.Optional(CONF_EXCLUDE_TAGS, default=preserved_input.get(CONF_EXCLUDE_TAGS, "")): str,
+                vol.Required(CONF_SHUFFLE_FREQUENCY, default=preserved_input.get(CONF_SHUFFLE_FREQUENCY, 30)): vol.Coerce(int),
+                vol.Optional(CONF_SKIP_PAIRING, default=preserved_input.get(CONF_SKIP_PAIRING, False)): bool,
             }
         )
         return self.async_show_form(
-            step_id="edit_tv" if is_edit else "add_tv",
+            step_id="add_tv",
             data_schema=schema,
             errors=errors,
         )
