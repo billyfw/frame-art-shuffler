@@ -234,11 +234,21 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         errors["base"] = "pairing_failed"
 
                 if not errors:
-                    store = self._store()
-                    updated_tv = await self.hass.async_add_executor_job(
-                        store.upsert_tv,
-                        tv_payload,
-                    )
+                    # Generate a new TV ID
+                    from uuid import uuid4
+                    tv_id = uuid4().hex
+                    
+                    # Add TV to config entry (not metadata.json)
+                    from .config_entry import add_tv_config
+                    add_tv_config(self.hass, self.config_entry, tv_id, {
+                        "name": name,
+                        "ip": host,
+                        "mac": normalized_mac,
+                        "tags": tags,
+                        "exclude_tags": exclude_tags,
+                        "shuffle_frequency_minutes": frequency,
+                    })
+                    
                     self._async_schedule_refresh()
                     return self.async_create_entry(title="", data={})
 
