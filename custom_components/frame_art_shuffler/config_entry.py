@@ -20,6 +20,28 @@ def get_tv_config(entry: ConfigEntry, tv_id: str) -> dict[str, Any] | None:
     return tvs.get(tv_id)
 
 
+def add_tv_config(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    tv_id: str,
+    tv_data: dict[str, Any],
+) -> None:
+    """Add a new TV to config entry.
+    
+    Args:
+        hass: Home Assistant instance
+        entry: Config entry
+        tv_id: TV identifier (UUID)
+        tv_data: TV configuration dict
+    """
+    data = {**entry.data}
+    tvs = data.setdefault("tvs", {})
+    
+    tvs[tv_id] = {"id": tv_id, **tv_data}
+    
+    hass.config_entries.async_update_entry(entry, data=data)
+
+
 def update_tv_config(
     hass: HomeAssistant,
     entry: ConfigEntry,
