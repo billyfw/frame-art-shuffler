@@ -19,7 +19,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback, ServiceCall
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_HOME, CONF_METADATA_PATH, CONF_TOKEN_DIR, DOMAIN
+from .const import CONF_METADATA_PATH, CONF_TOKEN_DIR, DOMAIN
 from .coordinator import FrameArtCoordinator
 from .config_entry import remove_tv_config
 from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
@@ -39,16 +39,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     metadata_path = Path(entry.data[CONF_METADATA_PATH])
     token_dir = Path(entry.data[CONF_TOKEN_DIR])
-    home = entry.data[CONF_HOME]
 
     token_dir.mkdir(parents=True, exist_ok=True)
     set_token_directory(token_dir)
 
     # Migrate TV data from metadata.json to config entry (one-time)
     if "tvs" not in entry.data or not entry.data["tvs"]:
-        await _async_migrate_from_metadata(hass, entry, metadata_path, home)
+        await _async_migrate_from_metadata(hass, entry, metadata_path)
 
-    coordinator = FrameArtCoordinator(hass, metadata_path, home)
+    coordinator = FrameArtCoordinator(hass, entry, metadata_path)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
@@ -62,7 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     # Register device removal handler
     entry.async_on_unload(
-        _register_device_removal_listener(hass, entry, metadata_path, home)
+        _register_device_removal_listener(hass, entry, metadata_path)
     )
     
     return True
@@ -93,13 +92,12 @@ async def _async_migrate_from_metadata(
     hass: HomeAssistant,
     entry: ConfigEntry,
     metadata_path: Path,
-    home: str,
 ) -> None:
     """One-time migration: import TV data from metadata.json into config entry."""
     store = MetadataStore(metadata_path)
     
     try:
-        metadata_tvs = await hass.async_add_executor_job(store.list_tvs, home)
+        metadata_tvs = await hass.async_add_executor_job(store.list_tvs)
     except Exception:
         # metadata.json might not exist yet or be empty
         return
@@ -134,7 +132,6 @@ def _register_device_removal_listener(
     hass: HomeAssistant,
     entry: ConfigEntry,
     metadata_path: Path,
-    home: str,
 ) -> Callable[[], None]:
     """Register a listener for device removal to clean up metadata."""
     
@@ -153,16 +150,12 @@ def _register_device_removal_listener(
             return
         
         # Extract TV ID from device identifiers
-        # Format is {home}_{tv_id}, need to extract tv_id
+        # Format is now just tv_id (no home prefix)
         tv_id = None
         for identifier in device.identifiers:
             if identifier[0] == DOMAIN:
-                # identifier[1] is like "home_value_tv_id_here"
-                full_identifier = identifier[1]
-                # Split and take everything after the home prefix
-                if full_identifier.startswith(f"{home}_"):
-                    tv_id = full_identifier[len(f"{home}_"):]
-                    break
+                tv_id = identifier[1]
+                break
         
         if not tv_id:
             return
@@ -173,8 +166,8 @@ def _register_device_removal_listener(
             token_dir = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("token_dir")
             try:
                 # Get TV data before removing to find token file
-                tv_data = await hass.async_add_executor_job(store.get_tv, home, tv_id)
-                tv_ip = tv_data.get("ip")
+                tv_data = await hass.async_add_executor_job(store.get_tv, tv_id)
+                tv_ip = tv_data.get("ip") if tv_data else None
                 
                 # Remove from config entry
                 remove_tv_config(hass, entry, tv_id)

@@ -15,7 +15,6 @@ from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
     CONF_EXCLUDE_TAGS,
-    CONF_HOME,
     CONF_METADATA_PATH,
     CONF_SHUFFLE_FREQUENCY,
     CONF_TAGS,
@@ -49,7 +48,6 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self) -> None:
-        self._home: Optional[str] = None
         self._metadata_path: Optional[Path] = None
         self._token_dir: Optional[Path] = None
         self._reauth_entry: Optional[config_entries.ConfigEntry] = None
@@ -62,27 +60,22 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: Dict[str, str] = {}
 
         if user_input is not None:
-            home = (user_input.get(CONF_HOME) or "").strip()
-            if not home:
-                errors[CONF_HOME] = "home_required"
-            else:
-                metadata_path = _default_metadata_path(self.hass)
-                token_dir = _default_token_dir(self.hass)
-                
-                self._home = home
-                self._metadata_path = metadata_path
-                self._token_dir = token_dir
-                data = {
-                    CONF_HOME: home,
-                    CONF_METADATA_PATH: str(metadata_path),
-                    CONF_TOKEN_DIR: str(token_dir),
-                }
-                return self.async_create_entry(
-                    title=f"Frame Art ({home})",
-                    data=data,
-                )
+            metadata_path = _default_metadata_path(self.hass)
+            token_dir = _default_token_dir(self.hass)
+            
+            self._metadata_path = metadata_path
+            self._token_dir = token_dir
+            data = {
+                CONF_METADATA_PATH: str(metadata_path),
+                CONF_TOKEN_DIR: str(token_dir),
+            }
+            return self.async_create_entry(
+                title="Frame Art Shuffler",
+                data=data,
+            )
 
-        schema = vol.Schema({vol.Required(CONF_HOME): str})
+        # Just need a confirmation, no home required
+        schema = vol.Schema({})
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
@@ -109,10 +102,9 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="reauth_failed")
 
         store = MetadataStore(Path(entry.data[CONF_METADATA_PATH]))
-        home = entry.data[CONF_HOME]
 
         try:
-            tv = await self.hass.async_add_executor_job(store.get_tv, home, tv_id)
+            tv = await self.hass.async_add_executor_job(store.get_tv, tv_id)
         except TVNotFoundError:
             return self.async_abort(reason="unknown_tv")
         except Exception:  # pragma: no cover - unexpected file errors
@@ -169,10 +161,6 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         self.config_entry = config_entry
 
     @property
-    def _home(self) -> str:
-        return self.config_entry.data[CONF_HOME]
-
-    @property
     def _metadata_path(self) -> Path:
         return Path(self.config_entry.data[CONF_METADATA_PATH])
 
@@ -180,7 +168,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         return MetadataStore(self._metadata_path)
 
     async def _list_tvs(self) -> list[dict[str, Any]]:
-        return await self.hass.async_add_executor_job(self._store().list_tvs, self._home)
+        return await self.hass.async_add_executor_job(self._store().list_tvs)
 
     async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
         """Show the Add TV form directly."""
@@ -249,7 +237,6 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     store = self._store()
                     updated_tv = await self.hass.async_add_executor_job(
                         store.upsert_tv,
-                        self._home,
                         tv_payload,
                     )
                     self._async_schedule_refresh()

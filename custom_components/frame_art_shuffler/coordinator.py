@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -16,11 +17,11 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class FrameArtCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
-    """Coordinator that keeps track of TVs for a specific home."""
+    """Coordinator that keeps track of all TVs."""
 
-    def __init__(self, hass: HomeAssistant, metadata_path: Path, home: str) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, metadata_path: Path) -> None:
+        self._entry = entry
         self._store = MetadataStore(metadata_path)
-        self._home = home
         super().__init__(
             hass,
             _LOGGER,
@@ -33,4 +34,9 @@ class FrameArtCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         return self._store
 
     async def _async_update_data(self) -> list[dict[str, Any]]:
-        return await self.hass.async_add_executor_job(self._store.list_tvs, self._home)
+        # Get TV data from config entry, not metadata.json
+        # metadata.json is now only used by the Frame Art Manager add-on for images/tags
+        tvs_dict = self._entry.data.get("tvs", {})
+        if not tvs_dict:
+            return []
+        return list(tvs_dict.values())

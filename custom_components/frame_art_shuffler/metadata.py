@@ -2,8 +2,6 @@
 
 This module is responsible for reading and writing the shared
 ``metadata.json`` file that lives alongside the Frame Art Manager add-on.
-It enforces the "home" scoping rules so multiple Home Assistant instances
-can coexist while operating on the same library.
 
 All helpers are intentionally synchronous; call them from the Home Assistant
 event loop using ``hass.async_add_executor_job``.
@@ -25,10 +23,6 @@ class MetadataError(Exception):
     """Base error raised for metadata operations."""
 
 
-class HomeAlreadyClaimedError(MetadataError):
-    """Raised when another integration instance already claimed a home."""
-
-
 class TVNotFoundError(MetadataError):
     """Raised when a TV cannot be located in metadata."""
 
@@ -38,13 +32,12 @@ DEFAULT_METADATA = {
     "images": {},
     "tvs": [],
     "tags": [],
-    "homes": {},
 }
 
 
 @dataclass(frozen=True)
 class HomeClaim:
-    """Represents the claim information for a home value."""
+    """Deprecated: Home claims are no longer used."""
 
     home: str
     instance_id: str
@@ -113,9 +106,8 @@ def _unique_list(items: Iterable[str]) -> List[str]:
     return cleaned
 
 
-def _normalize_tv(home: str, tv: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_tv(tv: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(tv)
-    normalized["home"] = home
     normalized["tags"] = _unique_list(normalized.get("tags", []))
     normalized["notTags"] = _unique_list(normalized.get("notTags", []))
     shuffle = normalized.get("shuffle") or {}
@@ -149,53 +141,21 @@ class MetadataStore:
         """Create a snapshot of current metadata for rollback."""
         return _snapshot_metadata(self._path)
 
-    # ---------------------------------------------------------------------
-    # Home claim helpers
-    # ---------------------------------------------------------------------
-    def claim_home(self, home: str, instance_id: str, friendly_name: Optional[str] = None) -> HomeClaim:
-        """Claim a home for this integration instance.
-
-        Raises ``HomeAlreadyClaimedError`` if another instance already claimed
-        the same home.
-        """
-
-        data = _load_metadata(self._path)
-        homes = data.setdefault("homes", {})
-        entry = homes.get(home)
-        if entry:
-            existing_id = entry.get("instance_id")
-            if existing_id and existing_id != instance_id:
-                raise HomeAlreadyClaimedError(
-                    f"Home '{home}' is already claimed by another integration instance"
-                )
-            # Update friendly name for readability if provided
-            if friendly_name:
-                entry["friendly_name"] = friendly_name
-            _write_metadata(self._path, data)
-            return HomeClaim(home, instance_id, entry.get("friendly_name", home), is_new=False)
-
-        homes[home] = {
-            "instance_id": instance_id,
-            "friendly_name": friendly_name or home,
-        }
-        _write_metadata(self._path, data)
-        return HomeClaim(home, instance_id, friendly_name or home, is_new=True)
-
     # ------------------------------------------------------------------
     # TV access helpers
     # ------------------------------------------------------------------
-    def list_tvs(self, home: str) -> List[Dict[str, Any]]:
+    def list_tvs(self) -> List[Dict[str, Any]]:
         data = _load_metadata(self._path)
-        return [tv for tv in data.get("tvs", []) if tv.get("home") == home]
+        return data.get("tvs", [])
 
     def generate_tv_id(self) -> str:
         return uuid.uuid4().hex
 
-    def upsert_tv(self, home: str, tv: Dict[str, Any]) -> Dict[str, Any]:
+    def upsert_tv(self, tv: Dict[str, Any]) -> Dict[str, Any]:
         data = _load_metadata(self._path)
         tvs = data.setdefault("tvs", [])
 
-        normalized = _normalize_tv(home, tv)
+        normalized = _normalize_tv(tv)
         tv_id = normalized.setdefault("id", self.generate_tv_id())
 
         updated = False
@@ -213,22 +173,22 @@ class MetadataStore:
         _write_metadata(self._path, data)
         return normalized
 
-    def remove_tv(self, home: str, tv_id: str) -> None:
+    def remove_tv(self, tv_id: str) -> None:
         data = _load_metadata(self._path)
         tvs = data.setdefault("tvs", [])
-        remaining = [tv for tv in tvs if not (tv.get("home") == home and tv.get("id") == tv_id)]
+        remaining = [tv for tv in tvs if tv.get("id") != tv_id]
         if len(remaining) == len(tvs):
-            raise TVNotFoundError(f"TV {tv_id} not found for home {home}")
+            raise TVNotFoundError(f"TV {tv_id} not found")
         data["tvs"] = remaining
         _write_metadata(self._path, data)
 
-    def update_tv(self, home: str, tv_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    def update_tv(self, tv_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Update specific fields of a TV and return the updated TV dict."""
         data = _load_metadata(self._path)
         tvs = data.setdefault("tvs", [])
         
         for tv in tvs:
-            if tv.get("home") == home and tv.get("id") == tv_id:
+            if tv.get("id") == tv_id:
                 # Update allowed fields
                 if "ip" in updates:
                     tv["ip"] = updates["ip"]
@@ -246,13 +206,13 @@ class MetadataStore:
                 _write_metadata(self._path, data)
                 return tv
         
-        raise TVNotFoundError(f"TV {tv_id} not found for home {home}")
+        raise TVNotFoundError(f"TV {tv_id} not found")
 
-    def get_tv(self, home: str, tv_id: str) -> Dict[str, Any]:
-        for tv in self.list_tvs(home):
+    def get_tv(self, tv_id: str) -> Dict[str, Any]:
+        for tv in self.list_tvs():
             if tv.get("id") == tv_id:
                 return tv
-        raise TVNotFoundError(f"TV {tv_id} not found for home {home}")
+        raise TVNotFoundError(f"TV {tv_id} not found")
 
 
 def normalize_mac(mac: Optional[str]) -> Optional[str]:
