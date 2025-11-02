@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.button import ButtonEntity, ButtonDeviceClass
+from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -59,14 +59,13 @@ async def async_setup_entry(
     _process_tvs(coordinator.data or [])
 
 
-class FrameArtRemoveTVButton(CoordinatorEntity, ButtonEntity):
+class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
     """Button entity to remove a TV."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:delete"
-    _attr_device_class = ButtonDeviceClass.RESTART
+    _attr_name = "zzDANGER-DEL THIS TV"
+    _attr_icon = "mdi:delete-alert"
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_name = "Remove TV"
 
     def __init__(
         self,
@@ -82,6 +81,7 @@ class FrameArtRemoveTVButton(CoordinatorEntity, ButtonEntity):
         # Get TV name from config entry
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+        self._tv_name = tv_name
         
         # Use tv_id as identifier (no home prefix)
         identifier = tv_id
@@ -105,3 +105,9 @@ class FrameArtRemoveTVButton(CoordinatorEntity, ButtonEntity):
         if device:
             # Remove the device (this will trigger our device_removed listener)
             device_registry.async_remove_device(device.id)
+            _LOGGER.info(f"Removed TV device: {self._tv_name}")
+        
+        # Also remove from config entry so it doesn't reappear on reload
+        from .config_entry import remove_tv_config
+        remove_tv_config(self.hass, self._entry, self._tv_id)
+        _LOGGER.info(f"Removed TV {self._tv_name} from config entry")

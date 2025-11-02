@@ -95,7 +95,8 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         return None
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the current artwork."""
         tv = self._current_tv
         if not tv:
             return None
@@ -111,15 +112,18 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         return "Unknown"
 
     @property
-    def name(self) -> str | None:
+    def name(self) -> str | None:  # type: ignore[override]
+        """Return the name of the sensor."""
         return self._derive_name()
 
     @property
-    def available(self) -> bool:
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
         return self._current_tv is not None
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
+    def extra_state_attributes(self) -> dict[str, Any] | None:  # type: ignore[override]
+        """Return extra state attributes."""
         tv = self._current_tv
         if not tv:
             return None
