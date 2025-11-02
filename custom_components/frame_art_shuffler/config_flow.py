@@ -11,7 +11,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_MAC, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.config_entries import ConfigFlowResult
 
 from .const import (
     CONF_EXCLUDE_TAGS,
@@ -53,7 +53,7 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry: Optional[config_entries.ConfigEntry] = None
         self._reauth_tv_id: Optional[str] = None
 
-    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_user(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
@@ -82,7 +82,7 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reauth(self, data: Dict[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, data: Dict[str, Any]) -> ConfigFlowResult:
         entry_id = self.context.get("entry_id")
         self._reauth_tv_id = data.get(CONF_TV_ID)
         if not entry_id or not self._reauth_tv_id:
@@ -95,7 +95,7 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._reauth_entry = entry
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_reauth_confirm(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         entry = self._reauth_entry
         tv_id = self._reauth_tv_id
         if entry is None or tv_id is None:
@@ -148,6 +148,11 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if coordinator is not None:
             self.hass.async_create_task(coordinator.async_request_refresh())
 
+    async def _async_pair_tv(self, host: str, token_path: Path, *, mac: str | None = None) -> bool:
+        """Pair with a TV."""
+        bound = partial(pair_tv, host, token_path, mac=mac)
+        return await self.hass.async_add_executor_job(bound)
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
@@ -170,11 +175,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
     async def _list_tvs(self) -> list[dict[str, Any]]:
         return await self.hass.async_add_executor_job(self._store().list_tvs)
 
-    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         """Show the Add TV form directly."""
         return await self.async_step_add_tv(user_input)
 
-    async def async_step_add_tv(self, user_input: Optional[Dict[str, Any]] = None) -> FlowResult:
+    async def async_step_add_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         """Handle adding a new TV."""
         errors: Dict[str, str] = {}
         
@@ -250,7 +255,10 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     })
                     
                     self._async_schedule_refresh()
-                    return self.async_create_entry(title="", data={})
+                    return self.async_create_entry(
+                        title=f"{name} added as TV for Frame Art Shuffler",
+                        data={},
+                    )
 
         # Use preserved input as defaults when re-rendering form with errors
         schema = vol.Schema(
