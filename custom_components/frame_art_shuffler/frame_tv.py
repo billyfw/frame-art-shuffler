@@ -525,7 +525,6 @@ def _send_wake_on_lan(mac_address: str) -> None:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.sendto(payload, (_WOL_BROADCAST_IP, _WOL_BROADCAST_PORT))
-        _LOGGER.debug("Wake-on-LAN packet sent to %s", mac_address)
     except OSError as err:
         raise FrameArtConnectionError(f"Failed to send Wake-on-LAN packet to {mac_address}: {err}") from err
 
