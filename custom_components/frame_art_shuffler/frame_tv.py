@@ -375,8 +375,22 @@ def is_tv_on(ip: str) -> bool:
 def tv_on(ip: str, mac_address: str) -> bool:
     """Wake Frame TV via Wake-on-LAN.
     
-    Sends a Wake-on-LAN packet to wake the TV's network interface. The TV should
-    wake to its default state (typically art mode if that was the last active mode).
+    Samsung Frame TVs require a two-stage Wake-on-LAN approach with significant delay:
+    
+    1. First WOL wakes the network interface, but the TV enters a "network awake, 
+       screen off" standby state where the screen remains black.
+    
+    2. The TV needs 12+ seconds to fully transition into this network-awake state
+       before it will respond to commands.
+    
+    3. Second WOL (sent after the delay) actually turns on the screen and displays 
+       art mode.
+    
+    CRITICAL: The 12-second delay between WOL packets is required. Testing showed that
+    shorter delays (2s, 5s) do not work - the TV must fully enter the network-awake 
+    state before the second WOL will turn on the screen. This mimics the reliable 
+    behavior of manually running the WOL command twice from the CLI with natural 
+    human delay between commands.
     
     This function intentionally does NOT send KEY_POWER to avoid toggle issues where
     the TV might switch from art mode to TV content mode unexpectedly.
@@ -388,12 +402,22 @@ def tv_on(ip: str, mac_address: str) -> bool:
     separately.
     """
 
+    # First WOL: Wake network interface
     _send_wake_on_lan(mac_address)
-    _LOGGER.info("Wake-on-LAN packet sent to %s", mac_address)
+    _LOGGER.info("Wake-on-LAN packet sent to %s (first - waking network)", mac_address)
     
-    # Give TV time to wake up
-    if _WOL_WAKE_DELAY:
-        time.sleep(_WOL_WAKE_DELAY)
+    # CRITICAL: Wait for TV to fully enter network-awake state
+    # This delay was determined through testing - shorter delays (2s, 5s) do not work.
+    # The TV needs this time to transition from "fully off" to "network awake, screen off"
+    # before the second WOL packet will successfully turn on the screen.
+    time.sleep(12)
+    
+    # Second WOL: Turn on screen
+    _send_wake_on_lan(mac_address)
+    _LOGGER.info("Wake-on-LAN packet sent to %s (second - turning on screen)", mac_address)
+    
+    # Give TV time to fully wake up and display art
+    time.sleep(3)
     
     # Check state for diagnostic purposes (don't take action based on it)
     try:

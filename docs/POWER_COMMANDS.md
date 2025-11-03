@@ -19,16 +19,35 @@ remote.hold_key("KEY_POWER", 3)
 
 ### Power On (`tv_on`)
 
+**CRITICAL**: Samsung Frame TVs require a **two-stage Wake-on-LAN** process with a **12+ second delay** between packets.
+
 ```python
-_send_wake_on_lan("28:AF:42:18:64:08")
-time.sleep(2)
-# Done - no KEY_POWER sent
+# Stage 1: Wake network interface
+_send_wake_on_lan(mac_address)
+time.sleep(12)  # CRITICAL: Must wait 12+ seconds
+
+# Stage 2: Turn on screen
+_send_wake_on_lan(mac_address)
+time.sleep(3)
 ```
 
-- Sends a Wake-on-LAN packet to wake the TV's network interface
-- The TV wakes to its default state (typically art mode if that was last active)
-- **Does NOT send KEY_POWER** to avoid unpredictable toggle behavior
-- If you need to ensure art mode after waking, call `set_art_mode()` separately
+#### Why Two WOL Packets Are Required
+
+1. **First WOL** wakes the TV's network interface, but the TV enters a "network awake, screen off" standby state where the screen remains black
+2. **TV needs 12+ seconds** to fully transition into this network-awake state before it will respond to commands
+3. **Second WOL** (sent after the delay) actually turns on the screen and displays art mode
+
+**Testing Results:**
+- ✅ 12 second delay: Works reliably
+- ❌ 5 second delay: Does not work - screen stays black
+- ❌ 2 second delay: Does not work - screen stays black
+- ❌ Single WOL: TV wakes to network but screen stays off
+
+This behavior was discovered by observing that manually running the WOL command twice from the CLI (with natural human delay between commands) worked reliably, while a single automated WOL did not.
+
+**Does NOT send KEY_POWER** to avoid unpredictable toggle behavior.
+
+If you need to ensure art mode after waking, call `set_art_mode()` separately.
 
 ### Switch to Art Mode (`set_art_mode`)
 
