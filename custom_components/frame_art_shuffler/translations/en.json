@@ -9,6 +9,12 @@
       "frame_art_shuffler": {
         "current_artwork": {
           "name": "Current Artwork"
+        },
+        "last_shuffle_image": {
+          "name": "Last Shuffle Image"
+        },
+        "last_shuffle_timestamp": {
+          "name": "Last Shuffle Timestamp"
         }
       }
     }
