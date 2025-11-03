@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import random
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from homeassistant.components.button import ButtonEntity
@@ -14,10 +17,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers import device_registry as dr
 
-from .config_entry import get_tv_config
+from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
-from .frame_tv import tv_on, tv_off, FrameArtError
+from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, FrameArtError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ async def async_setup_entry(
     tracked_remove: dict[str, FrameArtRemoveTVButton] = {}
     tracked_on: dict[str, FrameArtTVOnButton] = {}
     tracked_off: dict[str, FrameArtTVOffButton] = {}
+    tracked_shuffle: dict[str, FrameArtShuffleButton] = {}
 
     @callback
     def _process_tvs(tvs: list[dict[str, Any]]) -> None:
@@ -50,6 +54,9 @@ async def async_setup_entry(
         for tv_id in list(tracked_off.keys()):
             if tv_id not in current_tv_ids:
                 tracked_off.pop(tv_id)
+        for tv_id in list(tracked_shuffle.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_shuffle.pop(tv_id)
 
         # Add entities for new TVs
         for tv in tvs:
@@ -73,6 +80,12 @@ async def async_setup_entry(
             if tv_id not in tracked_off:
                 entity = FrameArtTVOffButton(coordinator, entry, tv_id)
                 tracked_off[tv_id] = entity
+                new_entities.append(entity)
+            
+            # Add Shuffle button
+            if tv_id not in tracked_shuffle:
+                entity = FrameArtShuffleButton(coordinator, entry, tv_id)
+                tracked_shuffle[tv_id] = entity
                 new_entities.append(entity)
 
         if new_entities:
@@ -234,3 +247,205 @@ class FrameArtTVOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):
             _LOGGER.info(f"Sent screen off command to {self._tv_name}")
         except FrameArtError as err:
             _LOGGER.error(f"Failed to turn off {self._tv_name}: {err}")
+
+
+class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to shuffle to a random image."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Shuffle Image"
+    _attr_icon = "mdi:shuffle-variant"
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the shuffle button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        # Get TV config
+        tv_config = get_tv_config(entry, tv_id)
+        if tv_config:
+            self._tv_name = tv_config.get("name", tv_id)
+            self._tv_ip = tv_config.get("ip")
+        else:
+            self._tv_name = tv_id
+            self._tv_ip = None
+
+        self._attr_unique_id = f"{tv_id}_shuffle"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - shuffle to a random image."""
+        if not self._tv_ip:
+            _LOGGER.error(f"Cannot shuffle {self._tv_name}: missing IP address in config")
+            return
+
+        # Get TV config to access tags and current image
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            _LOGGER.error(f"Cannot shuffle {self._tv_name}: TV config not found")
+            return
+
+        include_tags = tv_config.get("tags", [])
+        exclude_tags = tv_config.get("exclude_tags", [])
+        current_image = tv_config.get("current_image")
+
+        # Get metadata path and load images
+        metadata_path = Path(self._entry.data.get("metadata_path", ""))
+        if not metadata_path.exists():
+            _LOGGER.error(
+                f"Cannot shuffle {self._tv_name}: metadata file not found at {metadata_path}"
+            )
+            return
+
+        # Select random image using executor job
+        try:
+            selected_image = await self.hass.async_add_executor_job(
+                self._select_random_image,
+                metadata_path,
+                include_tags,
+                exclude_tags,
+                current_image,
+            )
+        except Exception as err:
+            _LOGGER.error(f"Failed to select image for {self._tv_name}: {err}")
+            return
+
+        if selected_image is None:
+            # Logged in _select_random_image
+            return
+
+        # Upload the image
+        image_filename = selected_image["filename"]
+        image_path = metadata_path.parent / image_filename
+
+        if not image_path.exists():
+            _LOGGER.error(
+                f"Cannot shuffle {self._tv_name}: image file not found at {image_path}"
+            )
+            return
+
+        try:
+            _LOGGER.info(f"Uploading {image_filename} to {self._tv_name}...")
+            await self.hass.async_add_executor_job(
+                set_art_on_tv_deleteothers,
+                self._tv_ip,
+                str(image_path),
+                True,  # delete_others
+            )
+            _LOGGER.info(f"Successfully uploaded {image_filename} to {self._tv_name}")
+
+            # Update current_image and last_shuffle_timestamp in config
+            update_tv_config(
+                self.hass,
+                self._entry,
+                self._tv_id,
+                {
+                    "current_image": image_filename,
+                    "last_shuffle_image": image_filename,
+                    "last_shuffle_timestamp": datetime.now().isoformat(),
+                },
+            )
+
+            # Request coordinator refresh to update sensors
+            await self.coordinator.async_request_refresh()
+
+        except FrameArtError as err:
+            _LOGGER.error(f"Failed to upload {image_filename} to {self._tv_name}: {err}")
+
+    def _select_random_image(
+        self,
+        metadata_path: Path,
+        include_tags: list[str],
+        exclude_tags: list[str],
+        current_image: str | None,
+    ) -> dict[str, Any] | None:
+        """Select a random image matching tag criteria (runs in executor).
+        
+        Returns the selected image dict or None if no suitable image found.
+        """
+        import json
+
+        # Load metadata
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception as err:
+            _LOGGER.error(f"Failed to load metadata from {metadata_path}: {err}")
+            return None
+
+        images = metadata.get("images", {})
+        if not images:
+            _LOGGER.warning(f"No images found in metadata for {self._tv_name}")
+            return None
+
+        # Filter images by tags
+        eligible_images = []
+        for filename, image_data in images.items():
+            image_tags = set(image_data.get("tags", []))
+            
+            # Must have at least one include tag (if include_tags is not empty)
+            if include_tags:
+                has_include = any(tag in image_tags for tag in include_tags)
+                if not has_include:
+                    continue
+            
+            # Must not have any exclude tags
+            if exclude_tags:
+                has_exclude = any(tag in image_tags for tag in exclude_tags)
+                if has_exclude:
+                    continue
+            
+            # Add filename to image_data for easier handling
+            image_data_with_filename = {**image_data, "filename": filename}
+            eligible_images.append(image_data_with_filename)
+
+        if not eligible_images:
+            _LOGGER.warning(
+                f"No images matching tag criteria for {self._tv_name} "
+                f"(include: {include_tags}, exclude: {exclude_tags})"
+            )
+            return None
+
+        # Log the eligible set
+        eligible_filenames = [img["filename"] for img in eligible_images]
+        _LOGGER.debug(
+            f"Eligible images for {self._tv_name}: {eligible_filenames}"
+        )
+
+        # Remove current image from candidates
+        candidates = [img for img in eligible_images if img["filename"] != current_image]
+
+        # If only one image meets criteria and it's current, do nothing
+        if not candidates:
+            if len(eligible_images) == 1:
+                _LOGGER.info(
+                    f"Only one image ({eligible_images[0]['filename']}) matches criteria "
+                    f"for {self._tv_name} and it's already displayed. No shuffle performed."
+                )
+                return None
+            else:
+                # This shouldn't happen (all eligible == current?)
+                _LOGGER.warning(
+                    f"No candidate images for {self._tv_name} after removing current image"
+                )
+                return None
+
+        # Select random image
+        selected = random.choice(candidates)
+        _LOGGER.info(
+            f"{selected['filename']} selected for TV {self._tv_name} "
+            f"from possible set of images {{{', '.join(eligible_filenames)}}}"
+        )
+
+        return selected
