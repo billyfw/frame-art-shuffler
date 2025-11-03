@@ -327,7 +327,8 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
 
         # Upload the image
         image_filename = selected_image["filename"]
-        image_path = metadata_path.parent / image_filename
+        # Images are stored in the library subdirectory relative to metadata.json
+        image_path = metadata_path.parent / "library" / image_filename
 
         if not image_path.exists():
             _LOGGER.error(
