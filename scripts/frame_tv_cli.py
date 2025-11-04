@@ -45,7 +45,8 @@ def _parse_args() -> argparse.Namespace:
     )
     upload.add_argument("artpath", help="Path to the artwork file (.jpg/.png)")
     upload.add_argument("--delete-others", action="store_true", help="Delete other artworks after upload (default: keep existing)")
-    upload.add_argument("--matte", help="Optional matte identifier (e.g., 'shadowbox_black')")
+    upload.add_argument("--matte", help="Optional matte identifier (e.g., 'modern', 'shadowbox')")
+    upload.add_argument("--filter", help="Optional photo filter (e.g., 'Aqua', 'Pastel', 'None')")
     upload.add_argument("--skip-ensure-art", action="store_true", help="Skip enabling art mode before upload")
     upload.add_argument("--brightness", type=int, help="Set brightness after upload (1-10 for standard, 50 for max)")
     upload.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
@@ -84,6 +85,7 @@ def main() -> int:
                 delete_others=args.delete_others,
                 ensure_art_mode=not args.skip_ensure_art,
                 matte=args.matte,
+                photo_filter=getattr(args, 'filter', None),
                 brightness=args.brightness,
                 debug=args.debug,
             )

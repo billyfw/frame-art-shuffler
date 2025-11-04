@@ -104,6 +104,7 @@ def set_art_on_tv_deleteothers(
     delete_others: bool = False,
     ensure_art_mode: bool = True,
     matte: Optional[str] = None,
+    photo_filter: Optional[str] = None,
     wait_after_upload: float = _INITIAL_UPLOAD_SETTLE,
     brightness: Optional[int] = None,
     debug: bool = False,
@@ -158,8 +159,8 @@ def set_art_on_tv_deleteothers(
 
                 # Upload with this fresh connection
                 kwargs = {"file_type": file_type}
-                matte_value = matte if matte is not None else "none"
-                kwargs.update({"matte": matte_value, "portrait_matte": matte_value})
+                if matte is not None and matte.lower() != "none":
+                    kwargs["matte"] = matte
                 
                 try:
                     response = art.upload(payload, **kwargs)
@@ -269,6 +270,17 @@ def set_art_on_tv_deleteothers(
 
             if not displayed:
                 _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
+
+            # Apply photo filter if specified
+            if photo_filter is not None and photo_filter.lower() not in ("none", ""):
+                try:
+                    if debug:
+                        _LOGGER.debug("Applying photo filter '%s' to content_id=%s", photo_filter, content_id)
+                    art.set_photo_filter(content_id, photo_filter)
+                    if debug:
+                        _LOGGER.debug("Successfully applied photo filter '%s'", photo_filter)
+                except Exception as filter_err:  # pylint: disable=broad-except
+                    _LOGGER.warning("Failed to apply photo filter '%s': %s", photo_filter, filter_err)
 
             if delete_others:
                 _delete_other_images(art, content_id, debug=debug)

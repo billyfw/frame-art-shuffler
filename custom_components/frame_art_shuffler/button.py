@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import random
 from datetime import datetime
@@ -338,11 +339,24 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
 
         try:
             _LOGGER.info(f"Uploading {image_filename} to {self._tv_name}...")
-            await self.hass.async_add_executor_job(
+            # Get matte and filter from selected image metadata
+            image_matte = selected_image.get("matte")
+            if image_matte and image_matte.lower() == "none":
+                image_matte = None
+            image_filter = selected_image.get("filter")
+            if image_filter and image_filter.lower() == "none":
+                image_filter = None
+            # Use functools.partial to bind keyword-only argument
+            upload_func = functools.partial(
                 set_art_on_tv_deleteothers,
+                delete_others=True,
+                matte=image_matte,
+                photo_filter=image_filter
+            )
+            await self.hass.async_add_executor_job(
+                upload_func,
                 self._tv_ip,
                 str(image_path),
-                True,  # delete_others
             )
             _LOGGER.info(f"Successfully uploaded {image_filename} to {self._tv_name}")
 
@@ -363,6 +377,8 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
 
         except FrameArtError as err:
             _LOGGER.error(f"Failed to upload {image_filename} to {self._tv_name}: {err}")
+        except Exception as err:
+            _LOGGER.exception(f"Unexpected error during shuffle for {self._tv_name}: {err}")
 
     def _select_random_image(
         self,
@@ -421,7 +437,7 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
         # Log the eligible set
         eligible_filenames = [img["filename"] for img in eligible_images]
         _LOGGER.debug(
-            f"Eligible images for {self._tv_name}: {eligible_filenames}"
+            f"{len(eligible_images)} eligible images for {self._tv_name}: {eligible_filenames}"
         )
 
         # Remove current image from candidates
@@ -446,7 +462,7 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
         selected = random.choice(candidates)
         _LOGGER.info(
             f"{selected['filename']} selected for TV {self._tv_name} "
-            f"from possible set of images {{{', '.join(eligible_filenames)}}}"
+            f"from {len(eligible_images)} eligible images"
         )
 
         return selected
