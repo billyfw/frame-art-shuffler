@@ -159,14 +159,17 @@ def set_art_on_tv_deleteothers(
 
                 # Upload with this fresh connection
                 kwargs = {"file_type": file_type}
-                if matte is not None and matte.lower() != "none":
+                if matte is not None:
                     kwargs["matte"] = matte
+                    _LOGGER.info("Uploading with matte: %s", matte)
                 
                 try:
+                    _LOGGER.info("Uploading image to %s (attempt %s/%s)...", ip, attempt + 1, _UPLOAD_RETRIES)
                     response = art.upload(payload, **kwargs)
                     
                     # If we got here, upload succeeded - extract content_id and continue
                     content_id = _extract_content_id(response)
+                    _LOGGER.info("Upload successful, content_id=%s", content_id)
                     if debug:
                         _LOGGER.debug("Upload returned content_id=%s", content_id)
                     
@@ -270,13 +273,17 @@ def set_art_on_tv_deleteothers(
 
             if not displayed:
                 _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
+            else:
+                _LOGGER.info("Art %s successfully displayed on %s", content_id, ip)
 
             # Apply photo filter if specified
             if photo_filter is not None and photo_filter.lower() not in ("none", ""):
                 try:
+                    _LOGGER.info("Applying photo filter '%s' to %s", photo_filter, ip)
                     if debug:
                         _LOGGER.debug("Applying photo filter '%s' to content_id=%s", photo_filter, content_id)
                     art.set_photo_filter(content_id, photo_filter)
+                    _LOGGER.info("Photo filter '%s' applied successfully", photo_filter)
                     if debug:
                         _LOGGER.debug("Successfully applied photo filter '%s'", photo_filter)
                 except Exception as filter_err:  # pylint: disable=broad-except
@@ -285,6 +292,7 @@ def set_art_on_tv_deleteothers(
             if delete_others:
                 _delete_other_images(art, content_id, debug=debug)
 
+            _LOGGER.info("Upload complete for %s (content_id=%s)", ip, content_id)
             return content_id
     except Exception as err:  # pylint: disable=broad-except
         # Upload worked but post-processing failed
