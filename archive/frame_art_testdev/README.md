@@ -98,6 +98,20 @@ if current == content_id:
    - If `select_image()` doesn't throw an error, the command was sent
    - Don't fail the entire operation just because verification timed out
 
+6. **Matte Parameter Defaults:**
+   - The `samsungtvws` library has a default matte value of `'shadowbox_polar'`
+   - If you don't explicitly pass a `matte` parameter to `art.upload()`, it will use this default
+   - **To display images without a matte**, you must explicitly pass `matte='none'`:
+     ```python
+     art.upload(image_data, file_type="JPEG", matte="none")
+     ```
+   - Simply omitting the matte parameter will NOT give you no matte - it will give you the library's default
+   - Valid matte values (from Frame TV):
+     - `'none'` - No matte (full screen)
+     - `'modernthin'`, `'modern'`, `'modernwide'` - Modern borders
+     - `'flexible'`, `'shadowbox'`, `'panoramic'`, `'triptych'`, `'mix'`, `'squares'` - Other styles
+   - Always query your TV for supported mattes: `art.get_matte_list()`
+
 ### **TV Must Be On AND In Art Mode!**
 
 ⚠️ **CRITICAL:** These commands **require specific TV state**!

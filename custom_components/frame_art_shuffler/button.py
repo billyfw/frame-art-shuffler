@@ -467,8 +467,6 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
             _LOGGER.info(f"Uploading {image_filename} to {self._tv_name}...")
             # Get matte and filter from selected image metadata
             image_matte = selected_image.get("matte")
-            if image_matte and image_matte.lower() == "none":
-                image_matte = None
             image_filter = selected_image.get("filter")
             if image_filter and image_filter.lower() == "none":
                 image_filter = None

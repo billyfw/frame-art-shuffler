@@ -77,6 +77,11 @@ def main() -> int:
     args = _parse_args()
     ip = args.ip
 
+    # Configure logging if debug is enabled
+    if getattr(args, 'debug', False):
+        import logging
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
     try:
         if args.command == "upload":
             content_id = set_art_on_tv_deleteothers(
@@ -93,10 +98,6 @@ def main() -> int:
             return 0
 
         if args.command == "on":
-            if args.debug:
-                import logging
-                logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-            
             tv_on(ip, args.mac)
             print("Wake-on-LAN sent; TV should wake to default state")
             return 0
