@@ -21,7 +21,7 @@ from homeassistant.helpers import device_registry as dr
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
-from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, FrameArtError
+from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, FrameArtError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ async def async_setup_entry(
     tracked_remove: dict[str, FrameArtRemoveTVButton] = {}
     tracked_on: dict[str, FrameArtTVOnButton] = {}
     tracked_off: dict[str, FrameArtTVOffButton] = {}
+    tracked_art_mode: dict[str, FrameArtArtModeButton] = {}
+    tracked_on_art: dict[str, FrameArtOnArtModeButton] = {}
     tracked_shuffle: dict[str, FrameArtShuffleButton] = {}
 
     @callback
@@ -55,6 +57,12 @@ async def async_setup_entry(
         for tv_id in list(tracked_off.keys()):
             if tv_id not in current_tv_ids:
                 tracked_off.pop(tv_id)
+        for tv_id in list(tracked_art_mode.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_art_mode.pop(tv_id)
+        for tv_id in list(tracked_on_art.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_on_art.pop(tv_id)
         for tv_id in list(tracked_shuffle.keys()):
             if tv_id not in current_tv_ids:
                 tracked_shuffle.pop(tv_id)
@@ -81,6 +89,18 @@ async def async_setup_entry(
             if tv_id not in tracked_off:
                 entity = FrameArtTVOffButton(coordinator, entry, tv_id)
                 tracked_off[tv_id] = entity
+                new_entities.append(entity)
+            
+            # Add Art Mode button
+            if tv_id not in tracked_art_mode:
+                entity = FrameArtArtModeButton(coordinator, entry, tv_id)
+                tracked_art_mode[tv_id] = entity
+                new_entities.append(entity)
+            
+            # Add On+Art Mode button
+            if tv_id not in tracked_on_art:
+                entity = FrameArtOnArtModeButton(coordinator, entry, tv_id)
+                tracked_on_art[tv_id] = entity
                 new_entities.append(entity)
             
             # Add Shuffle button
@@ -248,6 +268,112 @@ class FrameArtTVOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):
             _LOGGER.info(f"Sent screen off command to {self._tv_name}")
         except FrameArtError as err:
             _LOGGER.error(f"Failed to turn off {self._tv_name}: {err}")
+
+
+class FrameArtArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to switch TV to art mode."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Art Mode"
+    _attr_icon = "mdi:palette"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        # Get TV config
+        tv_config = get_tv_config(entry, tv_id)
+        if tv_config:
+            self._tv_name = tv_config.get("name", tv_id)
+            self._tv_ip = tv_config.get("ip")
+        else:
+            self._tv_name = tv_id
+            self._tv_ip = None
+
+        self._attr_unique_id = f"{tv_id}_art_mode"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - switch TV to art mode."""
+        if not self._tv_ip:
+            _LOGGER.error(f"Cannot switch {self._tv_name} to art mode: missing IP address in config")
+            return
+
+        try:
+            await self.hass.async_add_executor_job(set_art_mode, self._tv_ip)
+            _LOGGER.info(f"Switched {self._tv_name} to art mode")
+        except FrameArtError as err:
+            _LOGGER.error(f"Failed to switch {self._tv_name} to art mode: {err}")
+
+
+class FrameArtOnArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to turn TV on and then switch to art mode."""
+
+    _attr_has_entity_name = True
+    _attr_name = "On+Art Mode (~12s)"
+    _attr_icon = "mdi:television-ambient-light"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        # Get TV config
+        tv_config = get_tv_config(entry, tv_id)
+        if tv_config:
+            self._tv_name = tv_config.get("name", tv_id)
+            self._tv_ip = tv_config.get("ip")
+            self._tv_mac = tv_config.get("mac")
+        else:
+            self._tv_name = tv_id
+            self._tv_ip = None
+            self._tv_mac = None
+
+        self._attr_unique_id = f"{tv_id}_on_art_mode"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - turn TV on and switch to art mode."""
+        if not self._tv_ip or not self._tv_mac:
+            _LOGGER.error(f"Cannot turn on {self._tv_name}: missing IP or MAC address in config")
+            return
+
+        try:
+            # First turn on the TV
+            await self.hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
+            _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}, waiting for TV to be ready...")
+            
+            # tv_on already includes the ~12 second wait for the TV to be ready
+            # Now switch to art mode
+            await self.hass.async_add_executor_job(set_art_mode, self._tv_ip)
+            _LOGGER.info(f"Switched {self._tv_name} to art mode")
+        except FrameArtError as err:
+            _LOGGER.error(f"Failed to turn on and switch {self._tv_name} to art mode: {err}")
 
 
 class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
