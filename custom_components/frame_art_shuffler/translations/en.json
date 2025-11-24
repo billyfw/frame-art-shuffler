@@ -4,6 +4,21 @@
       "single_instance_allowed": "Integration already configured. To add TVs, click the gear icon (⚙️) on the Frame Art integration card."
     }
   },
+  "options": {
+    "step": {
+      "add_tv": {
+        "data": {
+          "name": "TV Name",
+          "host": "TV IP Address",
+          "mac": "TV MAC Address",
+          "tags": "Image tags to include (e.g. family,abc,cars)",
+          "exclude_tags": "Image tags to exclude (e.g. gore, landscape)",
+          "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
+          "skip_pairing": "Skip Pairing (Advanced)"
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "frame_art_shuffler": {
