@@ -64,14 +64,23 @@ _WOL_BROADCAST_IP = "255.255.255.255"
 _WOL_BROADCAST_PORT = 9
 _WOL_WAKE_DELAY = 2
 
-PROGRESS_LOG_FILE = Path("/config/frame_art_upload.log")
+# Use a dedicated directory for integration data to keep /config clean
+# This matches the structure we want for tokens as well
+DATA_DIR = Path("/config/frame_art_shuffler")
+PROGRESS_LOG_FILE = DATA_DIR / "upload.log"
 
 
 def _log_progress(msg: str) -> None:
     """Log message to the shared progress file."""
     _LOGGER.info(msg)
     try:
-        # Only write if parent dir exists (e.g. /config in HA)
+        # Ensure directory exists
+        if not PROGRESS_LOG_FILE.parent.exists():
+            # Only try to create if we are in a writable environment like /config
+            if str(PROGRESS_LOG_FILE).startswith("/config"):
+                PROGRESS_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        # Only write if parent dir exists
         if PROGRESS_LOG_FILE.parent.exists():
             timestamp = datetime.now().strftime("%H:%M:%S")
             with open(PROGRESS_LOG_FILE, "a", encoding="utf-8") as f:
@@ -631,7 +640,6 @@ def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, deb
         _log_progress(f"Image selected. Waiting {_POST_DISPLAY_VERIFY_DELAY}s to verify display...")
         time.sleep(_POST_DISPLAY_VERIFY_DELAY)
         if _verify_current_art(art, content_id, debug=debug):
-            return Trueent_art(art, content_id, debug=debug):
             return True
 
     # Method 2: fallback to selecting the newest image from the gallery

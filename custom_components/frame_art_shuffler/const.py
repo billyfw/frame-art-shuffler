@@ -5,7 +5,7 @@ DEFAULT_PORT = 8002
 DEFAULT_TIMEOUT = 30
 
 DEFAULT_METADATA_RELATIVE_PATH = "www/frame_art/metadata.json"
-TOKEN_DIR_NAME = "frame_art_tokens"
+TOKEN_DIR_NAME = "frame_art_shuffler/tokens"
 
 CONF_METADATA_PATH = "metadata_path"
 CONF_TOKEN_DIR = "token_dir"

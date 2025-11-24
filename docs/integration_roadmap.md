@@ -76,7 +76,7 @@ Goal: the integration handles shuffle timing without user-created automations.**
 
 - **Diagnostics dump** that includes scheduler state, outstanding timers, and recent errors.   - Step 2: select existing TV (matching home) or create new; gather TV name, IP/hostname (IPv4, IPv6, mDNS allowed), MAC (normalized using add-on logic), tags, exclude tags, shuffle frequency (minutes).
 
-- **Logging conventions**: DEBUG for timer create/cancel, INFO for each shuffle run, WARNING/ERROR for failures (missing tags, upload issues, etc.).   - Step 3: run Samsung pairing handshake; store token under `/config/frame_art_tokens/<safe_ip>.token`.
+- **Logging conventions**: DEBUG for timer create/cancel, INFO for each shuffle run, WARNING/ERROR for failures (missing tags, upload issues, etc.).   - Step 3: run Samsung pairing handshake; store token under `/config/frame_art_shuffler/tokens/<safe_ip>.token`.
 
 - Optional entity attributes for “last image displayed” once shuffle execution lands.   - Persist TV data (with `home`) to `metadata.json` via metadata helper.
 

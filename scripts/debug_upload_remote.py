@@ -23,7 +23,8 @@ except ImportError:
 
 # Configuration
 TV_IP = "192.168.1.249"
-TOKEN_FILE = f"/config/custom_components/frame_art_shuffler/tokens/{TV_IP}.token"
+# Updated to match new shipshape structure
+TOKEN_FILE = f"/config/frame_art_shuffler/tokens/{TV_IP}.token"
 IMAGE_FILE = "samready-57b9e82a.jpg"  # We'll need to find where this is or use a dummy
 
 print(f"Connecting to {TV_IP} using token {TOKEN_FILE}...")
