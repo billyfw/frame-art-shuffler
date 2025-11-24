@@ -218,8 +218,15 @@ def set_art_on_tv_deleteothers(
                 try:
                     _log_progress("Checking Art Mode connection and listing current images...")
                     images_before = art.available()
+                    ids = [img.get('content_id') for img in images_before] if images_before else []
                     count = len(images_before) if images_before else 0
-                    _log_progress(f"Art Mode connection OK. Images on TV: {count}")
+
+                    # TV firmware often reports the active image twice (once as active, once as available).
+                    # If we see exactly 2 identical IDs, report it as 1 image to avoid user confusion.
+                    if count == 2 and len(ids) == 2 and ids[0] == ids[1]:
+                        count = 1
+
+                    _log_progress(f"Art Mode connection OK. Images on TV: {count} {ids}")
                 except Exception as err:  # pylint: disable=broad-except
                     _LOGGER.warning("Could not list images (Art Mode connection issue?): %s", err)
                     # If we can't list images, upload will likely fail too, but we'll try anyway
@@ -338,8 +345,7 @@ def set_art_on_tv_deleteothers(
         with _FrameTVSession(ip) as session:
             art = session.art
             
-            _log_progress(f"Waiting {wait_after_upload}s for TV to process upload...")
-            time.sleep(wait_after_upload)
+            _wait_with_countdown(wait_after_upload, "Waiting for TV to process upload")
 
             displayed = _display_uploaded_art(
                 art,
@@ -367,9 +373,15 @@ def set_art_on_tv_deleteothers(
                     _LOGGER.warning("Failed to apply photo filter '%s': %s", photo_filter, filter_err)
 
             if delete_others:
+                _log_progress("Cleaning up old images from TV memory...")
                 _delete_other_images(art, content_id, debug=debug)
 
             _log_progress(f"Upload complete for {ip} (content_id={content_id})")
+            
+            # Wait briefly so the user can see the success message, then clear
+            time.sleep(5)
+            _clear_progress()
+            
             return content_id
     except Exception as err:  # pylint: disable=broad-except
         # Upload worked but post-processing failed
@@ -637,8 +649,7 @@ def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, deb
             _LOGGER.debug("select_image failed on attempt %s: %s", attempt + 1, err)
             continue
 
-        _log_progress(f"Image selected. Waiting {_POST_DISPLAY_VERIFY_DELAY}s to verify display...")
-        time.sleep(_POST_DISPLAY_VERIFY_DELAY)
+        _wait_with_countdown(_POST_DISPLAY_VERIFY_DELAY, "Image selected. Verifying display")
         if _verify_current_art(art, content_id, debug=debug):
             return True
 
@@ -681,10 +692,17 @@ def _delete_other_images(art, keep_content_id: str, *, debug: bool) -> None:
         raise FrameArtUploadError(f"Could not enumerate TV gallery: {err}") from err
 
     deletions = [item.get("content_id") for item in available if item.get("content_id") and item.get("content_id") != keep_content_id]
+    
+    # Log what we are keeping to help debug duplicate issues
+    kept = [item.get("content_id") for item in available if item.get("content_id") == keep_content_id]
+    if len(kept) > 1:
+        _log_progress(f"Warning: Found {len(kept)} copies of active image {keep_content_id}. Keeping all to avoid accidental deletion.")
+    
     if not deletions:
         _LOGGER.debug("No other images to delete")
         return
 
+    _log_progress(f"Deleting {len(deletions)} old images: {deletions}")
     art.delete_list(deletions)
     if debug:
         _LOGGER.debug("Deleted %s old images", len(deletions))
@@ -943,3 +961,39 @@ def _upload_chunked(
         raise FrameArtUploadError("Upload finished but no content_id returned")
         
     return response["content_id"]
+
+
+def _wait_with_countdown(seconds: float, msg: str) -> None:
+    """Wait for specified seconds while logging a countdown inline."""
+    _LOGGER.info(f"{msg} ({seconds}s)")
+    
+    # Ensure directory exists
+    try:
+        if not PROGRESS_LOG_FILE.parent.exists():
+            if str(PROGRESS_LOG_FILE).startswith("/config"):
+                PROGRESS_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    # If we can't write to file, just sleep
+    if not PROGRESS_LOG_FILE.parent.exists():
+        time.sleep(seconds)
+        return
+
+    try:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        with open(PROGRESS_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {msg} ")
+            f.flush()
+            
+            remaining = int(seconds)
+            while remaining > 0:
+                f.write(f"{remaining}... ")
+                f.flush()
+                time.sleep(1)
+                remaining -= 1
+            
+            f.write("Done.\n")
+    except Exception:
+        # Fallback if file operations fail
+        time.sleep(seconds)
