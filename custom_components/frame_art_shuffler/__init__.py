@@ -38,6 +38,7 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         _const = importlib.import_module("homeassistant.const")
         _core = importlib.import_module("homeassistant.core")
         _helpers_dr = importlib.import_module("homeassistant.helpers.device_registry")
+        _helpers_er = importlib.import_module("homeassistant.helpers.entity_registry")
 
         ConfigEntry = getattr(_config_entries, "ConfigEntry")
         Platform = getattr(_const, "Platform")
@@ -45,6 +46,7 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         callback = getattr(_core, "callback")
         ServiceCall = getattr(_core, "ServiceCall")
         dr = _helpers_dr
+        er = _helpers_er
         _HA_AVAILABLE = True
     except ModuleNotFoundError:
         _HA_AVAILABLE = False
@@ -103,10 +105,23 @@ if _HA_AVAILABLE:
 
         async def async_handle_display_image(call: ServiceCall) -> None:
             """Handle the display_image service."""
-            device_id = call.data["device_id"]
-            image_path = call.data["image_path"]
+            device_id = call.data.get("device_id")
+            entity_id = call.data.get("entity_id")
+            image_path = call.data.get("image_path")
+            image_url = call.data.get("image_url")
+            filename = call.data.get("filename")
             matte = call.data.get("matte")
             filter_id = call.data.get("filter")
+
+            # Resolve entity_id to device_id if needed
+            if entity_id and not device_id:
+                ent_reg = er.async_get(hass)
+                entity_entry = ent_reg.async_get(entity_id)
+                if entity_entry:
+                    device_id = entity_entry.device_id
+            
+            if not device_id:
+                raise ValueError("Must provide device_id or entity_id")
 
             device_registry = dr.async_get(hass)
             device = device_registry.async_get(device_id)
@@ -131,6 +146,25 @@ if _HA_AVAILABLE:
             
             coordinator = data["coordinator"]
             
+            # Resolve image path
+            final_path = None
+            if image_path:
+                final_path = image_path
+            elif image_url:
+                if image_url.startswith("/local/"):
+                    final_path = hass.config.path("www", image_url[7:])
+                else:
+                    raise ValueError("image_url must start with /local/")
+            elif filename:
+                # Use metadata path to find library root
+                metadata_path = data["metadata_path"]
+                # metadata_path is like /config/www/frame_art/metadata.json
+                # so library root is /config/www/frame_art/
+                final_path = str(metadata_path.parent / filename)
+            
+            if not final_path:
+                raise ValueError("Must provide image_path, image_url, or filename")
+
             # Find TV IP
             tv_id = None
             for identifier in device.identifiers:
@@ -152,7 +186,7 @@ if _HA_AVAILABLE:
                 functools.partial(
                     frame_tv.set_art_on_tv_deleteothers,
                     ip,
-                    image_path,
+                    final_path,
                     matte=matte,
                     photo_filter=filter_id,
                 )
