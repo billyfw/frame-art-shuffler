@@ -64,6 +64,31 @@ _WOL_BROADCAST_IP = "255.255.255.255"
 _WOL_BROADCAST_PORT = 9
 _WOL_WAKE_DELAY = 2
 
+PROGRESS_LOG_FILE = Path("/config/frame_art_upload.log")
+
+
+def _log_progress(msg: str) -> None:
+    """Log message to the shared progress file."""
+    _LOGGER.info(msg)
+    try:
+        # Only write if parent dir exists (e.g. /config in HA)
+        if PROGRESS_LOG_FILE.parent.exists():
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            with open(PROGRESS_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"[{timestamp}] {msg}\n")
+    except Exception:
+        pass
+
+
+def _clear_progress() -> None:
+    """Clear the progress log file."""
+    try:
+        if PROGRESS_LOG_FILE.parent.exists():
+            with open(PROGRESS_LOG_FILE, "w", encoding="utf-8") as f:
+                f.write("")
+    except Exception:
+        pass
+
 
 class FrameArtError(Exception):
     """Base error raised by the Frame TV helper."""
@@ -139,6 +164,9 @@ def set_art_on_tv_deleteothers(
 ) -> str:
     """Upload art to the Frame TV, mirror test script behaviour, and return content_id."""
 
+    _clear_progress()
+    _log_progress(f"Starting process for {ip}...")
+
     file_path = Path(artpath).expanduser().resolve()
     if not file_path.exists():
         raise FrameArtUploadError(f"Art file not found: {file_path}")
@@ -179,10 +207,10 @@ def set_art_on_tv_deleteothers(
                 # Get current image count before upload
                 images_before = None
                 try:
-                    _LOGGER.info("Checking Art Mode connection and listing current images...")
+                    _log_progress("Checking Art Mode connection and listing current images...")
                     images_before = art.available()
                     count = len(images_before) if images_before else 0
-                    _LOGGER.info("Art Mode connection OK. Images on TV: %s", count)
+                    _log_progress(f"Art Mode connection OK. Images on TV: {count}")
                 except Exception as err:  # pylint: disable=broad-except
                     _LOGGER.warning("Could not list images (Art Mode connection issue?): %s", err)
                     # If we can't list images, upload will likely fail too, but we'll try anyway
@@ -192,10 +220,10 @@ def set_art_on_tv_deleteothers(
                 kwargs = {"file_type": file_type}
                 if matte is not None:
                     kwargs["matte"] = matte
-                    _LOGGER.info("Uploading with matte: %s", matte)
+                    _log_progress(f"Uploading with matte: {matte}")
                 
                 try:
-                    _LOGGER.info("Uploading image to %s (attempt %s/%s)...", ip, attempt + 1, _UPLOAD_RETRIES)
+                    _log_progress(f"Uploading image to {ip} (attempt {attempt + 1}/{_UPLOAD_RETRIES})...")
                     
                     # Use our custom chunked upload instead of the library's default upload
                     # to avoid hangs on large files/slow networks
@@ -207,7 +235,7 @@ def set_art_on_tv_deleteothers(
                         portrait_matte=kwargs.get("portrait_matte")
                     )
                     
-                    _LOGGER.info("Upload successful, content_id=%s", content_id)
+                    _log_progress(f"Upload successful, content_id={content_id}")
                     if debug:
                         _LOGGER.debug("Upload returned content_id=%s", content_id)
                     
@@ -301,6 +329,7 @@ def set_art_on_tv_deleteothers(
         with _FrameTVSession(ip) as session:
             art = session.art
             
+            _log_progress(f"Waiting {wait_after_upload}s for TV to process upload...")
             time.sleep(wait_after_upload)
 
             displayed = _display_uploaded_art(
@@ -313,16 +342,16 @@ def set_art_on_tv_deleteothers(
             if not displayed:
                 _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
             else:
-                _LOGGER.info("Art %s successfully displayed on %s", content_id, ip)
+                _log_progress(f"Art {content_id} successfully displayed on {ip}")
 
             # Apply photo filter if specified
             if photo_filter is not None and photo_filter.lower() not in ("none", ""):
                 try:
-                    _LOGGER.info("Applying photo filter '%s' to %s", photo_filter, ip)
+                    _log_progress(f"Applying photo filter '{photo_filter}' to {ip}")
                     if debug:
                         _LOGGER.debug("Applying photo filter '%s' to content_id=%s", photo_filter, content_id)
                     art.set_photo_filter(content_id, photo_filter)
-                    _LOGGER.info("Photo filter '%s' applied successfully", photo_filter)
+                    _log_progress(f"Photo filter '{photo_filter}' applied successfully")
                     if debug:
                         _LOGGER.debug("Successfully applied photo filter '%s'", photo_filter)
                 except Exception as filter_err:  # pylint: disable=broad-except
@@ -331,7 +360,7 @@ def set_art_on_tv_deleteothers(
             if delete_others:
                 _delete_other_images(art, content_id, debug=debug)
 
-            _LOGGER.info("Upload complete for %s (content_id=%s)", ip, content_id)
+            _log_progress(f"Upload complete for {ip} (content_id={content_id})")
             return content_id
     except Exception as err:  # pylint: disable=broad-except
         # Upload worked but post-processing failed
@@ -593,15 +622,16 @@ def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, deb
     for attempt, delay in enumerate(_DISPLAY_RETRY_DELAYS):
         if attempt and delay:
             _LOGGER.debug("Waiting %ss before retrying display", delay)
-            time.sleep(delay)
         try:
             art.select_image(content_id, show=True)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.debug("select_image failed on attempt %s: %s", attempt + 1, err)
             continue
 
+        _log_progress(f"Image selected. Waiting {_POST_DISPLAY_VERIFY_DELAY}s to verify display...")
         time.sleep(_POST_DISPLAY_VERIFY_DELAY)
         if _verify_current_art(art, content_id, debug=debug):
+            return Trueent_art(art, content_id, debug=debug):
             return True
 
     # Method 2: fallback to selecting the newest image from the gallery
