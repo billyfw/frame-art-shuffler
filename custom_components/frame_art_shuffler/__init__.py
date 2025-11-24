@@ -190,6 +190,7 @@ if _HA_AVAILABLE:
                     final_path,
                     matte=matte,
                     photo_filter=filter_id,
+                    delete_others=True,
                 )
             )
 
