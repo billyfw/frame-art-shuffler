@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import functools
 from pathlib import Path
 from typing import Any, Callable
 
@@ -52,6 +53,7 @@ if _HA_AVAILABLE:
     from .const import CONF_METADATA_PATH, CONF_TOKEN_DIR, DOMAIN
     from .coordinator import FrameArtCoordinator
     from .config_entry import remove_tv_config
+    from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
     from .metadata import MetadataStore
 
@@ -97,6 +99,67 @@ if _HA_AVAILABLE:
         # Register device removal handler
         entry.async_on_unload(
             _register_device_removal_listener(hass, entry, metadata_path)
+        )
+
+        async def async_handle_display_image(call: ServiceCall) -> None:
+            """Handle the display_image service."""
+            device_id = call.data["device_id"]
+            image_path = call.data["image_path"]
+            matte = call.data.get("matte")
+            filter_id = call.data.get("filter")
+
+            device_registry = dr.async_get(hass)
+            device = device_registry.async_get(device_id)
+            if not device:
+                raise ValueError(f"Device {device_id} not found")
+
+            # Find the config entry for this device
+            entry_id = None
+            for eid in device.config_entries:
+                entry = hass.config_entries.async_get_entry(eid)
+                if entry and entry.domain == DOMAIN:
+                    entry_id = eid
+                    break
+            
+            if not entry_id:
+                raise ValueError(f"No config entry found for device {device_id} in domain {DOMAIN}")
+
+            # Get coordinator
+            data = hass.data.get(DOMAIN, {}).get(entry_id)
+            if not data:
+                raise ValueError(f"Integration data not found for entry {entry_id}")
+            
+            coordinator = data["coordinator"]
+            
+            # Find TV IP
+            tv_id = None
+            for identifier in device.identifiers:
+                if identifier[0] == DOMAIN:
+                    tv_id = identifier[1]
+                    break
+            
+            if not tv_id:
+                raise ValueError(f"Could not determine TV ID from device {device_id}")
+
+            # Look up TV in coordinator data
+            tv_data = next((tv for tv in coordinator.data if tv["id"] == tv_id), None)
+            if not tv_data:
+                raise ValueError(f"TV {tv_id} not found in coordinator data")
+            
+            ip = tv_data["ip"]
+
+            await hass.async_add_executor_job(
+                functools.partial(
+                    frame_tv.set_art_on_tv_deleteothers,
+                    ip,
+                    image_path,
+                    matte=matte,
+                    photo_filter=filter_id,
+                )
+            )
+
+        hass.services.async_register(
+            DOMAIN, "display_image", async_handle_display_image
         )
 
         return True

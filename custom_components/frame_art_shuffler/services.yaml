@@ -9,3 +9,33 @@ remove_tv:
       selector:
         device:
           integration: frame_art_shuffler
+
+display_image:
+  name: Display Image
+  description: Upload and display a specific image on a Frame TV
+  fields:
+    device_id:
+      name: Device
+      description: The TV device to display the image on
+      required: true
+      selector:
+        device:
+          integration: frame_art_shuffler
+    image_path:
+      name: Image Path
+      description: Full local path to the image file
+      required: true
+      selector:
+        text:
+    matte:
+      name: Matte
+      description: Matte ID (e.g. modern_matte)
+      required: false
+      selector:
+        text:
+    filter:
+      name: Filter
+      description: Filter ID
+      required: false
+      selector:
+        text:
