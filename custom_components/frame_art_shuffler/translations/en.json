@@ -11,8 +11,8 @@
           "name": "TV Name",
           "host": "TV IP Address",
           "mac": "TV MAC Address",
-          "tags": "Image tags to include (e.g. family,abc,cars)",
-          "exclude_tags": "Image tags to exclude (e.g. gore, landscape)",
+          "tags": "Image tags to include [spaces ok] (e.g. family, abc,cars ,xyz)",
+          "exclude_tags": "Image tags to exclude [spaces ok] (e.g. gore, landscape,lions)",
           "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
           "skip_pairing": "Skip Pairing (Advanced)"
         }
