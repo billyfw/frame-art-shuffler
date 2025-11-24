@@ -16,15 +16,34 @@ display_image:
   fields:
     device_id:
       name: Device
-      description: The TV device to display the image on
-      required: true
+      description: The TV device to display the image on. Required if entity_id is not provided.
+      required: false
       selector:
         device:
           integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV (e.g. media_player.frame_tv). Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
     image_path:
       name: Image Path
-      description: Full local path to the image file
-      required: true
+      description: Full local path to the image file. Required if image_url or filename are not provided.
+      required: false
+      selector:
+        text:
+    image_url:
+      name: Image URL
+      description: Local URL to the image (e.g. /local/my_art.jpg).
+      required: false
+      selector:
+        text:
+    filename:
+      name: Filename
+      description: Filename of the image relative to the library folder.
+      required: false
       selector:
         text:
     matte:
