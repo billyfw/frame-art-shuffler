@@ -15,8 +15,8 @@
 #   ./scripts/dev_deploy.sh --host 192.168.1.50 --user root
 #
 # Options:
-#   --host <hostname>       SSH host for Home Assistant (default: homeassistant.local)
-#   --user <username>       SSH user (default: root)
+#   --host <hostname>       SSH host for Home Assistant (default: ha)
+#   --user <username>       SSH user (default: use ssh config or current user)
 #   --path <path>           Remote path for the component
 #                           (default: /config/custom_components/frame_art_shuffler)
 #   --no-bump               Do not change manifest version
@@ -31,8 +31,8 @@ usage() {
     grep '^#' "$0" | sed 's/^# \{0,1\}//'
 }
 
-HA_HOST="homeassistant.local"
-HA_USER="root"
+HA_HOST="ha"
+HA_USER=""
 REMOTE_PATH="/config/custom_components/frame_art_shuffler"
 BUMP_VERSION=true
 CUSTOM_VERSION=""
@@ -146,11 +146,16 @@ echo "Manifest version: $CURRENT_VERSION -> $NEW_VERSION"
 
 REMOTE_PARENT="$(dirname "$REMOTE_PATH")"
 COMPONENT_NAME="$(basename "$COMPONENT_DIR")"
-REMOTE_TARGET="$HA_USER@$HA_HOST"
+
+if [[ -n "$HA_USER" ]]; then
+    REMOTE_TARGET="$HA_USER@$HA_HOST"
+else
+    REMOTE_TARGET="$HA_HOST"
+fi
 
 echo "Deploying to $REMOTE_TARGET:$REMOTE_PATH"
 
-ssh -T "$REMOTE_TARGET" "mkdir -p '$REMOTE_PARENT' && rm -rf '$REMOTE_PATH'"
+ssh -T "$REMOTE_TARGET" "sudo mkdir -p '$REMOTE_PARENT' && sudo rm -rf '$REMOTE_PATH'"
 
 tar -C "$COMPONENT_DIR/.." \
     --exclude='__pycache__' \
@@ -158,7 +163,7 @@ tar -C "$COMPONENT_DIR/.." \
     --exclude='.pytest_cache' \
     --exclude='.DS_Store' \
     -czf - "$COMPONENT_NAME" \
-    | ssh -T "$REMOTE_TARGET" "tar -xzf - -C '$REMOTE_PARENT'"
+    | ssh -T "$REMOTE_TARGET" "sudo tar -xzf - -C '$REMOTE_PARENT'"
 
 echo "✅ Files synced"
 
@@ -207,7 +212,7 @@ fi
 
 if [[ "$RESTART_CORE" == true ]]; then
     echo "Restarting Home Assistant core..."
-    ssh -T "$REMOTE_TARGET" "ha core restart"
+    ssh -T "$REMOTE_TARGET" "bash -l -c 'ha core restart'"
     echo "✅ Restart command sent (Core will be back online in ~30 seconds)"
 fi
 

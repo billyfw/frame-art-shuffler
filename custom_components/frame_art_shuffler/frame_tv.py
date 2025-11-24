@@ -18,10 +18,25 @@ import logging
 import re
 import socket
 import time
+import random
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from samsungtvws.remote import SamsungTVWS
+# VENDORING NOTE:
+# We import a local vendored copy of samsungtvws (v3.0.3) to avoid conflicts
+# with Home Assistant's built-in outdated version.
+# If functionality breaks due to TV firmware updates, check the upstream repo:
+# https://github.com/xchwarze/samsung-tv-ws-api
+try:
+    from . import samsungtvws
+    from .samsungtvws.remote import SamsungTVWS
+    from .samsungtvws.helper import get_ssl_context
+except ImportError:
+    import samsungtvws
+    from samsungtvws.remote import SamsungTVWS
+    from samsungtvws.helper import get_ssl_context
 
 from .const import DEFAULT_PORT, DEFAULT_TIMEOUT
 
@@ -38,9 +53,9 @@ _POST_DISPLAY_VERIFY_DELAY = 8
 _DELETE_SETTLE = 4
 _BRIGHTNESS_VERIFY_DELAY = 1
 _VALID_BRIGHTNESS = set(range(1, 11)) | {50}
-_WARN_FILE_MB = 5
-_LARGE_FILE_MB = 10
-_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+_WARN_FILE_MB = 10
+_LARGE_FILE_MB = 15
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 _POWER_COMMAND_RETRIES = 4
 _POWER_RETRY_DELAY = 2
 _POWER_COMMAND_TIMEOUT = 8
@@ -73,10 +88,23 @@ def set_token_directory(path: Path) -> None:
 class _FrameTVSession:
     """Context manager that mirrors the helper scripts connection flow."""
 
-    def __init__(self, ip: str) -> None:
+    def __init__(self, ip: str, timeout: Optional[float] = None) -> None:
         self.ip = ip
         self.token_path = _token_path(ip)
-        self._remote = _build_client(ip, self.token_path)
+        self._remote = _build_client(ip, self.token_path, timeout=timeout)
+
+        # Ensure we have a valid token by performing a handshake on the remote channel
+        # if the token file is missing. The art channel does not support initial handshake.
+        if not self.token_path.exists():
+            _LOGGER.info("No token found for %s, attempting handshake via remote control channel...", ip)
+            try:
+                self._remote.open()
+                self._remote.close()
+                _LOGGER.info("Handshake successful, token saved.")
+            except Exception as err:
+                _LOGGER.warning("Handshake attempt failed: %s", err)
+                # We continue anyway, as art() might handle it or we want to bubble the error later
+
         self._art = cast(Any, self._remote.art())
 
     @property
@@ -138,7 +166,8 @@ def set_art_on_tv_deleteothers(
             time.sleep(_UPLOAD_RETRY_DELAY)
         
         try:
-            with _FrameTVSession(ip) as session:
+            # Use 120s timeout for upload to handle large files/slow networks
+            with _FrameTVSession(ip, timeout=120) as session:
                 art = session.art
 
                 if ensure_art_mode and attempt == 0:  # Only check on first attempt
@@ -150,12 +179,14 @@ def set_art_on_tv_deleteothers(
                 # Get current image count before upload
                 images_before = None
                 try:
+                    _LOGGER.info("Checking Art Mode connection and listing current images...")
                     images_before = art.available()
-                    if debug:
-                        _LOGGER.debug("Images on TV before upload: %s", len(images_before) if images_before else 0)
+                    count = len(images_before) if images_before else 0
+                    _LOGGER.info("Art Mode connection OK. Images on TV: %s", count)
                 except Exception as err:  # pylint: disable=broad-except
-                    if debug:
-                        _LOGGER.debug("Could not get image count before upload: %s", err)
+                    _LOGGER.warning("Could not list images (Art Mode connection issue?): %s", err)
+                    # If we can't list images, upload will likely fail too, but we'll try anyway
+                    # as per original logic, but logged as warning now.
 
                 # Upload with this fresh connection
                 kwargs = {"file_type": file_type}
@@ -165,10 +196,17 @@ def set_art_on_tv_deleteothers(
                 
                 try:
                     _LOGGER.info("Uploading image to %s (attempt %s/%s)...", ip, attempt + 1, _UPLOAD_RETRIES)
-                    response = art.upload(payload, **kwargs)
                     
-                    # If we got here, upload succeeded - extract content_id and continue
-                    content_id = _extract_content_id(response)
+                    # Use our custom chunked upload instead of the library's default upload
+                    # to avoid hangs on large files/slow networks
+                    content_id = _upload_chunked(
+                        art, 
+                        payload, 
+                        file_type=file_type, 
+                        matte=kwargs.get("matte"),
+                        portrait_matte=kwargs.get("portrait_matte")
+                    )
+                    
                     _LOGGER.info("Upload successful, content_id=%s", content_id)
                     if debug:
                         _LOGGER.debug("Upload returned content_id=%s", content_id)
@@ -177,6 +215,7 @@ def set_art_on_tv_deleteothers(
                     
                 except Exception as upload_err:  # pylint: disable=broad-except
                     error_msg = str(upload_err)
+                    _LOGGER.warning("Upload attempt %s failed with error: %s", attempt + 1, error_msg)
                     
                     # Check if this is a timeout
                     is_timeout = "timeout" in error_msg.lower() or "timed out" in error_msg.lower()
@@ -705,7 +744,7 @@ def _build_client(ip: str, token_path: Path, timeout: Optional[float] = None) ->
             port=DEFAULT_PORT,
             timeout=timeout if timeout is not None else DEFAULT_TIMEOUT,
             token_file=str(token_path),
-            name="SamsungTvRemote",
+            name="FrameArtShuffler",
         )
     except Exception as err:  # pylint: disable=broad-except
         raise FrameArtConnectionError(f"Unable to connect to TV {ip}: {err}") from err
@@ -753,3 +792,116 @@ def _set_brightness_value(art: Any, brightness: int) -> None:
         )
     except Exception as err:  # pylint: disable=broad-except
         raise FrameArtUploadError(f"Unable to set brightness {brightness}: {err}") from err
+
+
+def delete_token(ip: str) -> None:
+    """Delete the token file for the given IP address."""
+    token_path = _token_path(ip)
+    if token_path.exists():
+        try:
+            token_path.unlink()
+            _LOGGER.info("Deleted token file for %s", ip)
+        except OSError as err:
+            raise FrameArtError(f"Failed to delete token file for {ip}: {err}") from err
+    else:
+        _LOGGER.info("No token file found for %s", ip)
+
+
+def _upload_chunked(
+    art: Any,
+    payload: bytes,
+    file_type: str,
+    matte: Optional[str] = None,
+    portrait_matte: Optional[str] = None,
+) -> str:
+    """Upload image in chunks to avoid timeouts/hangs on large files."""
+    file_size = len(payload)
+    date = datetime.now().strftime("%Y:%m:%d %H:%M:%S")
+    
+    # 1. Send 'send_image' request to get connection info
+    # Generate a unique request_id for this transaction
+    req_id = str(uuid.uuid4())
+    
+    # Log session details
+    _LOGGER.debug("Starting chunked upload. Session ID (art_uuid): %s, Request ID: %s", art.art_uuid, req_id)
+    _LOGGER.debug("Image Date: %s, File Size: %s", date, file_size)
+    
+    request_data = {
+        "request": "send_image",
+        "file_type": file_type,
+        "request_id": req_id,
+        "id": art.art_uuid,
+        "conn_info": {
+            "d2d_mode": "socket",
+            "connection_id": random.randrange(4 * 1024 * 1024 * 1024),
+            "id": art.art_uuid,
+        },
+        "image_date": date,
+        "matte_id": matte or 'none',
+        "portrait_matte_id": portrait_matte or 'none',
+        "file_size": file_size,
+    }
+    
+    _LOGGER.debug("Sending send_image request for chunked upload: %s", json.dumps(request_data))
+    data = art._send_art_request(request_data, wait_for_event="ready_to_use")
+    if not data:
+        raise FrameArtUploadError("TV did not return ready_to_use event")
+        
+    conn_info = json.loads(data["conn_info"])
+    
+    # 2. Prepare Header
+    header = json.dumps({
+        "num": 0,
+        "total": 1,
+        "fileLength": file_size,
+        "fileName": "dummy",
+        "fileType": file_type,
+        "secKey": conn_info["key"],
+        "version": "0.0.1",
+    })
+    
+    # 3. Connect to secondary socket
+    art_socket_raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    art_socket_raw.settimeout(30)  # Ensure this socket also has a timeout
+    
+    if conn_info.get('secured', False):
+        art_socket = get_ssl_context().wrap_socket(art_socket_raw)
+    else:
+        art_socket = art_socket_raw
+        
+    try:
+        _LOGGER.debug("Connecting to upload socket %s:%s...", conn_info["ip"], conn_info["port"])
+        art_socket.connect((conn_info["ip"], int(conn_info["port"])))
+        
+        # 4. Send Header
+        art_socket.send(len(header).to_bytes(4, "big"))
+        art_socket.send(header.encode("ascii"))
+        
+        # 5. Send Payload in Chunks
+        CHUNK_SIZE = 64 * 1024  # 64KB chunks
+        total_sent = 0
+        _LOGGER.info("Starting chunked upload (%s bytes, chunk size %s)...", file_size, CHUNK_SIZE)
+        
+        while total_sent < file_size:
+            chunk = payload[total_sent : total_sent + CHUNK_SIZE]
+            art_socket.send(chunk)
+            total_sent += len(chunk)
+            # Optional: very brief sleep to allow network buffers to drain if needed
+            # time.sleep(0.001)
+            
+        _LOGGER.info("Chunked upload finished sending %s bytes", total_sent)
+            
+    except Exception as err:
+        _LOGGER.error("Error during chunked upload transmission: %s", err)
+        raise FrameArtUploadError(f"Chunked upload transmission failed: {err}") from err
+    finally:
+        art_socket.close()
+        
+    # 6. Wait for confirmation
+    _LOGGER.debug("Waiting for image_added confirmation...")
+    response = art.wait_for_response("image_added")
+    
+    if not response or "content_id" not in response:
+        raise FrameArtUploadError("Upload finished but no content_id returned")
+        
+    return response["content_id"]

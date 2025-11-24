@@ -1,15 +1,13 @@
 {
   "domain": "frame_art_shuffler",
   "name": "Frame Art Shuffler",
-  "version": "0.1.0+dev20251104071656",
+  "version": "0.1.0+dev20251124114925",
   "documentation": "https://github.com/billywaldman/frame-art-shuffler",
   "codeowners": [
     "@billywaldman"
   ],
   "config_flow": true,
-  "requirements": [
-    "samsungtvws @ git+https://github.com/NickWaterton/samsung-tv-ws-api.git@7e7766807da0b048e441eef86e7130a5f5030ed9"
-  ],
+  "requirements": [],
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/billywaldman/frame-art-shuffler/issues"
 }

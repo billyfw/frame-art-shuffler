@@ -21,7 +21,7 @@ from homeassistant.helpers import device_registry as dr
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
-from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, FrameArtError
+from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +41,7 @@ async def async_setup_entry(
     tracked_art_mode: dict[str, FrameArtArtModeButton] = {}
     tracked_on_art: dict[str, FrameArtOnArtModeButton] = {}
     tracked_shuffle: dict[str, FrameArtShuffleButton] = {}
+    tracked_clear_token: dict[str, FrameArtClearTokenButton] = {}
 
     @callback
     def _process_tvs(tvs: list[dict[str, Any]]) -> None:
@@ -66,6 +67,9 @@ async def async_setup_entry(
         for tv_id in list(tracked_shuffle.keys()):
             if tv_id not in current_tv_ids:
                 tracked_shuffle.pop(tv_id)
+        for tv_id in list(tracked_clear_token.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_clear_token.pop(tv_id)
 
         # Add entities for new TVs
         for tv in tvs:
@@ -109,6 +113,12 @@ async def async_setup_entry(
                 tracked_shuffle[tv_id] = entity
                 new_entities.append(entity)
 
+            # Add Clear Token button
+            if tv_id not in tracked_clear_token:
+                entity = FrameArtClearTokenButton(coordinator, entry, tv_id)
+                tracked_clear_token[tv_id] = entity
+                new_entities.append(entity)
+
         if new_entities:
             async_add_entities(new_entities)
 
@@ -122,7 +132,7 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
     _attr_has_entity_name = True
     _attr_name = "zzDANGER-DEL THIS TV"
     _attr_icon = "mdi:delete-alert"
-    _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -590,3 +600,52 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
         )
 
         return selected
+
+
+class FrameArtClearTokenButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to clear the saved token for a TV."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Clear Token"
+    _attr_icon = "mdi:key-remove"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        # Get TV config
+        tv_config = get_tv_config(entry, tv_id)
+        if tv_config:
+            self._tv_name = tv_config.get("name", tv_id)
+            self._tv_ip = tv_config.get("ip")
+        else:
+            self._tv_name = tv_id
+            self._tv_ip = None
+
+        self._attr_unique_id = f"{tv_id}_clear_token"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - delete the token file."""
+        if not self._tv_ip:
+            _LOGGER.error(f"Cannot clear token for {self._tv_name}: missing IP address in config")
+            return
+
+        try:
+            await self.hass.async_add_executor_job(delete_token, self._tv_ip)
+            _LOGGER.info(f"Cleared token for {self._tv_name}")
+        except FrameArtError as err:
+            _LOGGER.error(f"Failed to clear token for {self._tv_name}: {err}")
