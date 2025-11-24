@@ -204,7 +204,8 @@ You can install the integration manually via HACS while it’s under active deve
 3. Search for “Frame Art Shuffler” in the HACS Integrations list and install it.
 4. Restart Home Assistant to load the integration.
 5. Go to **Settings → Devices & Services → Add Integration** and pick **Frame Art Shuffler**.
-6. Enter a unique Home name. The first instance to claim the name “owns” the shared library in `metadata.json`.
+6. Enter a unique Home name.
+
 
 ### Developing without publishing a release
 
@@ -238,8 +239,8 @@ After creating the integration entry, Home Assistant registers a dedicated devic
 Open **Configure** on the integration card to manage TVs:
 
 - **Add TV**: Provide name, IP/hostname, MAC address, and shuffle frequency. The flow automatically pairs the TV to create a token file in the configured token directory. Disable pairing only if you already copied tokens manually.
-- **Edit TV**: Update settings; the metadata file refreshes and future automation can react.
-- **Delete TV**: Removes the TV from the metadata file.
+- **Edit TV**: Update settings; future automation can react.
+- **Delete TV**: Removes the TV from the integration.
 
 If token pairing ever breaks (for example, after clearing the TV's authorized devices), open the integration entry and choose **Re-authenticate**; the flow recreates the token file while preserving metadata.
 
@@ -247,10 +248,9 @@ If token pairing ever breaks (for example, after clearing the TV's authorized de
 
 1. Install via HACS and create the integration entry with a new Home name.
 2. In the Options flow, add a TV and confirm a token file appears under `config/frame_art_tokens/`.
-3. Check `www/frame_art/metadata.json` for the new TV entry.
-4. Edit the TV in the options flow and confirm the metadata updates.
-5. Delete the TV and verify the entry disappears from `metadata.json`.
-6. Watch the Home Assistant logs for pairing success or errors (`Logger: custom_components.frame_art_shuffler`).
+3. Edit the TV in the options flow and confirm the settings update.
+4. Delete the TV and verify it is removed.
+5. Watch the Home Assistant logs for pairing success or errors (`Logger: custom_components.frame_art_shuffler`).
 
 ## About the `.venv` directory
 

@@ -160,7 +160,8 @@ if _HA_AVAILABLE:
                 metadata_path = data["metadata_path"]
                 # metadata_path is like /config/www/frame_art/metadata.json
                 # so library root is /config/www/frame_art/
-                final_path = str(metadata_path.parent / filename)
+                # Images are stored in the 'library' subdirectory
+                final_path = str(metadata_path.parent / "library" / filename)
             
             if not final_path:
                 raise ValueError("Must provide image_path, image_url, or filename")
