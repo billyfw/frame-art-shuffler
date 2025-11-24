@@ -25,8 +25,8 @@ usage() {
     grep '^#' "$0" | sed 's/^# \{0,1\}//'
 }
 
-HA_HOST="homeassistant.local"
-HA_USER="root"
+HA_HOST="ha"
+HA_USER=""
 MODE="follow"
 TAIL_LINES=20
 PRETTY=false
@@ -67,7 +67,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-REMOTE_TARGET="$HA_USER@$HA_HOST"
+if [[ -n "$HA_USER" ]]; then
+    REMOTE_TARGET="$HA_USER@$HA_HOST"
+else
+    REMOTE_TARGET="$HA_HOST"
+fi
 
 # Pretty formatting function that removes date and thread info
 # Transforms: 2025-11-03 09:44:40.049 WARNING (SyncWorker_16) [custom_components.frame_art_shuffler.button] Message

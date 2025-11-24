@@ -189,3 +189,24 @@ ls -lh frame_art_testdev/frame_tv_token.txt
 - `scripts/frame_tv_cli.py` - CLI wrapper
 - `frame_art_testdev/test_connection.py` - Legacy test script (reference)
 - `README.md` - Integration documentation
+
+## Handshake Logic Update (November 24, 2025)
+
+### The "Handshake First" Requirement
+We discovered a critical behavior difference between the **Remote Control Channel** (`samsung.remote.control`) and the **Art Mode Channel** (`com.samsung.art-app`):
+
+1.  **Remote Control Channel**: Supports the initial handshake. If no token is provided (or `token=None`), it triggers the "Allow" prompt on the TV and returns a new token upon approval.
+2.  **Art Mode Channel**: **Does NOT** support the initial handshake. If you attempt to connect without a valid token, the TV simply disconnects the client immediately (often resulting in `ms.channel.timeOut` or `ms.channel.clientDisconnect`).
+
+### The Fix
+To ensure robust connections in new environments (like a fresh HA install or a new TV IP) where a token file does not yet exist:
+
+1.  **Check for Token**: The code first checks if a token file exists for the target IP.
+2.  **Handshake via Remote**: If the token is missing, the code **must** first open a connection to the **Remote Control Channel**. This triggers the pairing process.
+3.  **Save Token**: Once the handshake completes and the token is saved to disk, the Remote connection is closed.
+4.  **Connect to Art**: The code then proceeds to open the **Art Mode Channel** using the newly acquired token.
+
+This logic is implemented in `_FrameTVSession.__init__` in `frame_tv.py`.
+
+### Client Name
+We also updated the client name from `SamsungTvRemote` to `FrameArtShuffler` to ensure a clean session ID and avoid conflicts with other integrations.

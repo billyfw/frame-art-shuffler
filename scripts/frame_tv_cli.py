@@ -25,6 +25,7 @@ from custom_components.frame_art_shuffler.frame_tv import (  # noqa: E402
     tv_on,
     tv_off,
     set_art_mode,
+    delete_token,
 )
 
 
@@ -62,6 +63,7 @@ def _parse_args() -> argparse.Namespace:
     subparsers.add_parser("art-mode", help="Switch TV to art mode (if currently in TV mode)")
     subparsers.add_parser("status", help="Check if art mode is enabled")
     subparsers.add_parser("screen-status", help="Check if screen is on (displaying content)")
+    subparsers.add_parser("clear-token", help="Delete the saved token for this TV (forces re-pairing)")
 
     brightness = subparsers.add_parser("brightness", help="Set art-mode brightness (1-10 or 50)")
     brightness.add_argument("value", type=int, help="Brightness level")
@@ -80,7 +82,7 @@ def main() -> int:
     # Configure logging if debug is enabled
     if getattr(args, 'debug', False):
         import logging
-        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+        logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
 
     try:
         if args.command == "upload":
@@ -125,6 +127,11 @@ def main() -> int:
                 return 0
             print("Screen is off (standby/power saving)")
             return 1
+
+        if args.command == "clear-token":
+            delete_token(ip)
+            print(f"Token deleted for {ip}")
+            return 0
 
         if args.command == "brightness":
             set_tv_brightness(ip, args.value)
