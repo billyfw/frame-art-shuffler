@@ -230,7 +230,7 @@ Tips:
 
 - When iterating rapidly, set `version` in `manifest.json` to something like `0.1.0-dev` so you can distinguish local builds in the UI.
 - Use the Home Assistant developer tools → **Reload** helpers for quick retests (or call `homeassistant.reload_config_entry` with the Frame Art Shuffler entry ID) after editing code.
-- Keep `metadata.json` and `frame_art_tokens/` backed up so a failed experiment doesn’t lose your art library or pairing tokens.
+- Keep `metadata.json` and `frame_art_shuffler/tokens/` backed up so a failed experiment doesn’t lose your art library or pairing tokens.
 
 ### Managing TVs via Options flow
 
@@ -247,7 +247,7 @@ If token pairing ever breaks (for example, after clearing the TV's authorized de
 ## Testing checklist
 
 1. Install via HACS and create the integration entry with a new Home name.
-2. In the Options flow, add a TV and confirm a token file appears under `config/frame_art_tokens/`.
+2. In the Options flow, add a TV and confirm a token file appears under `config/frame_art_shuffler/tokens/`.
 3. Edit the TV in the options flow and confirm the settings update.
 4. Delete the TV and verify it is removed.
 5. Watch the Home Assistant logs for pairing success or errors (`Logger: custom_components.frame_art_shuffler`).
