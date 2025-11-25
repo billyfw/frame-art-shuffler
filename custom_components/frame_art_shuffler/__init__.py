@@ -182,12 +182,14 @@ if _HA_AVAILABLE:
                 raise ValueError(f"TV {tv_id} not found in coordinator data")
             
             ip = tv_data["ip"]
+            mac = tv_data.get("mac")
 
             await hass.async_add_executor_job(
                 functools.partial(
                     frame_tv.set_art_on_tv_deleteothers,
                     ip,
                     final_path,
+                    mac_address=mac,
                     matte=matte,
                     photo_filter=filter_id,
                     delete_others=True,
