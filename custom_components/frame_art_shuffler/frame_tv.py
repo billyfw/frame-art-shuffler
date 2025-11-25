@@ -192,6 +192,19 @@ def set_art_on_tv_deleteothers(
             f"Art file {file_path.name} is {size_mb:.2f} MB; maximum supported size is 5.00 MB"
         )
 
+    # Fail fast: Check if TV is reachable with a short timeout before starting the heavy upload process
+    # This prevents the UI from hanging for minutes if the TV is off.
+    try:
+        _log_progress(f"Checking connectivity to {ip}...")
+        with _FrameTVSession(ip, timeout=4) as session:
+            # Perform a lightweight operation to verify connection.
+            # We don't care about the actual return value (True/False); we just want to confirm
+            # that the TV received the request and responded, proving it is network-reachable.
+            session.art.get_artmode()
+    except Exception as err:
+        _log_progress(f"Connection failed: TV appears to be off or unreachable.")
+        raise FrameArtConnectionError(f"TV {ip} is unreachable (timeout): {err}") from err
+
     # Upload with retries - recreate session on each attempt since connection may be broken
     response = None
     last_error: Optional[Exception] = None
