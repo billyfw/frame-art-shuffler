@@ -163,6 +163,7 @@ def set_art_on_tv_deleteothers(
     ip: str,
     artpath: str,
     *,
+    mac_address: Optional[str] = None,
     delete_others: bool = False,
     ensure_art_mode: bool = True,
     matte: Optional[str] = None,
@@ -202,8 +203,27 @@ def set_art_on_tv_deleteothers(
             # that the TV received the request and responded, proving it is network-reachable.
             session.art.get_artmode()
     except Exception as err:
-        _log_progress(f"Connection failed: TV appears to be off or unreachable.")
-        raise FrameArtConnectionError(f"TV {ip} is unreachable (timeout): {err}") from err
+        # If we have a MAC address, try to wake the TV
+        if mac_address:
+            _log_progress(f"TV appears off. Attempting to wake (Wake-on-LAN)...")
+            try:
+                # tv_on handles the double-WOL sequence and delays
+                tv_on(ip, mac_address)
+                _log_progress(f"Wake sequence complete. Retrying connection...")
+                
+                # Retry connection once
+                with _FrameTVSession(ip, timeout=4) as session:
+                    session.art.get_artmode()
+                    
+            except Exception as wake_err:
+                # If wake or retry failed, fall through to error
+                _log_progress(f"Wake attempt failed or TV still unreachable: {wake_err}")
+                _log_progress(f"***** CONNECTION FAILED *****")
+                raise FrameArtConnectionError(f"TV {ip} is unreachable after wake attempt: {wake_err}") from wake_err
+        else:
+            _log_progress(f"TV appears to be off or unreachable.")
+            _log_progress(f"***** CONNECTION FAILED *****")
+            raise FrameArtConnectionError(f"TV {ip} is unreachable (timeout): {err}") from err
 
     # Upload with retries - recreate session on each attempt since connection may be broken
     response = None
@@ -390,10 +410,6 @@ def set_art_on_tv_deleteothers(
                 _delete_other_images(art, content_id, debug=debug)
 
             _log_progress(f"Upload complete for {ip} (content_id={content_id})")
-            
-            # Wait briefly so the user can see the success message, then clear
-            time.sleep(5)
-            _clear_progress()
             
             return content_id
     except Exception as err:  # pylint: disable=broad-except
