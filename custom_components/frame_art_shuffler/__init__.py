@@ -198,22 +198,7 @@ if _HA_AVAILABLE:
 
             # Update current_image in config entry so sensors update
             if filename:
-                from .config_entry import update_tv_config
-                from homeassistant.util import dt as dt_util
-                
-                update_tv_config(
-                    hass,
-                    entry,
-                    tv_id,
-                    {
-                        "current_image": filename,
-                        "last_shuffle_image": filename,
-                        "last_shuffle_timestamp": dt_util.now().isoformat(),
-                    },
-                )
-                
-                # Refresh coordinator to update sensors immediately
-                await coordinator.async_request_refresh()
+                await coordinator.async_set_active_image(tv_id, filename, is_shuffle=False)
 
         hass.services.async_register(
             DOMAIN, "display_image", async_handle_display_image

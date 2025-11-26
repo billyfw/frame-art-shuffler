@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers import device_registry as dr
 
-from .config_entry import get_tv_config, update_tv_config
+from .config_entry import get_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
@@ -487,20 +487,7 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
             _LOGGER.info(f"Successfully uploaded {image_filename} to {self._tv_name}")
 
             # Update current_image and last_shuffle_timestamp in config
-            from homeassistant.util import dt as dt_util
-            update_tv_config(
-                self.hass,
-                self._entry,
-                self._tv_id,
-                {
-                    "current_image": image_filename,
-                    "last_shuffle_image": image_filename,
-                    "last_shuffle_timestamp": dt_util.now().isoformat(),
-                },
-            )
-
-            # Request coordinator refresh to update sensors
-            await self.coordinator.async_request_refresh()
+            await self.coordinator.async_set_active_image(self._tv_id, image_filename, is_shuffle=True)
 
         except FrameArtError as err:
             _LOGGER.error(f"Failed to upload {image_filename} to {self._tv_name}: {err}")
