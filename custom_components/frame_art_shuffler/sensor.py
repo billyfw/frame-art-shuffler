@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_NAME
+from homeassistant.const import CONF_HOST, CONF_NAME, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -15,6 +15,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .config_entry import get_tv_config
 from .const import (
     CONF_SHUFFLE_FREQUENCY,
+    CONF_MOTION_SENSOR,
+    CONF_LIGHT_SENSOR,
     DOMAIN,
 )
 from .coordinator import FrameArtCoordinator
@@ -39,6 +41,34 @@ LAST_SHUFFLE_TIMESTAMP_DESCRIPTION = SensorEntityDescription(
     translation_key="last_shuffle_timestamp",
 )
 
+IP_DESCRIPTION = SensorEntityDescription(
+    key="ip_address",
+    icon="mdi:ip-network",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="ip_address",
+)
+
+MAC_DESCRIPTION = SensorEntityDescription(
+    key="mac_address",
+    icon="mdi:ethernet",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="mac_address",
+)
+
+MOTION_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="motion_sensor",
+    icon="mdi:motion-sensor",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="motion_sensor",
+)
+
+LIGHT_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="light_sensor",
+    icon="mdi:brightness-auto",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="light_sensor",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -50,7 +80,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
 
-    tracked: dict[str, tuple[FrameArtTVEntity, FrameArtLastShuffleImageEntity, FrameArtLastShuffleTimestampEntity]] = {}
+    tracked: dict[str, tuple[FrameArtTVEntity, FrameArtLastShuffleImageEntity, FrameArtLastShuffleTimestampEntity, FrameArtIPEntity, FrameArtMACEntity, FrameArtMotionSensorEntity, FrameArtLightSensorEntity]] = {}
 
     @callback
     def _process_tvs(tvs: Iterable[dict[str, Any]]) -> None:
@@ -60,13 +90,17 @@ async def async_setup_entry(
             if not tv_id or tv_id in tracked:
                 continue
             
-            # Create all three sensors per TV
+            # Create all sensors per TV
             current_artwork_entity = FrameArtTVEntity(coordinator, entry, tv_id)
             last_image_entity = FrameArtLastShuffleImageEntity(coordinator, entry, tv_id)
             last_timestamp_entity = FrameArtLastShuffleTimestampEntity(coordinator, entry, tv_id)
+            ip_entity = FrameArtIPEntity(coordinator, entry, tv_id)
+            mac_entity = FrameArtMACEntity(coordinator, entry, tv_id)
+            motion_entity = FrameArtMotionSensorEntity(coordinator, entry, tv_id)
+            light_entity = FrameArtLightSensorEntity(coordinator, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -86,6 +120,7 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
 
     entity_description = TV_DESCRIPTION
     _attr_has_entity_name = True
+    _attr_name = "Current Artwork"
 
     def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
         super().__init__(coordinator)
@@ -121,7 +156,13 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         tv = self._current_tv
         if not tv:
             return None
-        # Try to get current artwork from shuffle data or return "No artwork"
+        
+        # Check top-level current_image first (set by button.py)
+        current = tv.get("current_image")
+        if current:
+            return str(current)
+
+        # Fallback to legacy shuffle structure
         shuffle = tv.get("shuffle", {})
         if isinstance(shuffle, dict):
             current = shuffle.get("currentImage") or shuffle.get("current")
@@ -131,11 +172,6 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
                     return current.split("/")[-1]
                 return str(current)
         return "Unknown"
-
-    @property
-    def name(self) -> str | None:  # type: ignore[override]
-        """Return the name of the sensor."""
-        return self._derive_name()
 
     @property
     def available(self) -> bool:  # type: ignore[override]
@@ -153,6 +189,8 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
             "mac": tv.get("mac"),
             "tags": tv.get("tags", []),
             "exclude_tags": tv.get("notTags", []),
+            "motion_sensor": tv.get(CONF_MOTION_SENSOR),
+            "light_sensor": tv.get(CONF_LIGHT_SENSOR),
         }
         shuffle = tv.get("shuffle") or {}
         if isinstance(shuffle, dict):
@@ -165,6 +203,7 @@ class FrameArtLastShuffleImageEntity(CoordinatorEntity[FrameArtCoordinator], Sen
 
     entity_description = LAST_SHUFFLE_IMAGE_DESCRIPTION
     _attr_has_entity_name = True
+    _attr_name = "Last Shuffle Image"
 
     def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
         super().__init__(coordinator)
@@ -201,6 +240,7 @@ class FrameArtLastShuffleTimestampEntity(CoordinatorEntity[FrameArtCoordinator],
 
     entity_description = LAST_SHUFFLE_TIMESTAMP_DESCRIPTION
     _attr_has_entity_name = True
+    _attr_name = "Last Shuffle Timestamp"
 
     def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
         super().__init__(coordinator)
@@ -230,7 +270,12 @@ class FrameArtLastShuffleTimestampEntity(CoordinatorEntity[FrameArtCoordinator],
             return None
         
         try:
-            return datetime.fromisoformat(timestamp_str)
+            dt = datetime.fromisoformat(timestamp_str)
+            # Ensure timezone awareness if missing (assume local/system time if naive)
+            if dt.tzinfo is None:
+                from homeassistant.util import dt as dt_util
+                return dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+            return dt
         except (ValueError, TypeError):
             return None
 
@@ -238,3 +283,131 @@ class FrameArtLastShuffleTimestampEntity(CoordinatorEntity[FrameArtCoordinator],
     def available(self) -> bool:  # type: ignore[override]
         """Return if entity is available."""
         return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtIPEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Diagnostic sensor for TV IP address."""
+
+    entity_description = IP_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "IP Address"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_ip"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the IP address."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return tv_config.get("ip")
+
+
+class FrameArtMACEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Diagnostic sensor for TV MAC address."""
+
+    entity_description = MAC_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "MAC Address"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_mac"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the MAC address."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return tv_config.get("mac")
+
+
+class FrameArtMotionSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Diagnostic sensor for TV motion sensor entity ID."""
+
+    entity_description = MOTION_SENSOR_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Motion Source"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_motion_sensor"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the motion sensor entity ID."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return tv_config.get("motion_sensor")
+
+
+class FrameArtLightSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Diagnostic sensor for TV light sensor entity ID."""
+
+    entity_description = LIGHT_SENSOR_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Light Source"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_light_sensor"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the light sensor entity ID."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return tv_config.get("light_sensor")

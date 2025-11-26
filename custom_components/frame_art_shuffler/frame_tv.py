@@ -117,6 +117,7 @@ def set_token_directory(path: Path) -> None:
     global TOKEN_DIR  # noqa: PLW0603 - module-level configuration mutation is intentional
     TOKEN_DIR = path
     TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+    _LOGGER.info("Token directory set to: %s", TOKEN_DIR)
 
 
 class _FrameTVSession:
@@ -125,16 +126,17 @@ class _FrameTVSession:
     def __init__(self, ip: str, timeout: Optional[float] = None) -> None:
         self.ip = ip
         self.token_path = _token_path(ip)
+        _LOGGER.debug("Using token path: %s (exists: %s)", self.token_path, self.token_path.exists())
         self._remote = _build_client(ip, self.token_path, timeout=timeout)
 
         # Ensure we have a valid token by performing a handshake on the remote channel
         # if the token file is missing. The art channel does not support initial handshake.
         if not self.token_path.exists():
-            _LOGGER.info("No token found for %s, attempting handshake via remote control channel...", ip)
+            _LOGGER.info("No token found for %s at %s, attempting handshake via remote control channel...", ip, self.token_path)
             try:
                 self._remote.open()
                 self._remote.close()
-                _LOGGER.info("Handshake successful, token saved.")
+                _LOGGER.info("Handshake successful, token saved to %s.", self.token_path)
             except Exception as err:
                 _LOGGER.warning("Handshake attempt failed: %s", err)
                 # We continue anyway, as art() might handle it or we want to bubble the error later
@@ -818,7 +820,8 @@ def _extract_content_id(response) -> str:
 
 def _token_path(ip: str) -> Path:
     TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-    safe_ip = ip.replace(":", "_")
+    # Match flow_utils.safe_token_filename behavior: replace all non-alphanumeric with _
+    safe_ip = re.sub(r"[^A-Za-z0-9]+", "_", ip)
     return TOKEN_DIR / f"{safe_ip}.token"
 
 

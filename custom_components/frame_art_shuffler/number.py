@@ -8,6 +8,7 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -90,6 +91,7 @@ class FrameArtShuffleFrequencyEntity(CoordinatorEntity, NumberEntity):
     _attr_mode = NumberMode.BOX
     _attr_native_unit_of_measurement = "min"
     _attr_name = "Shuffle Frequency"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

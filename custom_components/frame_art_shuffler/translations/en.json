@@ -14,7 +14,27 @@
           "tags": "Image tags to include [spaces ok] (e.g. family, abc,cars ,xyz)",
           "exclude_tags": "Image tags to exclude [spaces ok] (e.g. gore, landscape,lions)",
           "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
-          "skip_pairing": "Skip Pairing (Advanced)"
+          "skip_pairing": "Skip pairing TV (will require prompt/token exchange later)",
+          "motion_sensor": "Motion Sensor (optional)",
+          "light_sensor": "Light Sensor (optional)"
+        }
+      },
+      "edit_tv": {
+        "data": {
+          "name": "TV Name",
+          "host": "TV IP Address",
+          "mac": "TV MAC Address",
+          "tags": "Image tags to include [spaces ok] (e.g. family, abc,cars ,xyz)",
+          "exclude_tags": "Image tags to exclude [spaces ok] (e.g. gore, landscape,lions)",
+          "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
+          "motion_sensor": "Motion Sensor (optional)",
+          "light_sensor": "Light Sensor (optional)",
+          "re_pair": "Re-pair TV (force new token exchange)"
+        }
+      },
+      "menu": {
+        "data": {
+          "action": "Select Action"
         }
       }
     }

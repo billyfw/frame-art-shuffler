@@ -9,14 +9,18 @@
 #   ./scripts/view_logs.sh --tail 50    # show last 50 lines
 #   ./scripts/view_logs.sh --follow     # tail live logs (explicit)
 #   ./scripts/view_logs.sh --pretty     # format logs for readability
+#   ./scripts/view_logs.sh --level INFO # show only INFO, WARNING, ERROR
+#   ./scripts/view_logs.sh --truncate 200 # truncate lines to 200 chars
 #   ./scripts/view_logs.sh --host 192.168.1.50 --user root
 #
 # Options:
-#   --host <hostname>       SSH host for Home Assistant (default: homeassistant.local)
+#   --host <hostname>       SSH host for Home Assistant (default: ha)
 #   --user <username>       SSH user (default: root)
 #   --tail <n>              Show last n lines instead of live tail
 #   --follow, -f            Tail logs in real-time (default behavior)
 #   --pretty, -p            Format logs for better readability (removes date, thread info)
+#   --level <level>         Filter by log level (DEBUG, INFO, WARNING, ERROR)
+#   --truncate <n>          Truncate lines to n characters
 #   --help, -h              Show this help text
 
 set -euo pipefail
@@ -30,6 +34,8 @@ HA_USER=""
 MODE="follow"
 TAIL_LINES=20
 PRETTY=false
+LOG_LEVEL=""
+TRUNCATE_WIDTH=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -54,6 +60,14 @@ while [[ $# -gt 0 ]]; do
             PRETTY=true
             shift
             ;;
+        --level)
+            LOG_LEVEL="$2"
+            shift 2
+            ;;
+        --truncate)
+            TRUNCATE_WIDTH="$2"
+            shift 2
+            ;;
         --help|-h)
             usage
             exit 0
@@ -77,30 +91,72 @@ fi
 # Transforms: 2025-11-03 09:44:40.049 WARNING (SyncWorker_16) [custom_components.frame_art_shuffler.button] Message
 # Into:       09:44:40.049 WARNING Message
 pretty_format() {
-    sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2} ([0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) ([A-Z]+) \([^)]+\) \[[^]]+\] /\1 \2 /'
+    # Use perl for consistent line buffering across platforms ($|=1)
+    perl -pe '$|=1; s/^[0-9]{4}-[0-9]{2}-[0-9]{2} ([0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) ([A-Z]+) \([^)]+\) \[[^]]+\] /$1 $2 /'
 }
 
-if [[ "$MODE" == "follow" ]]; then
-    echo "Tailing live logs from $REMOTE_TARGET (filtering for 'frame_art')..."
-    if [[ "$PRETTY" == "true" ]]; then
-        echo "(pretty formatting enabled)"
+# Construct the filter pipeline
+build_pipeline() {
+    local pipeline="cat"
+    
+    # 1. Filter for frame_art
+    pipeline="$pipeline | grep --line-buffered -i frame_art"
+    
+    # 2. Filter by level if requested
+    if [[ -n "$LOG_LEVEL" ]]; then
+        case "$(echo "$LOG_LEVEL" | tr '[:lower:]' '[:upper:]')" in
+            INFO)
+                pipeline="$pipeline | grep --line-buffered -E 'INFO|WARNING|ERROR|CRITICAL'"
+                ;;
+            WARN|WARNING)
+                pipeline="$pipeline | grep --line-buffered -E 'WARNING|ERROR|CRITICAL'"
+                ;;
+            ERROR)
+                pipeline="$pipeline | grep --line-buffered -E 'ERROR|CRITICAL'"
+                ;;
+            DEBUG)
+                # No extra filtering needed
+                ;;
+            *)
+                echo "Warning: Unknown log level '$LOG_LEVEL', ignoring." >&2
+                ;;
+        esac
     fi
+    
+    # 3. Pretty print if requested
+    if [[ "$PRETTY" == "true" ]]; then
+        pipeline="$pipeline | pretty_format"
+    fi
+    
+    # 4. Truncate if requested
+    if [[ "$TRUNCATE_WIDTH" -gt 0 ]]; then
+        # Use awk with fflush() to prevent buffering issues that cut might have
+        pipeline="$pipeline | awk '{print substr(\$0, 1, ${TRUNCATE_WIDTH}); fflush()}'"
+    fi
+    
+    echo "$pipeline"
+}
+
+PIPELINE_CMD=$(build_pipeline)
+
+if [[ "$MODE" == "follow" ]]; then
+    echo "Tailing live logs from $REMOTE_TARGET..."
+    echo "  Filter: frame_art"
+    [[ -n "$LOG_LEVEL" ]] && echo "  Level: $LOG_LEVEL+"
+    [[ "$PRETTY" == "true" ]] && echo "  Format: Pretty"
+    [[ "$TRUNCATE_WIDTH" -gt 0 ]] && echo "  Truncate: ${TRUNCATE_WIDTH} chars"
     echo "Press Ctrl+C to exit"
     echo ""
-    if [[ "$PRETTY" == "true" ]]; then
-        ssh "$REMOTE_TARGET" "tail -f /config/home-assistant.log" | grep --line-buffered -i frame_art | pretty_format
-    else
-        ssh "$REMOTE_TARGET" "tail -f /config/home-assistant.log" | grep --line-buffered -i frame_art
-    fi
+    
+    # We execute the pipeline locally on the output of ssh
+    ssh "$REMOTE_TARGET" "tail -f /config/home-assistant.log" | eval "$PIPELINE_CMD"
 else
-    echo "Showing last $TAIL_LINES log lines from $REMOTE_TARGET (filtering for 'frame_art')..."
-    if [[ "$PRETTY" == "true" ]]; then
-        echo "(pretty formatting enabled)"
-    fi
+    echo "Showing last $TAIL_LINES log lines from $REMOTE_TARGET..."
     echo ""
-    if [[ "$PRETTY" == "true" ]]; then
-        ssh "$REMOTE_TARGET" "grep -i 'frame_art' /config/home-assistant.log | tail -$TAIL_LINES" | pretty_format
-    else
-        ssh "$REMOTE_TARGET" "grep -i 'frame_art' /config/home-assistant.log | tail -$TAIL_LINES"
-    fi
+    
+    # For tail mode, we grep on the server side first to ensure we get relevant lines
+    # then apply formatting/truncation locally
+    ssh "$REMOTE_TARGET" "grep -i 'frame_art' /config/home-assistant.log | tail -$TAIL_LINES" | \
+    eval "$(echo "$PIPELINE_CMD" | sed 's/grep --line-buffered -i frame_art/cat/')" 
+    # Note: removed the first grep from pipeline since we did it on server
 fi
