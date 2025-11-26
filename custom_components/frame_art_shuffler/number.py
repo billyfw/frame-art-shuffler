@@ -192,9 +192,8 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         """Return the current brightness value from internal state."""
-        # If we're in the middle of setting brightness, return the last known value
-        # This prevents the UI from jumping around during the async operation
-        if self._setting_brightness and self._last_known_value is not None:
+        # Always prefer the in-memory value if we have one
+        if self._last_known_value is not None:
             return self._last_known_value
         
         # Try to get brightness from config entry (where we cache it)
@@ -248,12 +247,9 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
             )
             
             # Success! Update the cached value
-            update_tv_config(
-                self.hass,
-                self._entry,
-                self._tv_id,
-                {"brightness": target_value},
-            )
+            # NOTE: We do NOT update the config entry here because that triggers a full 
+            # integration reload, which causes logbook spam and restarts all entities.
+            # We just keep the value in memory.
             self._last_known_value = float(target_value)
             
             _LOGGER.info(
