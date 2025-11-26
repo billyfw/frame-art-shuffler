@@ -16,7 +16,12 @@
           "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
           "skip_pairing": "Skip pairing TV (will require prompt/token exchange later)",
           "motion_sensor": "Motion Sensor (optional)",
-          "light_sensor": "Light Sensor (optional)"
+          "light_sensor": "Light Sensor (optional)",
+          "enable_dynamic_brightness": "Enable Auto Brightness",
+          "min_lux": "Auto-Bright Min Lux (darkest room)",
+          "max_lux": "Auto-Bright Max Lux (brightest room)",
+          "min_brightness": "Auto-Bright Min Level (1-10)",
+          "max_brightness": "Auto-Bright Max Level (1-10)"
         }
       },
       "edit_tv": {
@@ -29,6 +34,11 @@
           "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
           "motion_sensor": "Motion Sensor (optional)",
           "light_sensor": "Light Sensor (optional)",
+          "enable_dynamic_brightness": "Enable Auto Brightness",
+          "min_lux": "Auto-Bright Min Lux (darkest room)",
+          "max_lux": "Auto-Bright Max Lux (brightest room)",
+          "min_brightness": "Auto-Bright Min Level (1-10)",
+          "max_brightness": "Auto-Bright Max Level (1-10)",
           "re_pair": "Re-pair TV (force new token exchange)"
         }
       },

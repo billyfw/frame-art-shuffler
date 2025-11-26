@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription, SensorDeviceClass
@@ -20,6 +20,9 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import FrameArtCoordinator
+
+# Auto brightness interval (must match __init__.py)
+AUTO_BRIGHTNESS_INTERVAL_MINUTES = 10
 
 
 TV_DESCRIPTION = SensorEntityDescription(
@@ -69,6 +72,29 @@ LIGHT_SENSOR_DESCRIPTION = SensorEntityDescription(
     translation_key="light_sensor",
 )
 
+AUTO_BRIGHT_LAST_ADJUST_DESCRIPTION = SensorEntityDescription(
+    key="auto_bright_last_adjust",
+    icon="mdi:clock-check-outline",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_bright_last_adjust",
+)
+
+AUTO_BRIGHT_NEXT_ADJUST_DESCRIPTION = SensorEntityDescription(
+    key="auto_bright_next_adjust",
+    icon="mdi:clock-fast",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_bright_next_adjust",
+)
+
+AUTO_BRIGHT_TARGET_DESCRIPTION = SensorEntityDescription(
+    key="auto_bright_target",
+    icon="mdi:brightness-percent",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_bright_target",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -80,7 +106,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
 
-    tracked: dict[str, tuple[FrameArtTVEntity, FrameArtLastShuffleImageEntity, FrameArtLastShuffleTimestampEntity, FrameArtIPEntity, FrameArtMACEntity, FrameArtMotionSensorEntity, FrameArtLightSensorEntity]] = {}
+    tracked: dict[str, tuple] = {}
 
     @callback
     def _process_tvs(tvs: Iterable[dict[str, Any]]) -> None:
@@ -98,9 +124,13 @@ async def async_setup_entry(
             mac_entity = FrameArtMACEntity(coordinator, entry, tv_id)
             motion_entity = FrameArtMotionSensorEntity(coordinator, entry, tv_id)
             light_entity = FrameArtLightSensorEntity(coordinator, entry, tv_id)
+            # Auto brightness sensors
+            auto_bright_last_entity = FrameArtAutoBrightLastAdjustEntity(coordinator, entry, tv_id)
+            auto_bright_next_entity = FrameArtAutoBrightNextAdjustEntity(coordinator, entry, tv_id)
+            auto_bright_target_entity = FrameArtAutoBrightTargetEntity(hass, coordinator, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -411,3 +441,161 @@ class FrameArtLightSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorEn
         if not tv_config:
             return None
         return tv_config.get("light_sensor")
+
+
+class FrameArtAutoBrightLastAdjustEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Sensor for last auto brightness adjustment timestamp."""
+
+    entity_description = AUTO_BRIGHT_LAST_ADJUST_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Last Adjust"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_bright_last"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> datetime | None:  # type: ignore[override]
+        """Return the last auto brightness adjustment timestamp."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        timestamp_str = tv_config.get("last_auto_brightness_timestamp")
+        if not timestamp_str:
+            return None
+        
+        try:
+            dt = datetime.fromisoformat(timestamp_str)
+            if dt.tzinfo is None:
+                from homeassistant.util import dt as dt_util
+                return dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
+
+class FrameArtAutoBrightNextAdjustEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Sensor for next auto brightness adjustment timestamp."""
+
+    entity_description = AUTO_BRIGHT_NEXT_ADJUST_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Next Adjust"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_bright_next"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> datetime | None:  # type: ignore[override]
+        """Return the next auto brightness adjustment timestamp."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        # If auto brightness is not enabled, return None
+        if not tv_config.get("enable_dynamic_brightness", False):
+            return None
+        
+        timestamp_str = tv_config.get("last_auto_brightness_timestamp")
+        if not timestamp_str:
+            # No previous adjustment - next will be soon (on next interval tick)
+            return None
+        
+        try:
+            last_dt = datetime.fromisoformat(timestamp_str)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            next_dt = last_dt + timedelta(minutes=AUTO_BRIGHTNESS_INTERVAL_MINUTES)
+            return next_dt
+        except (ValueError, TypeError):
+            return None
+
+
+class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Sensor for calculated target brightness based on current lux."""
+
+    entity_description = AUTO_BRIGHT_TARGET_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Target"
+
+    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_bright_target"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> int | None:  # type: ignore[override]
+        """Return the calculated target brightness based on current lux."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        # Get the light sensor entity ID
+        light_sensor = tv_config.get("light_sensor")
+        if not light_sensor:
+            return None
+        
+        # Get current lux value from the sensor
+        lux_state = self._hass.states.get(light_sensor)
+        if not lux_state or lux_state.state in ("unavailable", "unknown"):
+            return None
+        
+        try:
+            current_lux = float(lux_state.state)
+        except (ValueError, TypeError):
+            return None
+        
+        # Get calibration values
+        min_lux = tv_config.get("min_lux", 0)
+        max_lux = tv_config.get("max_lux", 1000)
+        min_brightness = tv_config.get("min_brightness", 1)
+        max_brightness = tv_config.get("max_brightness", 10)
+        
+        # Avoid division by zero
+        if max_lux <= min_lux:
+            return None
+        
+        # Calculate normalized value (0-1) with clamping
+        normalized = (current_lux - min_lux) / (max_lux - min_lux)
+        normalized = max(0.0, min(1.0, normalized))
+        
+        # Calculate target brightness
+        target = int(round(min_brightness + normalized * (max_brightness - min_brightness)))
+        return max(min_brightness, min(max_brightness, target))
