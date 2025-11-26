@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers import device_registry as dr
 
-from .config_entry import get_tv_config
+from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
@@ -41,6 +41,9 @@ async def async_setup_entry(
     tracked_on_art: dict[str, FrameArtOnArtModeButton] = {}
     tracked_shuffle: dict[str, FrameArtShuffleButton] = {}
     tracked_clear_token: dict[str, FrameArtClearTokenButton] = {}
+    tracked_calibrate_dark: dict[str, FrameArtCalibrateDarkButton] = {}
+    tracked_calibrate_bright: dict[str, FrameArtCalibrateBrightButton] = {}
+    tracked_trigger_brightness: dict[str, FrameArtTriggerBrightnessButton] = {}
 
     @callback
     def _process_tvs(tvs: list[dict[str, Any]]) -> None:
@@ -66,6 +69,15 @@ async def async_setup_entry(
         for tv_id in list(tracked_clear_token.keys()):
             if tv_id not in current_tv_ids:
                 tracked_clear_token.pop(tv_id)
+        for tv_id in list(tracked_calibrate_dark.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_calibrate_dark.pop(tv_id)
+        for tv_id in list(tracked_calibrate_bright.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_calibrate_bright.pop(tv_id)
+        for tv_id in list(tracked_trigger_brightness.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_trigger_brightness.pop(tv_id)
 
         # Add entities for new TVs
         for tv in tvs:
@@ -109,6 +121,24 @@ async def async_setup_entry(
                 tracked_clear_token[tv_id] = entity
                 new_entities.append(entity)
 
+            # Add Calibrate Dark button
+            if tv_id not in tracked_calibrate_dark:
+                entity = FrameArtCalibrateDarkButton(coordinator, entry, tv_id)
+                tracked_calibrate_dark[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add Calibrate Bright button
+            if tv_id not in tracked_calibrate_bright:
+                entity = FrameArtCalibrateBrightButton(coordinator, entry, tv_id)
+                tracked_calibrate_bright[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add Trigger Brightness button
+            if tv_id not in tracked_trigger_brightness:
+                entity = FrameArtTriggerBrightnessButton(coordinator, entry, tv_id)
+                tracked_trigger_brightness[tv_id] = entity
+                new_entities.append(entity)
+
         if new_entities:
             async_add_entities(new_entities)
 
@@ -144,7 +174,7 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
         self._attr_unique_id = f"{tv_id}_remove"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, identifier)},
-            name=tv_name,
+            name=self._tv_name,
             manufacturer="Samsung",
             model="Frame TV",
         )
@@ -631,3 +661,182 @@ class FrameArtClearTokenButton(CoordinatorEntity[FrameArtCoordinator], ButtonEnt
             _LOGGER.info(f"Cleared token for {self._tv_name}")
         except FrameArtError as err:
             _LOGGER.error(f"Failed to clear token for {self._tv_name}: {err}")
+
+
+class FrameArtCalibrateDarkButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to calibrate min lux (set to current sensor value)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Calibrate Dark"
+    _attr_icon = "mdi:brightness-5"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_calibrate_dark"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - set min_lux to current sensor value."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            _LOGGER.error(f"Cannot calibrate {self._tv_name}: TV config not found")
+            return
+
+        light_sensor = tv_config.get("light_sensor")
+        if not light_sensor:
+            _LOGGER.warning(f"Cannot calibrate {self._tv_name}: no light sensor configured")
+            return
+
+        state = self.hass.states.get(light_sensor)
+        if not state or state.state in ("unknown", "unavailable"):
+            _LOGGER.warning(f"Cannot calibrate {self._tv_name}: sensor {light_sensor} is unavailable")
+            return
+
+        try:
+            current_lux = float(state.state)
+        except ValueError:
+            _LOGGER.warning(f"Cannot calibrate {self._tv_name}: sensor value '{state.state}' is not a number")
+            return
+
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"min_lux": int(current_lux)},
+        )
+        _LOGGER.info(f"Calibrated min_lux for {self._tv_name} to {int(current_lux)}")
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtCalibrateBrightButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to calibrate max lux (set to current sensor value)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Calibrate Bright"
+    _attr_icon = "mdi:brightness-7"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_calibrate_bright"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - set max_lux to current sensor value."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            _LOGGER.error(f"Cannot calibrate {self._tv_name}: TV config not found")
+            return
+
+        light_sensor = tv_config.get("light_sensor")
+        if not light_sensor:
+            _LOGGER.warning(f"Cannot calibrate {self._tv_name}: no light sensor configured")
+            return
+
+        state = self.hass.states.get(light_sensor)
+        if not state or state.state in ("unknown", "unavailable"):
+            _LOGGER.warning(f"Cannot calibrate {self._tv_name}: sensor {light_sensor} is unavailable")
+            return
+
+        try:
+            current_lux = float(state.state)
+        except ValueError:
+            _LOGGER.warning(f"Cannot calibrate {self._tv_name}: sensor value '{state.state}' is not a number")
+            return
+
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"max_lux": int(current_lux)},
+        )
+        _LOGGER.info(f"Calibrated max_lux for {self._tv_name} to {int(current_lux)}")
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtTriggerBrightnessButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to trigger auto brightness adjustment now."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Trigger Now"
+    _attr_icon = "mdi:brightness-auto"
+    # No entity_category = shows in Controls section
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_trigger_brightness"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - trigger auto brightness adjustment."""
+        # Get the helper function from hass.data
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if not data:
+            _LOGGER.error(f"Cannot trigger auto brightness for {self._tv_name}: integration data not found")
+            return
+
+        async_adjust_tv_brightness = data.get("async_adjust_tv_brightness")
+        if not async_adjust_tv_brightness:
+            _LOGGER.error(f"Cannot trigger auto brightness for {self._tv_name}: brightness function not found")
+            return
+
+        # Pass restart_timer=True to reset the per-TV timer
+        success = await async_adjust_tv_brightness(self._tv_id, restart_timer=True)
+        if success:
+            _LOGGER.info(f"Triggered auto brightness adjustment for {self._tv_name}")
+        else:
+            _LOGGER.warning(f"Auto brightness adjustment failed for {self._tv_name}")
+        
+        await self.coordinator.async_request_refresh()

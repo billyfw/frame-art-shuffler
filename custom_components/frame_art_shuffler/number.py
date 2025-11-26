@@ -33,6 +33,10 @@ async def async_setup_entry(
 
     tracked_frequency: dict[str, FrameArtShuffleFrequencyEntity] = {}
     tracked_brightness: dict[str, FrameArtBrightnessEntity] = {}
+    tracked_min_lux: dict[str, FrameArtMinLuxEntity] = {}
+    tracked_max_lux: dict[str, FrameArtMaxLuxEntity] = {}
+    tracked_min_brightness: dict[str, FrameArtMinBrightnessEntity] = {}
+    tracked_max_brightness: dict[str, FrameArtMaxBrightnessEntity] = {}
 
     @callback
     def _process_tvs(tvs: list[dict[str, Any]]) -> None:
@@ -46,6 +50,18 @@ async def async_setup_entry(
         for tv_id in list(tracked_brightness.keys()):
             if tv_id not in current_tv_ids:
                 tracked_brightness.pop(tv_id)
+        for tv_id in list(tracked_min_lux.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_min_lux.pop(tv_id)
+        for tv_id in list(tracked_max_lux.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_max_lux.pop(tv_id)
+        for tv_id in list(tracked_min_brightness.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_min_brightness.pop(tv_id)
+        for tv_id in list(tracked_max_brightness.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_max_brightness.pop(tv_id)
 
         # Add entities for new TVs
         for tv in tvs:
@@ -71,6 +87,30 @@ async def async_setup_entry(
                     tv_id,
                 )
                 tracked_brightness[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add min lux entity
+            if tv_id not in tracked_min_lux:
+                entity = FrameArtMinLuxEntity(coordinator, entry, tv_id)
+                tracked_min_lux[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add max lux entity
+            if tv_id not in tracked_max_lux:
+                entity = FrameArtMaxLuxEntity(coordinator, entry, tv_id)
+                tracked_max_lux[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add min brightness entity
+            if tv_id not in tracked_min_brightness:
+                entity = FrameArtMinBrightnessEntity(coordinator, entry, tv_id)
+                tracked_min_brightness[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add max brightness entity
+            if tv_id not in tracked_max_brightness:
+                entity = FrameArtMaxBrightnessEntity(coordinator, entry, tv_id)
+                tracked_max_brightness[tv_id] = entity
                 new_entities.append(entity)
 
         if new_entities:
@@ -162,7 +202,7 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
     _attr_native_max_value = 10
     _attr_native_step = 1.0
     _attr_mode = NumberMode.SLIDER
-    _attr_name = "Art Mode Brightness"
+    _attr_name = "Brightness"
 
     def __init__(
         self,
@@ -191,24 +231,27 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current brightness value from internal state."""
-        # Always prefer the in-memory value if we have one
-        if self._last_known_value is not None:
-            return self._last_known_value
+        """Return the current brightness value from cache, config, or default."""
+        # Check hass.data brightness cache first (updated by both auto and manual)
+        from .const import DOMAIN
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        brightness_cache = data.get("brightness_cache", {})
+        cached_brightness = brightness_cache.get(self._tv_id)
+        if cached_brightness is not None:
+            return float(cached_brightness)
         
-        # Try to get brightness from config entry (where we cache it)
+        # Fall back to config (persisted by auto-brightness, survives restart)
         tv_config = get_tv_config(self._entry, self._tv_id)
-        if tv_config and "brightness" in tv_config:
-            cached = tv_config.get("brightness")
-            if cached is not None:
-                self._last_known_value = float(cached)
-                return self._last_known_value
+        if tv_config:
+            persisted = tv_config.get("current_brightness")
+            if persisted is not None:
+                # Populate cache so we use it next time
+                brightness_cache = data.setdefault("brightness_cache", {})
+                brightness_cache[self._tv_id] = persisted
+                return float(persisted)
         
-        # Default to middle value if we have no cached value
-        if self._last_known_value is None:
-            self._last_known_value = 5.0
-        
-        return self._last_known_value
+        # Default to middle value
+        return 5.0
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the TV brightness with automatic rollback on failure."""
@@ -246,11 +289,23 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
                 target_value,
             )
             
-            # Success! Update the cached value
-            # NOTE: We do NOT update the config entry here because that triggers a full 
-            # integration reload, which causes logbook spam and restarts all entities.
-            # We just keep the value in memory.
+            # Success! Update the cache and persist to config
             self._last_known_value = float(target_value)
+            
+            # Update hass.data cache for immediate entity sync
+            from .const import DOMAIN
+            data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+            brightness_cache = data.setdefault("brightness_cache", {})
+            brightness_cache[self._tv_id] = target_value
+            
+            # Persist to config so it survives restart
+            from .config_entry import update_tv_config
+            update_tv_config(
+                self.hass,
+                self._entry,
+                self._tv_id,
+                {"current_brightness": target_value},
+            )
             
             _LOGGER.info(
                 "Brightness set to %d for %s",
@@ -285,3 +340,217 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
             # Clear the setting flag and force a state update
             self._setting_brightness = False
             self.async_write_ha_state()
+
+
+class FrameArtMinLuxEntity(CoordinatorEntity, NumberEntity):
+    """Number entity for min lux configuration (darkest room value)."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:brightness-5"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100000
+    _attr_native_step = 1.0
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "lx"
+    _attr_name = "Auto-Bright Min Lux"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_min_lux"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value from config entry."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return float(tv_config.get("min_lux", 0))
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the min lux in config entry."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"min_lux": int(value)},
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtMaxLuxEntity(CoordinatorEntity, NumberEntity):
+    """Number entity for max lux configuration (brightest room value)."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:brightness-7"
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100000
+    _attr_native_step = 1.0
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "lx"
+    _attr_name = "Auto-Bright Max Lux"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_max_lux"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value from config entry."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return float(tv_config.get("max_lux", 1000))
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the max lux in config entry."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"max_lux": int(value)},
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtMinBrightnessEntity(CoordinatorEntity, NumberEntity):
+    """Number entity for min auto brightness (brightness at darkest)."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:brightness-4"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 10
+    _attr_native_step = 1.0
+    _attr_mode = NumberMode.SLIDER
+    _attr_name = "Auto-Bright Min Level"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_min_auto_brightness"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value from config entry."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return float(tv_config.get("min_brightness", 1))
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the min brightness in config entry."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"min_brightness": int(value)},
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtMaxBrightnessEntity(CoordinatorEntity, NumberEntity):
+    """Number entity for max auto brightness (brightness at brightest)."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:brightness-7"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 10
+    _attr_native_step = 1.0
+    _attr_mode = NumberMode.SLIDER
+    _attr_name = "Auto-Bright Max Level"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_max_auto_brightness"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value from config entry."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return float(tv_config.get("max_brightness", 10))
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the max brightness in config entry."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"max_brightness": int(value)},
+        )
+        await self.coordinator.async_request_refresh()

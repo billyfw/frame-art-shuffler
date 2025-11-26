@@ -14,8 +14,12 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import functools
+import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+_LOGGER = logging.getLogger(__name__)
 
 HA_IMPORT_ERROR_MESSAGE = (
     "Home Assistant is required for the Frame Art Shuffler integration. "
@@ -39,6 +43,7 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         _core = importlib.import_module("homeassistant.core")
         _helpers_dr = importlib.import_module("homeassistant.helpers.device_registry")
         _helpers_er = importlib.import_module("homeassistant.helpers.entity_registry")
+        _helpers_event = importlib.import_module("homeassistant.helpers.event")
 
         ConfigEntry = getattr(_config_entries, "ConfigEntry")
         Platform = getattr(_const, "Platform")
@@ -47,6 +52,7 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         ServiceCall = getattr(_core, "ServiceCall")
         dr = _helpers_dr
         er = _helpers_er
+        async_track_time_interval = getattr(_helpers_event, "async_track_time_interval")
         _HA_AVAILABLE = True
     except ModuleNotFoundError:
         _HA_AVAILABLE = False
@@ -54,12 +60,12 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
 if _HA_AVAILABLE:
     from .const import CONF_METADATA_PATH, CONF_TOKEN_DIR, DOMAIN
     from .coordinator import FrameArtCoordinator
-    from .config_entry import remove_tv_config
+    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
     from .metadata import MetadataStore
 
-    PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR]
+    PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH]
 else:
     DEFAULT_TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
     PLATFORMS: list[Any] = []
@@ -203,6 +209,152 @@ if _HA_AVAILABLE:
         hass.services.async_register(
             DOMAIN, "display_image", async_handle_display_image
         )
+
+        # Per-TV auto brightness timer management
+        auto_brightness_timers: dict[str, Callable[[], None]] = {}
+
+        def cancel_tv_timer(tv_id: str) -> None:
+            """Cancel the auto brightness timer for a specific TV."""
+            if tv_id in auto_brightness_timers:
+                auto_brightness_timers[tv_id]()
+                del auto_brightness_timers[tv_id]
+
+        def start_tv_timer(tv_id: str) -> None:
+            """Start or restart the auto brightness timer for a specific TV."""
+            # Cancel existing timer if any
+            cancel_tv_timer(tv_id)
+
+            async def async_tv_brightness_tick(_now: Any) -> None:
+                """Timer callback for a single TV's auto brightness."""
+                tv_configs = list_tv_configs(entry)
+                tv_config = tv_configs.get(tv_id)
+                
+                # If TV no longer exists or auto brightness disabled, cancel timer
+                if not tv_config or not tv_config.get("enable_dynamic_brightness", False):
+                    cancel_tv_timer(tv_id)
+                    return
+                
+                await async_adjust_tv_brightness(tv_id)
+
+            # Schedule timer for this TV
+            unsubscribe = async_track_time_interval(
+                hass,
+                async_tv_brightness_tick,
+                timedelta(minutes=10),
+            )
+            auto_brightness_timers[tv_id] = unsubscribe
+            entry.async_on_unload(unsubscribe)
+
+        # Auto brightness helper for a single TV
+        async def async_adjust_tv_brightness(tv_id: str, restart_timer: bool = False) -> bool:
+            """Adjust brightness for a single TV. Returns True on success."""
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config:
+                _LOGGER.warning(f"Auto brightness: TV config not found for {tv_id}")
+                return False
+
+            lux_entity_id = tv_config.get("light_sensor")
+            if not lux_entity_id:
+                _LOGGER.debug(f"Auto brightness: No light sensor configured for {tv_id}")
+                return False
+
+            # Get current lux value from the sensor
+            lux_state = hass.states.get(lux_entity_id)
+            if not lux_state or lux_state.state in ("unavailable", "unknown"):
+                _LOGGER.debug(f"Lux sensor {lux_entity_id} unavailable for {tv_id}")
+                return False
+
+            try:
+                current_lux = float(lux_state.state)
+            except (ValueError, TypeError):
+                _LOGGER.warning(f"Invalid lux value from {lux_entity_id}: {lux_state.state}")
+                return False
+
+            # Get calibration values
+            min_lux = tv_config.get("min_lux", 0)
+            max_lux = tv_config.get("max_lux", 1000)
+            min_brightness = tv_config.get("min_brightness", 1)
+            max_brightness = tv_config.get("max_brightness", 10)
+
+            # Avoid division by zero
+            if max_lux <= min_lux:
+                _LOGGER.warning(f"Invalid lux range for {tv_id}: max_lux must be > min_lux")
+                return False
+
+            # Calculate normalized value (0-1) with clamping
+            normalized = (current_lux - min_lux) / (max_lux - min_lux)
+            normalized = max(0.0, min(1.0, normalized))
+
+            # Calculate target brightness
+            target_brightness = int(round(
+                min_brightness + normalized * (max_brightness - min_brightness)
+            ))
+            target_brightness = max(min_brightness, min(max_brightness, target_brightness))
+
+            # Get TV data from coordinator
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                return False
+
+            coordinator = data["coordinator"]
+            tv_data = next((tv for tv in coordinator.data if tv["id"] == tv_id), None)
+            if not tv_data:
+                return False
+
+            ip = tv_data["ip"]
+            tv_name = tv_config.get("name", tv_id)
+
+            # Set brightness on TV
+            try:
+                _LOGGER.info(
+                    f"Auto brightness: Attempting to set {tv_name} ({ip}) to brightness {target_brightness}"
+                )
+                await hass.async_add_executor_job(
+                    functools.partial(
+                        frame_tv.set_tv_brightness,
+                        ip,
+                        target_brightness,
+                    )
+                )
+                # Store timestamp and brightness for successful adjustment (persisted for restart)
+                from .config_entry import update_tv_config as update_config
+                update_config(
+                    hass,
+                    entry,
+                    tv_id,
+                    {
+                        "last_auto_brightness_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "current_brightness": target_brightness,
+                    },
+                )
+                # Also store in hass.data for lightweight entity sync
+                brightness_cache = hass.data[DOMAIN][entry.entry_id].setdefault("brightness_cache", {})
+                brightness_cache[tv_id] = target_brightness
+                _LOGGER.info(
+                    f"Auto brightness: {tv_name} successfully set to {target_brightness} "
+                    f"(lux={current_lux}, normalized={normalized:.2f})"
+                )
+                
+                # Restart timer if requested (e.g., from Trigger Now button)
+                if restart_timer and tv_config.get("enable_dynamic_brightness", False):
+                    start_tv_timer(tv_id)
+                
+                return True
+            except Exception as err:
+                _LOGGER.warning(f"Failed to set brightness for {tv_name}: {err}")
+                return False
+
+        # Store helper functions so buttons/switches can use them
+        hass.data[DOMAIN][entry.entry_id]["async_adjust_tv_brightness"] = async_adjust_tv_brightness
+        hass.data[DOMAIN][entry.entry_id]["start_tv_timer"] = start_tv_timer
+        hass.data[DOMAIN][entry.entry_id]["cancel_tv_timer"] = cancel_tv_timer
+
+        # Start timers for all TVs that have auto brightness enabled
+        tv_configs = list_tv_configs(entry)
+        for tv_id, tv_config in tv_configs.items():
+            if tv_config.get("enable_dynamic_brightness", False):
+                start_tv_timer(tv_id)
 
         return True
 

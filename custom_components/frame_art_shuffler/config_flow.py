@@ -27,6 +27,11 @@ from .const import (
     CONF_TV_ID,
     CONF_MOTION_SENSOR,
     CONF_LIGHT_SENSOR,
+    CONF_MIN_LUX,
+    CONF_MAX_LUX,
+    CONF_MIN_BRIGHTNESS,
+    CONF_MAX_BRIGHTNESS,
+    CONF_ENABLE_DYNAMIC_BRIGHTNESS,
     DEFAULT_METADATA_RELATIVE_PATH,
     DOMAIN,
     TOKEN_DIR_NAME,
@@ -297,6 +302,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
             motion_sensor = user_input.get(CONF_MOTION_SENSOR)
             light_sensor = user_input.get(CONF_LIGHT_SENSOR)
+            min_lux = user_input.get(CONF_MIN_LUX, 0)
+            max_lux = user_input.get(CONF_MAX_LUX, 1000)
+            min_brightness = user_input.get(CONF_MIN_BRIGHTNESS, 1)
+            max_brightness = user_input.get(CONF_MAX_BRIGHTNESS, 10)
+            enable_dynamic_brightness = user_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)
             re_pair = user_input.get(CONF_REPAIR, False)
 
             try:
@@ -337,6 +347,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     "shuffle_frequency_minutes": frequency,
                     "motion_sensor": motion_sensor,
                     "light_sensor": light_sensor,
+                    "min_lux": min_lux,
+                    "max_lux": max_lux,
+                    "min_brightness": min_brightness,
+                    "max_brightness": max_brightness,
+                    "enable_dynamic_brightness": enable_dynamic_brightness,
                 })
 
                 # Pair if requested OR if IP changed
@@ -376,6 +391,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_LIGHT_SENSOR, default=current_config.get("light_sensor")): EntitySelector(
                     EntitySelectorConfig(domain="sensor")
                 ),
+                vol.Optional(CONF_ENABLE_DYNAMIC_BRIGHTNESS, default=current_config.get("enable_dynamic_brightness", False)): bool,
+                vol.Optional(CONF_MIN_LUX, default=current_config.get("min_lux", 0)): vol.Coerce(int),
+                vol.Optional(CONF_MAX_LUX, default=current_config.get("max_lux", 1000)): vol.Coerce(int),
+                vol.Optional(CONF_MIN_BRIGHTNESS, default=current_config.get("min_brightness", 1)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                vol.Optional(CONF_MAX_BRIGHTNESS, default=current_config.get("max_brightness", 10)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(CONF_REPAIR, default=False): bool,
             }
         )
@@ -403,6 +423,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
             motion_sensor = user_input.get(CONF_MOTION_SENSOR)
             light_sensor = user_input.get(CONF_LIGHT_SENSOR)
+            min_lux = user_input.get(CONF_MIN_LUX, 0)
+            max_lux = user_input.get(CONF_MAX_LUX, 1000)
+            min_brightness = user_input.get(CONF_MIN_BRIGHTNESS, 1)
+            max_brightness = user_input.get(CONF_MAX_BRIGHTNESS, 10)
+            enable_dynamic_brightness = user_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)
             skip_pairing = user_input.get(CONF_SKIP_PAIRING, False)
 
             try:
@@ -464,6 +489,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         "shuffle_frequency_minutes": frequency,
                         "motion_sensor": motion_sensor,
                         "light_sensor": light_sensor,
+                        "min_lux": min_lux,
+                        "max_lux": max_lux,
+                        "min_brightness": min_brightness,
+                        "max_brightness": max_brightness,
+                        "enable_dynamic_brightness": enable_dynamic_brightness,
                     })
                     
                     self._async_schedule_refresh()
@@ -487,6 +517,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_LIGHT_SENSOR, default=preserved_input.get(CONF_LIGHT_SENSOR)): EntitySelector(
                     EntitySelectorConfig(domain="sensor")
                 ),
+                vol.Optional(CONF_ENABLE_DYNAMIC_BRIGHTNESS, default=preserved_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)): bool,
+                vol.Optional(CONF_MIN_LUX, default=preserved_input.get(CONF_MIN_LUX, 0)): vol.Coerce(int),
+                vol.Optional(CONF_MAX_LUX, default=preserved_input.get(CONF_MAX_LUX, 1000)): vol.Coerce(int),
+                vol.Optional(CONF_MIN_BRIGHTNESS, default=preserved_input.get(CONF_MIN_BRIGHTNESS, 1)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                vol.Optional(CONF_MAX_BRIGHTNESS, default=preserved_input.get(CONF_MAX_BRIGHTNESS, 10)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(CONF_SKIP_PAIRING, default=preserved_input.get(CONF_SKIP_PAIRING, False)): bool,
             }
         )
