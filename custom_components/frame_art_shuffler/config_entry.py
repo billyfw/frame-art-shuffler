@@ -35,7 +35,12 @@ def add_tv_config(
         tv_data: TV configuration dict
     """
     data = {**entry.data}
-    tvs = data.setdefault("tvs", {})
+    # Create a copy of the tvs dict.
+    # Home Assistant compares the new data object with the old one.
+    # If we modify the dictionary in-place without copying, HA might not detect
+    # the change and fail to persist the new values to storage.
+    tvs = data.get("tvs", {}).copy()
+    data["tvs"] = tvs
     
     tvs[tv_id] = {"id": tv_id, **tv_data}
     
@@ -57,10 +62,18 @@ def update_tv_config(
         updates: Dict of fields to update
     """
     data = {**entry.data}
-    tvs = data.setdefault("tvs", {})
+    # Create a copy of the tvs dict.
+    # Home Assistant compares the new data object with the old one.
+    # If we modify the dictionary in-place without copying, HA might not detect
+    # the change and fail to persist the new values to storage.
+    tvs = data.get("tvs", {}).copy()
+    data["tvs"] = tvs
     
     if tv_id not in tvs:
         tvs[tv_id] = {"id": tv_id}
+    else:
+        # Also copy the specific TV data to ensure the nested dictionary change is detected
+        tvs[tv_id] = tvs[tv_id].copy()
     
     tvs[tv_id].update(updates)
     
@@ -80,7 +93,12 @@ def remove_tv_config(
         tv_id: TV identifier (UUID)
     """
     data = {**entry.data}
-    tvs = data.get("tvs", {})
+    # Create a copy of the tvs dict.
+    # Home Assistant compares the new data object with the old one.
+    # If we modify the dictionary in-place without copying, HA might not detect
+    # the change and fail to persist the new values to storage.
+    tvs = data.get("tvs", {}).copy()
+    data["tvs"] = tvs
     
     if tv_id in tvs:
         del tvs[tv_id]

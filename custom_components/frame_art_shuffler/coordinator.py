@@ -40,3 +40,32 @@ class FrameArtCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         if not tvs_dict:
             return []
         return list(tvs_dict.values())
+
+    async def async_set_active_image(self, tv_id: str, filename: str, is_shuffle: bool = False) -> None:
+        """Update the active image state for a TV and refresh sensors.
+        
+        Args:
+            tv_id: The TV identifier.
+            filename: The filename of the image being displayed.
+            is_shuffle: Whether this update is triggered by a shuffle action.
+                       If True, updates last_shuffle_image and last_shuffle_timestamp.
+                       If False, only updates current_image.
+        """
+        from homeassistant.util import dt as dt_util
+        from .config_entry import update_tv_config
+
+        updates = {"current_image": filename}
+        
+        if is_shuffle:
+            updates.update({
+                "last_shuffle_image": filename,
+                "last_shuffle_timestamp": dt_util.now().isoformat(),
+            })
+
+        update_tv_config(
+            self.hass,
+            self._entry,
+            tv_id,
+            updates,
+        )
+        await self.async_request_refresh()
