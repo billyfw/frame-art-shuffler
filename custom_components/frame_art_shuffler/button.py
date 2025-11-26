@@ -35,7 +35,6 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
 
-    tracked_remove: dict[str, FrameArtRemoveTVButton] = {}
     tracked_on: dict[str, FrameArtTVOnButton] = {}
     tracked_off: dict[str, FrameArtTVOffButton] = {}
     tracked_art_mode: dict[str, FrameArtArtModeButton] = {}
@@ -49,9 +48,6 @@ async def async_setup_entry(
         current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
 
         # Remove entities for TVs that no longer exist
-        for tv_id in list(tracked_remove.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_remove.pop(tv_id)
         for tv_id in list(tracked_on.keys()):
             if tv_id not in current_tv_ids:
                 tracked_on.pop(tv_id)
@@ -76,12 +72,6 @@ async def async_setup_entry(
             tv_id = tv.get("id")
             if not tv_id:
                 continue
-            
-            # Add remove button
-            if tv_id not in tracked_remove:
-                entity = FrameArtRemoveTVButton(coordinator, entry, tv_id)
-                tracked_remove[tv_id] = entity
-                new_entities.append(entity)
             
             # Add TV On button
             if tv_id not in tracked_on:
@@ -124,8 +114,6 @@ async def async_setup_entry(
 
     coordinator.async_add_listener(lambda: _process_tvs(coordinator.data or []))
     _process_tvs(coordinator.data or [])
-
-
 class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
     """Button entity to remove a TV."""
 
@@ -147,8 +135,8 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
 
         # Get TV name from config entry
         tv_config = get_tv_config(entry, tv_id)
-        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
-        self._tv_name = tv_name
+        self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+        self._tv_ip = tv_config.get("ip") if tv_config else None
         
         # Use tv_id as identifier (no home prefix)
         identifier = tv_id
@@ -163,6 +151,14 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
 
     async def async_press(self) -> None:
         """Handle the button press - remove this TV."""
+        # First, try to clean up the token file
+        if self._tv_ip:
+            try:
+                await self.hass.async_add_executor_job(delete_token, self._tv_ip)
+                _LOGGER.info(f"Deleted token for {self._tv_name} ({self._tv_ip})")
+            except Exception as err:
+                _LOGGER.warning(f"Failed to delete token for {self._tv_name}: {err}")
+
         device_registry = dr.async_get(self.hass)
         
         # Find the device for this TV
@@ -186,7 +182,6 @@ class FrameArtTVOnButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity): 
     _attr_has_entity_name = True
     _attr_name = "TV On (~12s)"
     _attr_icon = "mdi:television"
-    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -237,7 +232,6 @@ class FrameArtTVOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):
     _attr_has_entity_name = True
     _attr_name = "TV Off (~3s)"
     _attr_icon = "mdi:television-off"
-    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -286,7 +280,6 @@ class FrameArtArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
     _attr_has_entity_name = True
     _attr_name = "Art Mode"
     _attr_icon = "mdi:palette"
-    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -335,7 +328,6 @@ class FrameArtOnArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEnti
     _attr_has_entity_name = True
     _attr_name = "On+Art Mode (~12s)"
     _attr_icon = "mdi:television-ambient-light"
-    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -495,6 +487,7 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
             _LOGGER.info(f"Successfully uploaded {image_filename} to {self._tv_name}")
 
             # Update current_image and last_shuffle_timestamp in config
+            from homeassistant.util import dt as dt_util
             update_tv_config(
                 self.hass,
                 self._entry,
@@ -502,7 +495,7 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
                 {
                     "current_image": image_filename,
                     "last_shuffle_image": image_filename,
-                    "last_shuffle_timestamp": datetime.now().isoformat(),
+                    "last_shuffle_timestamp": dt_util.now().isoformat(),
                 },
             )
 
@@ -570,8 +563,10 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
 
         # Log the eligible set
         eligible_filenames = [img["filename"] for img in eligible_images]
-        _LOGGER.debug(
-            f"{len(eligible_images)} eligible images for {self._tv_name}: {eligible_filenames}"
+        _LOGGER.info(
+            f"Shuffle for {self._tv_name}: Found {len(eligible_images)} images matching criteria "
+            f"(include: {include_tags}, exclude: {exclude_tags}). "
+            f"Candidates: {eligible_filenames}"
         )
 
         # Remove current image from candidates

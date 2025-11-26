@@ -17,8 +17,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
-from .flow_utils import validate_host
-from .metadata import normalize_mac
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,8 +51,6 @@ async def async_setup_entry(
             entities = [
                 FrameArtTagsEntity(coordinator, entry, tv_id),
                 FrameArtExcludeTagsEntity(coordinator, entry, tv_id),
-                FrameArtIPEntity(coordinator, entry, tv_id),
-                FrameArtMACEntity(coordinator, entry, tv_id),
             ]
             tracked[tv_id] = entities
             new_entities.extend(entities)
@@ -152,79 +148,10 @@ class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
         await self.coordinator.async_request_refresh()
 
 
-class FrameArtIPEntity(FrameArtTextEntityBase):
-    """Text entity for TV IP address."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(
-        self,
-        coordinator: FrameArtCoordinator,
-        entry: ConfigEntry,
-        tv_id: str,
-    ) -> None:
-        """Initialize the IP entity."""
-        super().__init__(
-            coordinator,
-            entry,
-            tv_id,
-            "ip",
-            "IP Address",
-            "mdi:ip-network",
-        )
-    
-    async def async_set_value(self, value: str) -> None:
-        """Update the IP address with validation."""
-        # Validate IP address
-        try:
-            validated_ip = validate_host(value.strip())
-        except ValueError as err:
-            raise ServiceValidationError(
-                f"Invalid IP address: {value}. Please enter a valid IP address (e.g., 192.168.1.100)"
-            ) from err
-        
-        # Call parent with validated value
-        self._validated_value = validated_ip
-        await super().async_set_value(validated_ip)
-
-
-class FrameArtMACEntity(FrameArtTextEntityBase):
-    """Text entity for TV MAC address."""
-
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(
-        self,
-        coordinator: FrameArtCoordinator,
-        entry: ConfigEntry,
-        tv_id: str,
-    ) -> None:
-        """Initialize the MAC entity."""
-        super().__init__(
-            coordinator,
-            entry,
-            tv_id,
-            "mac",
-            "MAC Address",
-            "mdi:ethernet",
-            r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$",
-        )
-    
-    async def async_set_value(self, value: str) -> None:
-        """Update the MAC address with validation."""
-        # Validate and normalize MAC address
-        normalized = normalize_mac(value.strip())
-        if not normalized:
-            raise ServiceValidationError(
-                f"Invalid MAC address: {value}. Please enter a valid MAC address (e.g., aa:bb:cc:dd:ee:ff or AA-BB-CC-DD-EE-FF)"
-            )
-        
-        # Call parent with normalized value
-        await super().async_set_value(normalized)
-
-
 class FrameArtTagsEntity(FrameArtTextEntityBase):
     """Text entity for TV tags (comma-separated)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -241,10 +168,10 @@ class FrameArtTagsEntity(FrameArtTextEntityBase):
             "Tags - Include",
             "mdi:tag-multiple",
         )
-
-
 class FrameArtExcludeTagsEntity(FrameArtTextEntityBase):
     """Text entity for TV exclude tags (comma-separated)."""
+
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,

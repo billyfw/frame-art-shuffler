@@ -13,6 +13,11 @@ from homeassistant.const import CONF_HOST, CONF_MAC, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigFlowResult
 
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+)
+
 from .const import (
     CONF_EXCLUDE_TAGS,
     CONF_METADATA_PATH,
@@ -20,6 +25,8 @@ from .const import (
     CONF_TAGS,
     CONF_TOKEN_DIR,
     CONF_TV_ID,
+    CONF_MOTION_SENSOR,
+    CONF_LIGHT_SENSOR,
     DEFAULT_METADATA_RELATIVE_PATH,
     DOMAIN,
     TOKEN_DIR_NAME,
@@ -32,6 +39,7 @@ from .metadata import (
 )
 
 CONF_SKIP_PAIRING = "skip_pairing"
+CONF_REPAIR = "re_pair"
 
 
 def _default_metadata_path(hass: HomeAssistant) -> Path:
@@ -176,8 +184,208 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         return await self.hass.async_add_executor_job(self._store().list_tvs)
 
     async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
-        """Show the Add TV form directly."""
-        return await self.async_step_add_tv(user_input)
+        """Show the main menu."""
+        return await self.async_step_menu(user_input)
+
+    async def async_step_menu(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Show the menu to add or edit TVs."""
+        if user_input is not None:
+            if user_input["action"] == "add_tv":
+                return await self.async_step_add_tv()
+            elif user_input["action"] == "edit_tv":
+                return await self.async_step_pick_edit_tv()
+            elif user_input["action"] == "delete_tv":
+                return await self.async_step_delete_tv()
+
+        # Get list of existing TVs
+        from .config_entry import list_tv_configs
+        tvs = list_tv_configs(self.config_entry)
+        
+        options = {"add_tv": "Add a new TV"}
+        if tvs:
+            options["edit_tv"] = "Edit a TV"
+            options["delete_tv"] = "Delete a TV"
+
+        return self.async_show_form(
+            step_id="menu",
+            data_schema=vol.Schema({
+                vol.Required("action"): vol.In(options)
+            }),
+        )
+
+    async def async_step_pick_edit_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Handle picking a TV to edit."""
+        from .config_entry import list_tv_configs
+        
+        tvs = list_tv_configs(self.config_entry)
+        if not tvs:
+            return await self.async_step_menu()
+
+        if user_input is not None:
+            self._edit_tv_id = user_input["tv_id"]
+            return await self.async_step_edit_tv()
+
+        options = {tv_id: data.get("name", tv_id) for tv_id, data in tvs.items()}
+
+        return self.async_show_form(
+            step_id="pick_edit_tv",
+            data_schema=vol.Schema({
+                vol.Required("tv_id"): vol.In(options)
+            }),
+            description_placeholders={"count": str(len(tvs))}
+        )
+
+    async def async_step_delete_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Handle deleting a TV."""
+        from .config_entry import list_tv_configs, remove_tv_config, get_tv_config
+        from .frame_tv import delete_token
+        
+        tvs = list_tv_configs(self.config_entry)
+        if not tvs:
+            return await self.async_step_menu()
+
+        if user_input is not None:
+            tv_id = user_input["tv_id"]
+            tv_config = get_tv_config(self.config_entry, tv_id)
+            
+            # Delete token first
+            if tv_config and "ip" in tv_config:
+                try:
+                    await self.hass.async_add_executor_job(delete_token, tv_config["ip"])
+                except Exception:
+                    pass  # Best effort
+            
+            # Remove from config
+            remove_tv_config(self.hass, self.config_entry, tv_id)
+            
+            # Refresh
+            self._async_schedule_refresh()
+            
+            # Return to menu to see updated list
+            return await self.async_step_menu()
+
+        options = {tv_id: data.get("name", tv_id) for tv_id, data in tvs.items()}
+
+        return self.async_show_form(
+            step_id="delete_tv",
+            data_schema=vol.Schema({
+                vol.Required("tv_id"): vol.In(options)
+            }),
+            description_placeholders={"count": str(len(tvs))}
+        )
+
+    async def async_step_edit_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Handle editing an existing TV."""
+        from .config_entry import get_tv_config, update_tv_config
+        
+        tv_id = getattr(self, "_edit_tv_id", None)
+        if not tv_id:
+            return await self.async_step_menu()
+            
+        current_config = get_tv_config(self.config_entry, tv_id)
+        if not current_config:
+            return await self.async_step_menu()
+
+        errors: Dict[str, str] = {}
+
+        if user_input is not None:
+            host_input = user_input.get(CONF_HOST, "")
+            name = (user_input.get(CONF_NAME) or "").strip()
+            mac_input = user_input.get(CONF_MAC, "")
+            freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
+            tags_input = user_input.get(CONF_TAGS, "")
+            exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
+            motion_sensor = user_input.get(CONF_MOTION_SENSOR)
+            light_sensor = user_input.get(CONF_LIGHT_SENSOR)
+            re_pair = user_input.get(CONF_REPAIR, False)
+
+            try:
+                host = validate_host(host_input)
+            except ValueError:
+                errors[CONF_HOST] = "invalid_host"
+                host = host_input
+            if not name:
+                errors[CONF_NAME] = "name_required"
+
+            normalized_mac = normalize_mac(mac_input)
+            if not normalized_mac:
+                errors[CONF_MAC] = "invalid_mac"
+
+            try:
+                frequency = int(freq)
+                if frequency <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors[CONF_SHUFFLE_FREQUENCY] = "invalid_frequency"
+                frequency = 0
+
+            tags = parse_tag_string(tags_input)
+            exclude_tags = parse_tag_string(exclude_input)
+
+            if not errors:
+                # Check if IP changed
+                old_ip = current_config.get("ip")
+                ip_changed = old_ip != host
+
+                # Update TV config
+                update_tv_config(self.hass, self.config_entry, tv_id, {
+                    "name": name,
+                    "ip": host,
+                    "mac": normalized_mac,
+                    "tags": tags,
+                    "exclude_tags": exclude_tags,
+                    "shuffle_frequency_minutes": frequency,
+                    "motion_sensor": motion_sensor,
+                    "light_sensor": light_sensor,
+                })
+
+                # Pair if requested OR if IP changed
+                if re_pair or ip_changed:
+                    token_dir = Path(self.config_entry.data[CONF_TOKEN_DIR])
+                    token_dir.mkdir(parents=True, exist_ok=True)
+                    token_path = token_dir / f"{safe_token_filename(host)}.token"
+                    
+                    # If IP changed, we might want to delete the old token? 
+                    # For now, just ensure we pair with the new one.
+                    
+                    success = await self.hass.async_add_executor_job(
+                        partial(pair_tv, host, token_path, mac=normalized_mac)
+                    )
+                    if not success:
+                        errors["base"] = "pairing_failed"
+
+                if not errors:
+                    self._async_schedule_refresh()
+                    return self.async_create_entry(title="", data={})
+
+        # Prepare default values from current config
+        current_tags = ", ".join(current_config.get("tags", []))
+        current_exclude = ", ".join(current_config.get("exclude_tags", []))
+        
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_NAME, default=current_config.get("name", "")): str,
+                vol.Required(CONF_HOST, default=current_config.get("ip", "")): str,
+                vol.Required(CONF_MAC, default=current_config.get("mac", "")): str,
+                vol.Optional(CONF_TAGS, default=current_tags): str,
+                vol.Optional(CONF_EXCLUDE_TAGS, default=current_exclude): str,
+                vol.Required(CONF_SHUFFLE_FREQUENCY, default=current_config.get("shuffle_frequency_minutes", 30)): vol.Coerce(int),
+                vol.Optional(CONF_MOTION_SENSOR, default=current_config.get("motion_sensor")): EntitySelector(
+                    EntitySelectorConfig(domain="binary_sensor")
+                ),
+                vol.Optional(CONF_LIGHT_SENSOR, default=current_config.get("light_sensor")): EntitySelector(
+                    EntitySelectorConfig(domain="sensor")
+                ),
+                vol.Optional(CONF_REPAIR, default=False): bool,
+            }
+        )
+
+        return self.async_show_form(
+            step_id="edit_tv",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"tv_name": current_config.get("name", "")}
+        )
 
     async def async_step_add_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         """Handle adding a new TV."""
@@ -193,6 +401,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
+            motion_sensor = user_input.get(CONF_MOTION_SENSOR)
+            light_sensor = user_input.get(CONF_LIGHT_SENSOR)
             skip_pairing = user_input.get(CONF_SKIP_PAIRING, False)
 
             try:
@@ -252,6 +462,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         "tags": tags,
                         "exclude_tags": exclude_tags,
                         "shuffle_frequency_minutes": frequency,
+                        "motion_sensor": motion_sensor,
+                        "light_sensor": light_sensor,
                     })
                     
                     self._async_schedule_refresh()
@@ -269,6 +481,12 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_TAGS, default=preserved_input.get(CONF_TAGS, "")): str,
                 vol.Optional(CONF_EXCLUDE_TAGS, default=preserved_input.get(CONF_EXCLUDE_TAGS, "")): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=preserved_input.get(CONF_SHUFFLE_FREQUENCY, 30)): vol.Coerce(int),
+                vol.Optional(CONF_MOTION_SENSOR, default=preserved_input.get(CONF_MOTION_SENSOR)): EntitySelector(
+                    EntitySelectorConfig(domain="binary_sensor")
+                ),
+                vol.Optional(CONF_LIGHT_SENSOR, default=preserved_input.get(CONF_LIGHT_SENSOR)): EntitySelector(
+                    EntitySelectorConfig(domain="sensor")
+                ),
                 vol.Optional(CONF_SKIP_PAIRING, default=preserved_input.get(CONF_SKIP_PAIRING, False)): bool,
             }
         )

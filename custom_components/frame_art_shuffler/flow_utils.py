@@ -61,6 +61,7 @@ def pair_tv(
     open the websocket pairing channel. It retries a limited number of times
     so failures surface quickly in the UI.
     """
+    _LOGGER.info("Attempting to pair with %s. Token path: %s", host, token_path)
 
     try:
         from samsungtvws.remote import SamsungTVWS  # type: ignore import
@@ -69,17 +70,31 @@ def pair_tv(
         return False
 
     if wake and mac:
+        # Check if TV is already reachable before waking
+        is_reachable = False
         try:
-            from .frame_tv import tv_on  # pylint: disable=import-outside-toplevel
-        except Exception as err:  # pragma: no cover - import failure surfaces as False in tests
-            _LOGGER.debug("Unable to import wake helper for %s: %s", host, err)
-        else:
+            import socket
+            with socket.create_connection((host, 8002), timeout=2):
+                is_reachable = True
+                _LOGGER.debug("TV %s is already reachable, skipping Wake-on-LAN", host)
+        except (OSError, TimeoutError):
+            pass
+
+        if not is_reachable:
             try:
-                tv_on(host, mac)
-            except Exception as err:  # pragma: no cover - best effort wake
-                _LOGGER.debug("Wake-on-LAN for %s failed: %s", host, err)
+                from .frame_tv import tv_on  # pylint: disable=import-outside-toplevel
+            except Exception as err:  # pragma: no cover - import failure surfaces as False in tests
+                _LOGGER.debug("Unable to import wake helper for %s: %s", host, err)
+            else:
+                try:
+                    tv_on(host, mac)
+                except Exception as err:  # pragma: no cover - best effort wake
+                    _LOGGER.debug("Wake-on-LAN for %s failed: %s", host, err)
 
     last_error: Exception | None = None
+    # Check if token exists before we start to detect if __init__ creates it
+    token_existed = token_path.exists()
+
     for attempt in range(1, attempts + 1):
         if attempt > 1:
             time.sleep(retry_delay)
@@ -97,8 +112,16 @@ def pair_tv(
             _LOGGER.debug("Failed to initialise SamsungTVWS for %s: %s", host, err)
             continue
 
+        # Optimization: If we didn't have a token before, but now we do,
+        # it means SamsungTVWS.__init__ successfully paired (2024+ models).
+        # We can skip the explicit open() call to avoid a second prompt.
+        if not token_existed and token_path.exists():
+            _LOGGER.info("SamsungTVWS initialized and created token for %s at %s, skipping explicit open", host, token_path)
+            return True
+
         try:
             remote.open()
+            _LOGGER.info("Pairing successful for %s. Token saved to %s", host, token_path)
             return True
         except Exception as err:
             last_error = err
