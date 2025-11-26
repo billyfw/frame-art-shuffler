@@ -44,6 +44,7 @@ async def async_setup_entry(
     tracked_calibrate_dark: dict[str, FrameArtCalibrateDarkButton] = {}
     tracked_calibrate_bright: dict[str, FrameArtCalibrateBrightButton] = {}
     tracked_trigger_brightness: dict[str, FrameArtTriggerBrightnessButton] = {}
+    tracked_trigger_motion_off: dict[str, FrameArtTriggerMotionOffButton] = {}
 
     @callback
     def _process_tvs(tvs: list[dict[str, Any]]) -> None:
@@ -78,6 +79,9 @@ async def async_setup_entry(
         for tv_id in list(tracked_trigger_brightness.keys()):
             if tv_id not in current_tv_ids:
                 tracked_trigger_brightness.pop(tv_id)
+        for tv_id in list(tracked_trigger_motion_off.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_trigger_motion_off.pop(tv_id)
 
         # Add entities for new TVs
         for tv in tvs:
@@ -137,6 +141,12 @@ async def async_setup_entry(
             if tv_id not in tracked_trigger_brightness:
                 entity = FrameArtTriggerBrightnessButton(coordinator, entry, tv_id)
                 tracked_trigger_brightness[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add Trigger Motion Off button
+            if tv_id not in tracked_trigger_motion_off:
+                entity = FrameArtTriggerMotionOffButton(hass, coordinator, entry, tv_id)
+                tracked_trigger_motion_off[tv_id] = entity
                 new_entities.append(entity)
 
         if new_entities:
@@ -839,4 +849,69 @@ class FrameArtTriggerBrightnessButton(CoordinatorEntity[FrameArtCoordinator], Bu
         else:
             _LOGGER.warning(f"Auto brightness adjustment failed for {self._tv_name}")
         
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtTriggerMotionOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+    """Button entity to trigger auto motion off (turn TV off) now."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Motion Trigger Off"
+    _attr_icon = "mdi:television-off"
+    # No entity_category = shows in Controls section
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the button entity."""
+        super().__init__(coordinator)
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_trigger_motion_off"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_press(self) -> None:
+        """Handle the button press - turn TV off and cancel motion timer."""
+        from datetime import datetime, timezone
+        
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            _LOGGER.error(f"Cannot trigger motion off for {self._tv_name}: TV config not found")
+            return
+
+        ip = tv_config.get("ip")
+        if not ip:
+            _LOGGER.error(f"Cannot trigger motion off for {self._tv_name}: no IP address")
+            return
+
+        # Cancel any pending off timer
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if data:
+            # Clear the scheduled off time
+            motion_off_times = data.get("motion_off_times", {})
+            if self._tv_id in motion_off_times:
+                del motion_off_times[self._tv_id]
+
+        # Turn off the TV
+        try:
+            _LOGGER.info(f"Auto motion trigger: Turning off {self._tv_name} ({ip})")
+            await self._hass.async_add_executor_job(tv_off, ip)
+            _LOGGER.info(f"Auto motion trigger: {self._tv_name} turned off successfully")
+        except Exception as err:
+            _LOGGER.warning(f"Auto motion trigger: Failed to turn off {self._tv_name}: {err}")
+
         await self.coordinator.async_request_refresh()

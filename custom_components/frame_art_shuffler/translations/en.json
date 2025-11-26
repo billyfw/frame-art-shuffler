@@ -21,7 +21,9 @@
           "min_lux": "Auto-Bright Min Lux (darkest room)",
           "max_lux": "Auto-Bright Max Lux (brightest room)",
           "min_brightness": "Auto-Bright Min Level (1-10)",
-          "max_brightness": "Auto-Bright Max Level (1-10)"
+          "max_brightness": "Auto-Bright Max Level (1-10)",
+          "enable_motion_control": "Enable Auto Motion (TV on/off)",
+          "motion_off_delay": "Auto-Motion Off Delay (minutes)"
         }
       },
       "edit_tv": {
@@ -39,6 +41,8 @@
           "max_lux": "Auto-Bright Max Lux (brightest room)",
           "min_brightness": "Auto-Bright Min Level (1-10)",
           "max_brightness": "Auto-Bright Max Level (1-10)",
+          "enable_motion_control": "Enable Auto Motion (TV on/off)",
+          "motion_off_delay": "Auto-Motion Off Delay (minutes)",
           "re_pair": "Re-pair TV (force new token exchange)"
         }
       },
