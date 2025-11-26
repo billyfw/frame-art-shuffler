@@ -37,6 +37,7 @@ async def async_setup_entry(
     tracked_max_lux: dict[str, FrameArtMaxLuxEntity] = {}
     tracked_min_brightness: dict[str, FrameArtMinBrightnessEntity] = {}
     tracked_max_brightness: dict[str, FrameArtMaxBrightnessEntity] = {}
+    tracked_motion_off_delay: dict[str, FrameArtMotionOffDelayEntity] = {}
 
     @callback
     def _process_tvs(tvs: list[dict[str, Any]]) -> None:
@@ -62,6 +63,9 @@ async def async_setup_entry(
         for tv_id in list(tracked_max_brightness.keys()):
             if tv_id not in current_tv_ids:
                 tracked_max_brightness.pop(tv_id)
+        for tv_id in list(tracked_motion_off_delay.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_motion_off_delay.pop(tv_id)
 
         # Add entities for new TVs
         for tv in tvs:
@@ -111,6 +115,12 @@ async def async_setup_entry(
             if tv_id not in tracked_max_brightness:
                 entity = FrameArtMaxBrightnessEntity(coordinator, entry, tv_id)
                 tracked_max_brightness[tv_id] = entity
+                new_entities.append(entity)
+
+            # Add motion off delay entity
+            if tv_id not in tracked_motion_off_delay:
+                entity = FrameArtMotionOffDelayEntity(coordinator, entry, tv_id)
+                tracked_motion_off_delay[tv_id] = entity
                 new_entities.append(entity)
 
         if new_entities:
@@ -552,5 +562,59 @@ class FrameArtMaxBrightnessEntity(CoordinatorEntity, NumberEntity):
             self._entry,
             self._tv_id,
             {"max_brightness": int(value)},
+        )
+        await self.coordinator.async_request_refresh()
+
+
+class FrameArtMotionOffDelayEntity(CoordinatorEntity, NumberEntity):
+    """Number entity for auto-motion off delay in minutes."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:timer-off-outline"
+    _attr_native_min_value = 1
+    _attr_native_max_value = 120
+    _attr_native_step = 1.0
+    _attr_mode = NumberMode.BOX
+    _attr_native_unit_of_measurement = "min"
+    _attr_name = "Auto-Motion Off Delay"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_motion_off_delay"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current value from config entry."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return float(tv_config.get("motion_off_delay", 15))
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the motion off delay in config entry."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"motion_off_delay": int(value)},
         )
         await self.coordinator.async_request_refresh()

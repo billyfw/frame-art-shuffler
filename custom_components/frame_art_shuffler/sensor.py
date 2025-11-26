@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
@@ -95,6 +95,31 @@ AUTO_BRIGHT_TARGET_DESCRIPTION = SensorEntityDescription(
     translation_key="auto_bright_target",
 )
 
+AUTO_BRIGHT_SENSOR_LUX_DESCRIPTION = SensorEntityDescription(
+    key="auto_bright_sensor_lux",
+    icon="mdi:brightness-5",
+    device_class=SensorDeviceClass.ILLUMINANCE,
+    native_unit_of_measurement="lx",
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_bright_sensor_lux",
+)
+
+AUTO_MOTION_LAST_MOTION_DESCRIPTION = SensorEntityDescription(
+    key="auto_motion_last_motion",
+    icon="mdi:clock-check-outline",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_motion_last_motion",
+)
+
+AUTO_MOTION_OFF_AT_DESCRIPTION = SensorEntityDescription(
+    key="auto_motion_off_at",
+    icon="mdi:clock-alert-outline",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_motion_off_at",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -128,9 +153,13 @@ async def async_setup_entry(
             auto_bright_last_entity = FrameArtAutoBrightLastAdjustEntity(coordinator, entry, tv_id)
             auto_bright_next_entity = FrameArtAutoBrightNextAdjustEntity(coordinator, entry, tv_id)
             auto_bright_target_entity = FrameArtAutoBrightTargetEntity(hass, coordinator, entry, tv_id)
+            auto_bright_lux_entity = FrameArtAutoBrightSensorLuxEntity(hass, coordinator, entry, tv_id)
+            # Auto motion sensors
+            auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(coordinator, entry, tv_id)
+            auto_motion_off_at_entity = FrameArtAutoMotionOffAtEntity(hass, coordinator, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -384,7 +413,7 @@ class FrameArtMotionSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorE
 
     entity_description = MOTION_SENSOR_DESCRIPTION
     _attr_has_entity_name = True
-    _attr_name = "Motion Source"
+    _attr_name = "Auto-Motion Sensor"
 
     def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
         super().__init__(coordinator)
@@ -559,6 +588,35 @@ class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], Sen
             manufacturer="Samsung",
             model="Frame TV",
         )
+        self._unsubscribe_light_sensor: Callable[[], None] | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to light sensor state changes for real-time updates."""
+        await super().async_added_to_hass()
+        
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        light_sensor = tv_config.get("light_sensor") if tv_config else None
+        
+        if light_sensor:
+            from homeassistant.helpers.event import async_track_state_change_event
+            
+            @callback
+            def _light_sensor_changed(event: Any) -> None:
+                """Handle light sensor state change."""
+                self.async_write_ha_state()
+            
+            self._unsubscribe_light_sensor = async_track_state_change_event(
+                self._hass,
+                [light_sensor],
+                _light_sensor_changed,
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from light sensor state changes."""
+        if self._unsubscribe_light_sensor:
+            self._unsubscribe_light_sensor()
+            self._unsubscribe_light_sensor = None
+        await super().async_will_remove_from_hass()
 
     @property
     def native_value(self) -> int | None:  # type: ignore[override]
@@ -599,3 +657,170 @@ class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], Sen
         # Calculate target brightness
         target = int(round(min_brightness + normalized * (max_brightness - min_brightness)))
         return max(min_brightness, min(max_brightness, target))
+
+
+class FrameArtAutoBrightSensorLuxEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Sensor that mirrors the configured light sensor's lux value."""
+
+    entity_description = AUTO_BRIGHT_SENSOR_LUX_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Bright Sensor Lux"
+
+    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_bright_sensor_lux"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+        self._unsubscribe_light_sensor: Callable[[], None] | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to light sensor state changes for real-time updates."""
+        await super().async_added_to_hass()
+        
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        light_sensor = tv_config.get("light_sensor") if tv_config else None
+        
+        if light_sensor:
+            from homeassistant.helpers.event import async_track_state_change_event
+            
+            @callback
+            def _light_sensor_changed(event: Any) -> None:
+                """Handle light sensor state change."""
+                self.async_write_ha_state()
+            
+            self._unsubscribe_light_sensor = async_track_state_change_event(
+                self._hass,
+                [light_sensor],
+                _light_sensor_changed,
+            )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from light sensor state changes."""
+        if self._unsubscribe_light_sensor:
+            self._unsubscribe_light_sensor()
+            self._unsubscribe_light_sensor = None
+        await super().async_will_remove_from_hass()
+
+    @property
+    def native_value(self) -> float | None:  # type: ignore[override]
+        """Return the current lux value from the configured light sensor."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        # Get the light sensor entity ID
+        light_sensor = tv_config.get("light_sensor")
+        if not light_sensor:
+            return None
+        
+        # Get current lux value from the sensor
+        lux_state = self._hass.states.get(light_sensor)
+        if not lux_state or lux_state.state in ("unavailable", "unknown"):
+            return None
+        
+        try:
+            return float(lux_state.state)
+        except (ValueError, TypeError):
+            return None
+
+
+class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Sensor for last detected motion timestamp."""
+
+    entity_description = AUTO_MOTION_LAST_MOTION_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Motion Last Motion"
+
+    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_motion_last"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> datetime | None:  # type: ignore[override]
+        """Return the last motion timestamp."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        timestamp_str = tv_config.get("last_motion_timestamp")
+        if not timestamp_str:
+            return None
+        
+        try:
+            dt = datetime.fromisoformat(timestamp_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
+
+class FrameArtAutoMotionOffAtEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+    """Sensor for when TV will turn off due to no motion."""
+
+    entity_description = AUTO_MOTION_OFF_AT_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Motion Off At"
+
+    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+        super().__init__(coordinator)
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_motion_off_at"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> datetime | None:  # type: ignore[override]
+        """Return when the TV will turn off."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        # Check if motion control is enabled
+        if not tv_config.get("enable_motion_control", False):
+            return None
+        
+        # Get the scheduled off time from hass.data
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        motion_off_times = data.get("motion_off_times", {})
+        off_time = motion_off_times.get(self._tv_id)
+        
+        if off_time and isinstance(off_time, datetime):
+            if off_time.tzinfo is None:
+                off_time = off_time.replace(tzinfo=timezone.utc)
+            return off_time
+        
+        return None

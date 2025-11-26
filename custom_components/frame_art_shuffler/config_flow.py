@@ -32,6 +32,8 @@ from .const import (
     CONF_MIN_BRIGHTNESS,
     CONF_MAX_BRIGHTNESS,
     CONF_ENABLE_DYNAMIC_BRIGHTNESS,
+    CONF_ENABLE_MOTION_CONTROL,
+    CONF_MOTION_OFF_DELAY,
     DEFAULT_METADATA_RELATIVE_PATH,
     DOMAIN,
     TOKEN_DIR_NAME,
@@ -307,6 +309,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             min_brightness = user_input.get(CONF_MIN_BRIGHTNESS, 1)
             max_brightness = user_input.get(CONF_MAX_BRIGHTNESS, 10)
             enable_dynamic_brightness = user_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)
+            enable_motion_control = user_input.get(CONF_ENABLE_MOTION_CONTROL, False)
+            motion_off_delay = user_input.get(CONF_MOTION_OFF_DELAY, 15)
             re_pair = user_input.get(CONF_REPAIR, False)
 
             try:
@@ -352,6 +356,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     "min_brightness": min_brightness,
                     "max_brightness": max_brightness,
                     "enable_dynamic_brightness": enable_dynamic_brightness,
+                    "enable_motion_control": enable_motion_control,
+                    "motion_off_delay": motion_off_delay,
                 })
 
                 # Pair if requested OR if IP changed
@@ -396,6 +402,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MAX_LUX, default=current_config.get("max_lux", 1000)): vol.Coerce(int),
                 vol.Optional(CONF_MIN_BRIGHTNESS, default=current_config.get("min_brightness", 1)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(CONF_MAX_BRIGHTNESS, default=current_config.get("max_brightness", 10)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                vol.Optional(CONF_ENABLE_MOTION_CONTROL, default=current_config.get("enable_motion_control", False)): bool,
+                vol.Optional(CONF_MOTION_OFF_DELAY, default=current_config.get("motion_off_delay", 15)): vol.All(vol.Coerce(int), vol.Range(min=1, max=120)),
                 vol.Optional(CONF_REPAIR, default=False): bool,
             }
         )
@@ -428,6 +436,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             min_brightness = user_input.get(CONF_MIN_BRIGHTNESS, 1)
             max_brightness = user_input.get(CONF_MAX_BRIGHTNESS, 10)
             enable_dynamic_brightness = user_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)
+            enable_motion_control = user_input.get(CONF_ENABLE_MOTION_CONTROL, False)
+            motion_off_delay = user_input.get(CONF_MOTION_OFF_DELAY, 15)
             skip_pairing = user_input.get(CONF_SKIP_PAIRING, False)
 
             try:
@@ -494,6 +504,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         "min_brightness": min_brightness,
                         "max_brightness": max_brightness,
                         "enable_dynamic_brightness": enable_dynamic_brightness,
+                        "enable_motion_control": enable_motion_control,
+                        "motion_off_delay": motion_off_delay,
                     })
                     
                     self._async_schedule_refresh()
@@ -522,6 +534,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MAX_LUX, default=preserved_input.get(CONF_MAX_LUX, 1000)): vol.Coerce(int),
                 vol.Optional(CONF_MIN_BRIGHTNESS, default=preserved_input.get(CONF_MIN_BRIGHTNESS, 1)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
                 vol.Optional(CONF_MAX_BRIGHTNESS, default=preserved_input.get(CONF_MAX_BRIGHTNESS, 10)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                vol.Optional(CONF_ENABLE_MOTION_CONTROL, default=preserved_input.get(CONF_ENABLE_MOTION_CONTROL, False)): bool,
+                vol.Optional(CONF_MOTION_OFF_DELAY, default=preserved_input.get(CONF_MOTION_OFF_DELAY, 15)): vol.All(vol.Coerce(int), vol.Range(min=1, max=120)),
                 vol.Optional(CONF_SKIP_PAIRING, default=preserved_input.get(CONF_SKIP_PAIRING, False)): bool,
             }
         )

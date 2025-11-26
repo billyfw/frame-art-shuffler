@@ -305,6 +305,21 @@ if _HA_AVAILABLE:
             ip = tv_data["ip"]
             tv_name = tv_config.get("name", tv_id)
 
+            # Check if brightness already matches target - skip unnecessary command
+            brightness_cache = data.get("brightness_cache", {})
+            current_brightness = brightness_cache.get(tv_id)
+            if current_brightness is None:
+                current_brightness = tv_config.get("current_brightness")
+            
+            if current_brightness is not None and int(current_brightness) == target_brightness:
+                _LOGGER.debug(
+                    f"Auto brightness: {tv_name} already at brightness {target_brightness}, skipping"
+                )
+                # Still restart timer if requested
+                if restart_timer and tv_config.get("enable_dynamic_brightness", False):
+                    start_tv_timer(tv_id)
+                return True
+
             # Set brightness on TV
             try:
                 _LOGGER.info(
@@ -331,6 +346,10 @@ if _HA_AVAILABLE:
                 # Also store in hass.data for lightweight entity sync
                 brightness_cache = hass.data[DOMAIN][entry.entry_id].setdefault("brightness_cache", {})
                 brightness_cache[tv_id] = target_brightness
+                
+                # Trigger coordinator refresh so Brightness entity updates state (for logbook)
+                await coordinator.async_request_refresh()
+                
                 _LOGGER.info(
                     f"Auto brightness: {tv_name} successfully set to {target_brightness} "
                     f"(lux={current_lux}, normalized={normalized:.2f})"
@@ -355,6 +374,182 @@ if _HA_AVAILABLE:
         for tv_id, tv_config in tv_configs.items():
             if tv_config.get("enable_dynamic_brightness", False):
                 start_tv_timer(tv_id)
+
+        # ===== AUTO MOTION CONTROL =====
+        # Per-TV motion listener and off-timer management
+        motion_listeners: dict[str, Callable[[], None]] = {}
+        motion_off_timers: dict[str, Callable[[], None]] = {}
+        motion_off_times: dict[str, datetime] = {}
+        hass.data[DOMAIN][entry.entry_id]["motion_off_times"] = motion_off_times
+
+        def cancel_motion_off_timer(tv_id: str) -> None:
+            """Cancel the motion off timer for a specific TV."""
+            if tv_id in motion_off_timers:
+                motion_off_timers[tv_id]()
+                del motion_off_timers[tv_id]
+            if tv_id in motion_off_times:
+                del motion_off_times[tv_id]
+
+        def start_motion_off_timer(tv_id: str) -> None:
+            """Start or restart the motion off timer for a specific TV."""
+            cancel_motion_off_timer(tv_id)
+
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config:
+                return
+
+            off_delay_minutes = tv_config.get("motion_off_delay", 15)
+            tv_name = tv_config.get("name", tv_id)
+
+            # Calculate when TV will turn off
+            off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
+            motion_off_times[tv_id] = off_time
+
+            async def async_motion_off_callback(_now: Any) -> None:
+                """Timer callback to turn off TV."""
+                tv_configs = list_tv_configs(entry)
+                tv_config = tv_configs.get(tv_id)
+                if not tv_config or not tv_config.get("enable_motion_control", False):
+                    cancel_motion_off_timer(tv_id)
+                    return
+
+                tv_name = tv_config.get("name", tv_id)
+                ip = tv_config.get("ip")
+                if not ip:
+                    _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
+                    return
+
+                try:
+                    _LOGGER.info(f"Auto motion: Turning off {tv_name} ({ip}) due to no motion")
+                    await hass.async_add_executor_job(frame_tv.tv_off, ip)
+                    _LOGGER.info(f"Auto motion: {tv_name} turned off successfully")
+                except Exception as err:
+                    _LOGGER.warning(f"Auto motion: Failed to turn off {tv_name}: {err}")
+                finally:
+                    # Clear timer state
+                    if tv_id in motion_off_times:
+                        del motion_off_times[tv_id]
+
+            # Schedule one-shot timer using async_track_point_in_time
+            from homeassistant.helpers.event import async_track_point_in_time
+            unsubscribe = async_track_point_in_time(
+                hass,
+                async_motion_off_callback,
+                off_time,
+            )
+            motion_off_timers[tv_id] = unsubscribe
+            entry.async_on_unload(unsubscribe)
+            _LOGGER.debug(f"Auto motion: Off timer set for {tv_name} at {off_time}")
+
+        async def async_handle_motion(tv_id: str, tv_config: dict) -> None:
+            """Handle motion detection for a TV."""
+            tv_name = tv_config.get("name", tv_id)
+            ip = tv_config.get("ip")
+            mac = tv_config.get("mac")
+
+            if not ip:
+                _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
+                return
+
+            # Update last motion timestamp
+            from .config_entry import update_tv_config as update_config
+            update_config(
+                hass,
+                entry,
+                tv_id,
+                {"last_motion_timestamp": datetime.now(timezone.utc).isoformat()},
+            )
+
+            # Check if screen is on - if so, just reset timer
+            try:
+                screen_on = await hass.async_add_executor_job(frame_tv.is_screen_on, ip)
+                if screen_on:
+                    _LOGGER.debug(f"Auto motion: {tv_name} screen already on, resetting timer")
+                    start_motion_off_timer(tv_id)
+                    return
+            except Exception as err:
+                _LOGGER.debug(f"Auto motion: Could not check screen state for {tv_name}: {err}")
+                # Continue to wake anyway - WOL is harmless if TV is already on
+
+            # Turn on TV via Wake-on-LAN
+            if mac:
+                try:
+                    _LOGGER.info(f"Auto motion: Waking {tv_name} ({ip}) via WOL")
+                    await hass.async_add_executor_job(frame_tv.tv_on, ip, mac)
+                    _LOGGER.info(f"Auto motion: {tv_name} wake sequence complete")
+                except Exception as err:
+                    _LOGGER.warning(f"Auto motion: Failed to wake {tv_name}: {err}")
+            else:
+                _LOGGER.warning(f"Auto motion: No MAC address for {tv_name}, cannot wake")
+
+            # Start/reset the off timer
+            start_motion_off_timer(tv_id)
+
+        def stop_motion_listener(tv_id: str) -> None:
+            """Stop listening for motion for a specific TV."""
+            if tv_id in motion_listeners:
+                motion_listeners[tv_id]()
+                del motion_listeners[tv_id]
+            cancel_motion_off_timer(tv_id)
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+            _LOGGER.info(f"Auto motion: Stopped listener for {tv_name}")
+
+        def start_motion_listener(tv_id: str) -> None:
+            """Start listening for motion for a specific TV."""
+            # Stop existing listener if any
+            stop_motion_listener(tv_id)
+
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config:
+                return
+
+            motion_sensor = tv_config.get("motion_sensor")
+            if not motion_sensor:
+                _LOGGER.warning(f"Auto motion: No motion sensor configured for {tv_id}")
+                return
+
+            tv_name = tv_config.get("name", tv_id)
+
+            @callback
+            def motion_state_changed(event: Any) -> None:
+                """Handle motion sensor state change."""
+                new_state = event.data.get("new_state")
+                if not new_state:
+                    return
+
+                # Only trigger on motion detected (state = "on")
+                if new_state.state == "on":
+                    _LOGGER.debug(f"Auto motion: Motion detected for {tv_name}")
+                    hass.async_create_task(async_handle_motion(tv_id, tv_config))
+
+            # Subscribe to state changes
+            from homeassistant.helpers.event import async_track_state_change_event
+            unsubscribe = async_track_state_change_event(
+                hass,
+                [motion_sensor],
+                motion_state_changed,
+            )
+            motion_listeners[tv_id] = unsubscribe
+            entry.async_on_unload(unsubscribe)
+
+            # Start the off timer immediately (in case no motion happens)
+            start_motion_off_timer(tv_id)
+
+            _LOGGER.info(f"Auto motion: Started listener for {tv_name} (sensor: {motion_sensor})")
+
+        # Store helper functions for switches
+        hass.data[DOMAIN][entry.entry_id]["start_motion_listener"] = start_motion_listener
+        hass.data[DOMAIN][entry.entry_id]["stop_motion_listener"] = stop_motion_listener
+
+        # Start motion listeners for all TVs that have motion control enabled
+        tv_configs = list_tv_configs(entry)
+        for tv_id, tv_config in tv_configs.items():
+            if tv_config.get("enable_motion_control", False):
+                start_motion_listener(tv_id)
 
         return True
 
