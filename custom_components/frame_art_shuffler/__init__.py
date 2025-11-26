@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+
 _LOGGER = logging.getLogger(__name__)
 
 HA_IMPORT_ERROR_MESSAGE = (
@@ -389,6 +391,8 @@ if _HA_AVAILABLE:
                 del motion_off_timers[tv_id]
             if tv_id in motion_off_times:
                 del motion_off_times[tv_id]
+                # Signal sensors to update
+                async_dispatcher_send(hass, f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}")
 
         def start_motion_off_timer(tv_id: str) -> None:
             """Start or restart the motion off timer for a specific TV."""
@@ -405,6 +409,9 @@ if _HA_AVAILABLE:
             # Calculate when TV will turn off
             off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
             motion_off_times[tv_id] = off_time
+            
+            # Signal sensors to update
+            async_dispatcher_send(hass, f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}")
 
             async def async_motion_off_callback(_now: Any) -> None:
                 """Timer callback to turn off TV."""
@@ -430,6 +437,10 @@ if _HA_AVAILABLE:
                     # Clear timer state
                     if tv_id in motion_off_times:
                         del motion_off_times[tv_id]
+                    # Signal sensors to update
+                    async_dispatcher_send(hass, f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}")
+                    # Refresh coordinator to update all entities
+                    await coordinator.async_request_refresh()
 
             # Schedule one-shot timer using async_track_point_in_time
             from homeassistant.helpers.event import async_track_point_in_time
@@ -460,6 +471,9 @@ if _HA_AVAILABLE:
                 tv_id,
                 {"last_motion_timestamp": datetime.now(timezone.utc).isoformat()},
             )
+
+            # Signal sensors to update
+            async_dispatcher_send(hass, f"{DOMAIN}_motion_detected_{entry.entry_id}_{tv_id}")
 
             # Check if screen is on - if so, just reset timer
             try:
@@ -497,7 +511,7 @@ if _HA_AVAILABLE:
             tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
             _LOGGER.info(f"Auto motion: Stopped listener for {tv_name}")
 
-        def start_motion_listener(tv_id: str) -> None:
+        async def async_start_motion_listener(tv_id: str) -> None:
             """Start listening for motion for a specific TV."""
             # Stop existing listener if any
             stop_motion_listener(tv_id)
@@ -513,6 +527,7 @@ if _HA_AVAILABLE:
                 return
 
             tv_name = tv_config.get("name", tv_id)
+            ip = tv_config.get("ip")
 
             @callback
             def motion_state_changed(event: Any) -> None:
@@ -536,10 +551,25 @@ if _HA_AVAILABLE:
             motion_listeners[tv_id] = unsubscribe
             entry.async_on_unload(unsubscribe)
 
-            # Start the off timer immediately (in case no motion happens)
-            start_motion_off_timer(tv_id)
-
+            # Only start the off timer if the TV is currently on
+            # This handles HA restart - don't set timer if TV is already off
+            if ip:
+                try:
+                    screen_on = await hass.async_add_executor_job(frame_tv.is_screen_on, ip)
+                    if screen_on:
+                        _LOGGER.info(f"Auto motion: {tv_name} is on, starting off timer")
+                        start_motion_off_timer(tv_id)
+                    else:
+                        _LOGGER.info(f"Auto motion: {tv_name} is off, waiting for motion")
+                except Exception as err:
+                    _LOGGER.debug(f"Auto motion: Could not check {tv_name} screen state: {err}")
+                    # If we can't check, don't start timer - wait for motion
+            
             _LOGGER.info(f"Auto motion: Started listener for {tv_name} (sensor: {motion_sensor})")
+
+        def start_motion_listener(tv_id: str) -> None:
+            """Sync wrapper to start motion listener."""
+            hass.async_create_task(async_start_motion_listener(tv_id))
 
         # Store helper functions for switches
         hass.data[DOMAIN][entry.entry_id]["start_motion_listener"] = start_motion_listener

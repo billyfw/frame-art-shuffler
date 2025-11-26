@@ -155,7 +155,7 @@ async def async_setup_entry(
             auto_bright_target_entity = FrameArtAutoBrightTargetEntity(hass, coordinator, entry, tv_id)
             auto_bright_lux_entity = FrameArtAutoBrightSensorLuxEntity(hass, coordinator, entry, tv_id)
             # Auto motion sensors
-            auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(coordinator, entry, tv_id)
+            auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(hass, coordinator, entry, tv_id)
             auto_motion_off_at_entity = FrameArtAutoMotionOffAtEntity(hass, coordinator, entry, tv_id)
             
             tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity)
@@ -742,11 +742,14 @@ class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator],
     _attr_has_entity_name = True
     _attr_name = "Auto-Motion Last Motion"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
+    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
         super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_motion_last"
+        self._last_motion: datetime | None = None
+        self._unsubscribe_motion_sensor: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -758,9 +761,37 @@ class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator],
             model="Frame TV",
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to motion detected signals for real-time updates."""
+        await super().async_added_to_hass()
+        
+        from homeassistant.helpers.dispatcher import async_dispatcher_connect
+        
+        @callback
+        def _motion_detected() -> None:
+            """Handle motion detected signal."""
+            # Clear local cache to force read from config
+            self._last_motion = None
+            self.async_write_ha_state()
+        
+        signal = f"{DOMAIN}_motion_detected_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_motion_sensor = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _motion_detected,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from motion detected signals."""
+        if self._unsubscribe_motion_sensor:
+            self._unsubscribe_motion_sensor()
+            self._unsubscribe_motion_sensor = None
+        await super().async_will_remove_from_hass()
+
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
         """Return the last motion timestamp."""
+        # Fall back to persisted config value (from auto-motion handler)
         tv_config = get_tv_config(self._entry, self._tv_id)
         if not tv_config:
             return None
@@ -791,6 +822,7 @@ class FrameArtAutoMotionOffAtEntity(CoordinatorEntity[FrameArtCoordinator], Sens
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_motion_off_at"
+        self._unsubscribe_dispatcher: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -802,17 +834,42 @@ class FrameArtAutoMotionOffAtEntity(CoordinatorEntity[FrameArtCoordinator], Sens
             model="Frame TV",
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to off time update signals."""
+        await super().async_added_to_hass()
+        
+        from homeassistant.helpers.dispatcher import async_dispatcher_connect
+        
+        @callback
+        def _off_time_updated() -> None:
+            """Handle off time update signal."""
+            self.async_write_ha_state()
+        
+        signal = f"{DOMAIN}_motion_off_time_updated_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_dispatcher = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _off_time_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from off time update signals."""
+        if self._unsubscribe_dispatcher:
+            self._unsubscribe_dispatcher()
+            self._unsubscribe_dispatcher = None
+        await super().async_will_remove_from_hass()
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available (only when auto-motion is enabled)."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return False
+        return tv_config.get("enable_motion_control", False)
+
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
         """Return when the TV will turn off."""
-        tv_config = get_tv_config(self._entry, self._tv_id)
-        if not tv_config:
-            return None
-        
-        # Check if motion control is enabled
-        if not tv_config.get("enable_motion_control", False):
-            return None
-        
         # Get the scheduled off time from hass.data
         data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         motion_off_times = data.get("motion_off_times", {})
