@@ -321,6 +321,16 @@ if _HA_AVAILABLE:
                 _LOGGER.debug(
                     f"Auto brightness: {tv_name} already at brightness {target_brightness}, skipping"
                 )
+                # Even if we skip, we should update the timestamp so the "next adjust" sensor is correct
+                from .config_entry import update_tv_config as update_config
+                update_config(
+                    hass,
+                    entry,
+                    tv_id,
+                    {
+                        "last_auto_brightness_timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
                 # Still restart timer if requested
                 if restart_timer and tv_config.get("enable_dynamic_brightness", False):
                     start_tv_timer(tv_id)
