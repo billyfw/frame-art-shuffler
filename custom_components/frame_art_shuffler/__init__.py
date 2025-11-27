@@ -608,6 +608,7 @@ if _HA_AVAILABLE:
         hass.data[DOMAIN][entry.entry_id]["start_motion_listener"] = start_motion_listener
         hass.data[DOMAIN][entry.entry_id]["stop_motion_listener"] = stop_motion_listener
         hass.data[DOMAIN][entry.entry_id]["start_motion_off_timer"] = start_motion_off_timer
+        hass.data[DOMAIN][entry.entry_id]["cancel_motion_off_timer"] = cancel_motion_off_timer
 
         # Start motion listeners for all TVs that have motion control enabled
         tv_configs = list_tv_configs(entry)

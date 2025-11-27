@@ -319,6 +319,15 @@ class FrameArtTVOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):
         try:
             await self.hass.async_add_executor_job(tv_off, self._tv_ip)
             _LOGGER.info(f"Sent screen off command to {self._tv_name}")
+            
+            # Cancel motion off timer since TV is now off
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config and tv_config.get("enable_motion_control", False):
+                data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+                cancel_motion_off_timer = data.get("cancel_motion_off_timer")
+                if cancel_motion_off_timer:
+                    cancel_motion_off_timer(self._tv_id)
+                    _LOGGER.debug(f"Cancelled motion off timer for {self._tv_name} after TV Off")
         except FrameArtError as err:
             _LOGGER.error(f"Failed to turn off {self._tv_name}: {err}")
 
