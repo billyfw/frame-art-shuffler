@@ -67,7 +67,7 @@ if _HA_AVAILABLE:
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
     from .metadata import MetadataStore
 
-    PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH]
+    PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
 else:
     DEFAULT_TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
     PLATFORMS: list[Any] = []
