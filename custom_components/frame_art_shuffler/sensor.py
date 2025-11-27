@@ -553,19 +553,17 @@ class FrameArtAutoBrightNextAdjustEntity(CoordinatorEntity[FrameArtCoordinator],
         if not tv_config.get("enable_dynamic_brightness", False):
             return None
         
-        timestamp_str = tv_config.get("last_auto_brightness_timestamp")
-        if not timestamp_str:
-            # No previous adjustment - next will be soon (on next interval tick)
-            return None
+        # Get the actual scheduled next time from hass.data (set by the timer)
+        data = self.coordinator.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        next_times = data.get("auto_brightness_next_times", {})
+        next_time = next_times.get(self._tv_id)
         
-        try:
-            last_dt = datetime.fromisoformat(timestamp_str)
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
-            next_dt = last_dt + timedelta(minutes=AUTO_BRIGHTNESS_INTERVAL_MINUTES)
-            return next_dt
-        except (ValueError, TypeError):
-            return None
+        if next_time and isinstance(next_time, datetime):
+            if next_time.tzinfo is None:
+                next_time = next_time.replace(tzinfo=timezone.utc)
+            return next_time
+        
+        return None
 
 
 class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
