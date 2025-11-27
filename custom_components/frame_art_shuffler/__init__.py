@@ -101,6 +101,10 @@ if _HA_AVAILABLE:
             "coordinator": coordinator,
             "metadata_path": metadata_path,
             "token_dir": token_dir,
+            # Initialize dicts that sensors need to read from
+            # These will be populated by the timer code after platforms are set up
+            "auto_brightness_next_times": {},
+            "motion_off_times": {},
         }
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -214,8 +218,8 @@ if _HA_AVAILABLE:
 
         # Per-TV auto brightness timer management
         auto_brightness_timers: dict[str, Callable[[], None]] = {}
-        auto_brightness_next_times: dict[str, datetime] = {}
-        hass.data[DOMAIN][entry.entry_id]["auto_brightness_next_times"] = auto_brightness_next_times
+        # Use the dict already initialized in hass.data so sensors can access it
+        auto_brightness_next_times = hass.data[DOMAIN][entry.entry_id]["auto_brightness_next_times"]
 
         def cancel_tv_timer(tv_id: str) -> None:
             """Cancel the auto brightness timer for a specific TV."""
@@ -256,7 +260,9 @@ if _HA_AVAILABLE:
 
             # Store the next scheduled time so the sensor can show it accurately
             # async_track_time_interval fires 10 minutes from now
-            auto_brightness_next_times[tv_id] = datetime.now(timezone.utc) + timedelta(minutes=10)
+            next_time = datetime.now(timezone.utc) + timedelta(minutes=10)
+            auto_brightness_next_times[tv_id] = next_time
+            _LOGGER.debug(f"Auto brightness: Next adjust for {tv_id} scheduled at {next_time}")
 
             # Trigger immediate adjustment so we don't wait 10 minutes
             hass.async_create_task(async_adjust_tv_brightness(tv_id))
@@ -389,14 +395,18 @@ if _HA_AVAILABLE:
         tv_configs = list_tv_configs(entry)
         for tv_id, tv_config in tv_configs.items():
             if tv_config.get("enable_dynamic_brightness", False):
+                _LOGGER.info(f"Auto brightness: Starting timer for {tv_config.get('name', tv_id)}")
                 start_tv_timer(tv_id)
+
+        # Trigger a coordinator refresh so sensors pick up the new next_times
+        await coordinator.async_request_refresh()
 
         # ===== AUTO MOTION CONTROL =====
         # Per-TV motion listener and off-timer management
         motion_listeners: dict[str, Callable[[], None]] = {}
         motion_off_timers: dict[str, Callable[[], None]] = {}
-        motion_off_times: dict[str, datetime] = {}
-        hass.data[DOMAIN][entry.entry_id]["motion_off_times"] = motion_off_times
+        # Use the dict already initialized in hass.data so sensors can access it
+        motion_off_times = hass.data[DOMAIN][entry.entry_id]["motion_off_times"]
 
         def cancel_motion_off_timer(tv_id: str) -> None:
             """Cancel the motion off timer for a specific TV."""
