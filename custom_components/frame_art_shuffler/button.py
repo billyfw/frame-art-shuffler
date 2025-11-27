@@ -22,6 +22,7 @@ from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
+from .activity import log_activity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -263,6 +264,13 @@ class FrameArtTVOnButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity): 
             await self.hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
             _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}")
             
+            # Log activity
+            log_activity(
+                self.hass, self._entry.entry_id, self._tv_id,
+                "screen_on",
+                "Screen turned on (button)",
+            )
+            
             # Start motion off timer if auto-motion is enabled
             tv_config = get_tv_config(self._entry, self._tv_id)
             if tv_config and tv_config.get("enable_motion_control", False):
@@ -319,6 +327,13 @@ class FrameArtTVOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):
         try:
             await self.hass.async_add_executor_job(tv_off, self._tv_ip)
             _LOGGER.info(f"Sent screen off command to {self._tv_name}")
+            
+            # Log activity
+            log_activity(
+                self.hass, self._entry.entry_id, self._tv_id,
+                "screen_off",
+                "Screen turned off (button)",
+            )
             
             # Cancel motion off timer since TV is now off
             tv_config = get_tv_config(self._entry, self._tv_id)
@@ -543,6 +558,13 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
                 str(image_path),
             )
             _LOGGER.info(f"Successfully uploaded {image_filename} to {self._tv_name}")
+
+            # Log activity
+            log_activity(
+                self.hass, self._entry.entry_id, self._tv_id,
+                "shuffle",
+                f"Shuffled to {image_filename}",
+            )
 
             # Update current_image and last_shuffle_timestamp in config
             await self.coordinator.async_set_active_image(self._tv_id, image_filename, is_shuffle=True)

@@ -21,6 +21,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import FrameArtCoordinator
+from .activity import FrameArtActivitySensor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -160,9 +161,11 @@ async def async_setup_entry(
             # Auto motion sensors
             auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(hass, coordinator, entry, tv_id)
             auto_motion_off_at_entity = FrameArtAutoMotionOffAtEntity(hass, coordinator, entry, tv_id)
+            # Activity history sensor
+            activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, activity_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, activity_entity])
             
         if new_entities:
             async_add_entities(new_entities)

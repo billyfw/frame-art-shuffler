@@ -244,6 +244,32 @@ Open **Configure** on the integration card to manage TVs:
 
 If token pairing ever breaks (for example, after clearing the TV's authorized devices), open the integration entry and choose **Re-authenticate**; the flow recreates the token file while preserving metadata.
 
+### Dashboard Setup (Optional)
+
+The integration generates a Lovelace dashboard YAML file with controls and status for all configured Frame TVs. The dashboard is generated automatically when you add TVs, but you need to manually register it in your `configuration.yaml` to make it appear in the sidebar.
+
+Add this to your `configuration.yaml`:
+
+```yaml
+lovelace:
+  mode: storage
+  dashboards:
+    frame-art-shuffler:
+      mode: yaml
+      title: Frame Art Shuffler
+      icon: mdi:television-ambient-light
+      show_in_sidebar: true
+      filename: custom_components/frame_art_shuffler/dashboards/frame_art.yaml
+```
+
+Then restart Home Assistant. The "Frame Art Shuffler" dashboard will appear in the sidebar with:
+
+- **Per-TV Controls**: Brightness sliders, shuffle buttons, TV on/off buttons
+- **Status Sensors**: Art mode, motion detection, screen state
+- **Activity History**: Recent events (brightness changes, motion events, shuffle actions) with timestamps
+
+**Note**: The dashboard YAML file is regenerated automatically whenever you add, edit, or remove TVs via the integration's options flow. Your `configuration.yaml` reference just points to the file—you don't need to update it when TV configuration changes.
+
 ## Testing checklist
 
 1. Install via HACS and create the integration entry with a new Home name.

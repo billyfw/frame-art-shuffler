@@ -187,6 +187,11 @@ def _build_tv_card(
     if auto_motion_card:
         cards.append(auto_motion_card)
 
+    # === Recent Activity Section (at bottom) ===
+    activity_card = _build_activity_section(entities)
+    if activity_card:
+        cards.append(activity_card)
+
     # Wrap everything in a vertical stack
     return {
         "type": "vertical-stack",
@@ -226,6 +231,7 @@ def _get_tv_entities(
         "auto_bright_sensor_lux": f"{entry_id}_{tv_id}_auto_bright_sensor_lux",
         "auto_motion_last": f"{entry_id}_{tv_id}_auto_motion_last",
         "auto_motion_off_at": f"{entry_id}_{tv_id}_auto_motion_off_at",
+        "recent_activity": f"{entry_id}_{tv_id}_recent_activity",
         # Numbers
         "shuffle_frequency": f"{tv_id}_shuffle_frequency",
         "brightness": f"{tv_id}_brightness",
@@ -271,6 +277,7 @@ def _get_platform_for_key(key: str) -> str:
         "ip_address", "mac_address", "motion_sensor", "light_sensor",
         "auto_bright_last", "auto_bright_next", "auto_bright_target",
         "auto_bright_sensor_lux", "auto_motion_last", "auto_motion_off_at",
+        "recent_activity",
     }
     numbers = {
         "shuffle_frequency", "brightness", "min_lux", "max_lux",
@@ -569,6 +576,38 @@ def _build_auto_motion_section(entities: dict[str, str]) -> dict[str, Any] | Non
         "type": "entities",
         "title": "🚶 Auto-Motion",
         "entities": section_entities,
+    }
+
+
+def _build_activity_section(entities: dict[str, str]) -> dict[str, Any] | None:
+    """Build the recent activity section using a markdown card with template.
+    
+    This creates a markdown card that displays the formatted history from
+    the activity sensor's attributes.
+    """
+    if "recent_activity" not in entities:
+        return None
+    
+    activity_entity = entities["recent_activity"]
+    
+    # Build a markdown template that renders the history nicely
+    # The template iterates over the formatted_history attribute
+    template_content = f"""## 📋 Recent Activity
+
+{{% set history = state_attr('{activity_entity}', 'formatted_history') or [] %}}
+{{% if history | length == 0 %}}
+_No activity recorded yet_
+{{% else %}}
+| Time | Event |
+|------|-------|
+{{% for event in history[:20] %}}
+| {{{{ event.time }}}} | {{{{ event.message }}}} |
+{{% endfor %}}
+{{% endif %}}"""
+    
+    return {
+        "type": "markdown",
+        "content": template_content,
     }
 
 
