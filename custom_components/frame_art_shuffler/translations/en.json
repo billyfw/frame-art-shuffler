@@ -54,6 +54,14 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "screen_on": {
+        "name": "Screen On"
+      },
+      "art_mode": {
+        "name": "Art Mode"
+      }
+    },
     "sensor": {
       "frame_art_shuffler": {
         "current_artwork": {
