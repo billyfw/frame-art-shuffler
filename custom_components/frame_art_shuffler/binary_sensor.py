@@ -145,9 +145,16 @@ async def async_setup_entry(
                             start_motion_off_timer(tv_id)
                             _LOGGER.info(f"Auto motion: Started off timer for {tv_name} (external power-on detected)")
             else:
-                # If screen is off, art mode check would fail anyway
-                # Keep the last known art mode value or set to None
-                pass
+                # Screen is off - cancel motion off timer if one exists
+                if tv_config.get("enable_motion_control", False):
+                    motion_off_times = data.get("motion_off_times", {})
+                    if tv_id in motion_off_times:
+                        cancel_motion_off_timer = data.get("cancel_motion_off_timer")
+                        if cancel_motion_off_timer:
+                            cancel_motion_off_timer(tv_id)
+                            _LOGGER.info(f"Auto motion: Cancelled off timer for {tv_name} (screen is off)")
+                # Also clear art mode since we can't check it when screen is off
+                tv_status_cache[tv_id]["art_mode"] = None
 
         # Trigger sensor updates
         for tv_id, entities in tracked.items():
