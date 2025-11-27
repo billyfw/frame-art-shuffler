@@ -18,6 +18,7 @@ from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
 from .frame_tv import FrameArtError, set_tv_brightness
+from .activity import log_activity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -321,6 +322,13 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
                 "Brightness set to %d for %s",
                 target_value,
                 tv_name,
+            )
+            
+            # Log activity
+            log_activity(
+                self.hass, self._entry.entry_id, self._tv_id,
+                "brightness_adjusted",
+                f"Brightness → {target_value} (manual)",
             )
             
         except FrameArtError as err:
