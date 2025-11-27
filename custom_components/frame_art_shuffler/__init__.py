@@ -214,12 +214,16 @@ if _HA_AVAILABLE:
 
         # Per-TV auto brightness timer management
         auto_brightness_timers: dict[str, Callable[[], None]] = {}
+        auto_brightness_next_times: dict[str, datetime] = {}
+        hass.data[DOMAIN][entry.entry_id]["auto_brightness_next_times"] = auto_brightness_next_times
 
         def cancel_tv_timer(tv_id: str) -> None:
             """Cancel the auto brightness timer for a specific TV."""
             if tv_id in auto_brightness_timers:
                 auto_brightness_timers[tv_id]()
                 del auto_brightness_timers[tv_id]
+            if tv_id in auto_brightness_next_times:
+                del auto_brightness_next_times[tv_id]
 
         def start_tv_timer(tv_id: str) -> None:
             """Start or restart the auto brightness timer for a specific TV."""
@@ -236,6 +240,9 @@ if _HA_AVAILABLE:
                     cancel_tv_timer(tv_id)
                     return
                 
+                # Update next scheduled time before running
+                auto_brightness_next_times[tv_id] = datetime.now(timezone.utc) + timedelta(minutes=10)
+                
                 await async_adjust_tv_brightness(tv_id)
 
             # Schedule timer for this TV
@@ -247,8 +254,11 @@ if _HA_AVAILABLE:
             auto_brightness_timers[tv_id] = unsubscribe
             entry.async_on_unload(unsubscribe)
 
+            # Store the next scheduled time so the sensor can show it accurately
+            # async_track_time_interval fires 10 minutes from now
+            auto_brightness_next_times[tv_id] = datetime.now(timezone.utc) + timedelta(minutes=10)
+
             # Trigger immediate adjustment so we don't wait 10 minutes
-            # This also fixes the "next adjust" sensor showing past times after reboot
             hass.async_create_task(async_adjust_tv_brightness(tv_id))
 
         # Auto brightness helper for a single TV
@@ -320,16 +330,6 @@ if _HA_AVAILABLE:
             if current_brightness is not None and int(current_brightness) == target_brightness:
                 _LOGGER.debug(
                     f"Auto brightness: {tv_name} already at brightness {target_brightness}, skipping"
-                )
-                # Even if we skip, we should update the timestamp so the "next adjust" sensor is correct
-                from .config_entry import update_tv_config as update_config
-                update_config(
-                    hass,
-                    entry,
-                    tv_id,
-                    {
-                        "last_auto_brightness_timestamp": datetime.now(timezone.utc).isoformat(),
-                    },
                 )
                 # Still restart timer if requested
                 if restart_timer and tv_config.get("enable_dynamic_brightness", False):
