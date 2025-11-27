@@ -247,6 +247,10 @@ if _HA_AVAILABLE:
             auto_brightness_timers[tv_id] = unsubscribe
             entry.async_on_unload(unsubscribe)
 
+            # Trigger immediate adjustment so we don't wait 10 minutes
+            # This also fixes the "next adjust" sensor showing past times after reboot
+            hass.async_create_task(async_adjust_tv_brightness(tv_id))
+
         # Auto brightness helper for a single TV
         async def async_adjust_tv_brightness(tv_id: str, restart_timer: bool = False) -> bool:
             """Adjust brightness for a single TV. Returns True on success."""
