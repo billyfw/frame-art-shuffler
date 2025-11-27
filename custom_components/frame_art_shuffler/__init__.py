@@ -66,8 +66,13 @@ if _HA_AVAILABLE:
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
     from .metadata import MetadataStore
+    from .dashboard import async_generate_dashboard
 
     PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
+    
+    # Dashboard configuration
+    DASHBOARD_URL_PATH = "frame-art-shuffler"
+    DASHBOARD_TITLE = "Frame Art Shuffler"
 else:
     DEFAULT_TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
     PLATFORMS: list[Any] = []
@@ -78,7 +83,60 @@ if _HA_AVAILABLE:
     async def async_setup(hass: Any, config: dict) -> bool:
         """Set up the Frame Art Shuffler integration."""
         hass.data.setdefault(DOMAIN, {})
+        
+        # Register the dashboard
+        await _async_register_dashboard(hass)
+        
         return True
+    
+    
+    async def _async_register_dashboard(hass: Any) -> None:
+        """Register the Frame Art Shuffler dashboard with Lovelace."""
+        try:
+            from homeassistant.components import lovelace
+            from pathlib import Path
+            
+            dashboard_path = Path(__file__).parent / "dashboards" / "frame_art.yaml"
+            
+            # Check if lovelace dashboard registration is available
+            if hasattr(lovelace, "async_register_dashboard"):
+                # Note: This is for dynamically registered YAML dashboards
+                # The dashboard will be registered once the YAML file exists
+                if dashboard_path.exists():
+                    await lovelace.async_register_dashboard(
+                        hass,
+                        url_path=DASHBOARD_URL_PATH,
+                        config={
+                            "mode": "yaml",
+                            "filename": str(dashboard_path),
+                            "title": DASHBOARD_TITLE,
+                            "icon": "mdi:television-ambient-light",
+                            "show_in_sidebar": True,
+                            "require_admin": False,
+                        },
+                    )
+                    _LOGGER.info(f"Registered Frame Art Shuffler dashboard at /{DASHBOARD_URL_PATH}")
+                else:
+                    _LOGGER.debug("Dashboard YAML not yet generated, will register after first entry setup")
+            else:
+                _LOGGER.debug("Lovelace dashboard registration not available in this HA version")
+        except Exception as err:
+            _LOGGER.warning(f"Could not register dashboard: {err}")
+
+
+    async def _async_setup_dashboard(hass: Any, entry: Any) -> None:
+        """Generate the dashboard YAML and register it with Lovelace."""
+        try:
+            # Generate the dashboard YAML file
+            success = await async_generate_dashboard(hass, entry)
+            
+            if success:
+                # Try to register the dashboard if not already registered
+                await _async_register_dashboard(hass)
+            else:
+                _LOGGER.debug("Dashboard generation skipped (no TVs configured)")
+        except Exception as err:
+            _LOGGER.warning(f"Failed to set up dashboard: {err}")
 
 
     async def async_setup_entry(hass: Any, entry: Any) -> bool:
@@ -615,6 +673,9 @@ if _HA_AVAILABLE:
         for tv_id, tv_config in tv_configs.items():
             if tv_config.get("enable_motion_control", False):
                 start_motion_listener(tv_id)
+
+        # Generate and register the Lovelace dashboard
+        await _async_setup_dashboard(hass, entry)
 
         return True
 
