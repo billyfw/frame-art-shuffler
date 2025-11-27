@@ -386,6 +386,7 @@ if _HA_AVAILABLE:
 
         def cancel_motion_off_timer(tv_id: str) -> None:
             """Cancel the motion off timer for a specific TV."""
+            _LOGGER.debug(f"Auto motion: Cancelling off timer for {tv_id}")
             if tv_id in motion_off_timers:
                 motion_off_timers[tv_id]()
                 del motion_off_timers[tv_id]
@@ -409,9 +410,13 @@ if _HA_AVAILABLE:
             # Calculate when TV will turn off
             off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
             motion_off_times[tv_id] = off_time
+            _LOGGER.debug(f"Auto motion: Off timer set for {tv_name} at {off_time} (tv_id={tv_id}, entry_id={entry.entry_id})")
+            _LOGGER.debug(f"Auto motion: motion_off_times dict id={id(motion_off_times)}, contents={motion_off_times}")
             
             # Signal sensors to update
-            async_dispatcher_send(hass, f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}")
+            signal = f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}"
+            _LOGGER.debug(f"Auto motion: Sending dispatcher signal: {signal}")
+            async_dispatcher_send(hass, signal)
 
             async def async_motion_off_callback(_now: Any) -> None:
                 """Timer callback to turn off TV."""
@@ -486,6 +491,10 @@ if _HA_AVAILABLE:
                 _LOGGER.debug(f"Auto motion: Could not check screen state for {tv_name}: {err}")
                 # Continue to wake anyway - WOL is harmless if TV is already on
 
+            # Optimistically start the off timer so UI updates immediately
+            # (The 15s wake sequence would otherwise leave the sensor 'unknown' for too long)
+            start_motion_off_timer(tv_id)
+
             # Turn on TV via Wake-on-LAN
             if mac:
                 try:
@@ -494,11 +503,11 @@ if _HA_AVAILABLE:
                     _LOGGER.info(f"Auto motion: {tv_name} wake sequence complete")
                 except Exception as err:
                     _LOGGER.warning(f"Auto motion: Failed to wake {tv_name}: {err}")
+                    # If wake failed, cancel the timer we just started
+                    cancel_motion_off_timer(tv_id)
             else:
                 _LOGGER.warning(f"Auto motion: No MAC address for {tv_name}, cannot wake")
-
-            # Start/reset the off timer
-            start_motion_off_timer(tv_id)
+                cancel_motion_off_timer(tv_id)
 
         def stop_motion_listener(tv_id: str) -> None:
             """Stop listening for motion for a specific TV."""
