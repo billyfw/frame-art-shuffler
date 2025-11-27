@@ -15,11 +15,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_entry import get_tv_config
 from .const import DOMAIN
-from .coordinator import FrameArtCoordinator
 from . import frame_tv
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,7 +50,7 @@ async def async_setup_entry(
     """Set up Frame Art TV binary sensors for a config entry."""
 
     data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: FrameArtCoordinator = data["coordinator"]
+    coordinator = data["coordinator"]
 
     # Initialize the status cache in hass.data
     tv_status_cache: dict[str, dict[str, bool | None]] = {}
@@ -75,8 +73,8 @@ async def async_setup_entry(
             }
 
             # Create binary sensors per TV
-            screen_on_entity = FrameArtScreenOnEntity(hass, coordinator, entry, tv_id)
-            art_mode_entity = FrameArtArtModeEntity(hass, coordinator, entry, tv_id)
+            screen_on_entity = FrameArtScreenOnEntity(hass, entry, tv_id)
+            art_mode_entity = FrameArtArtModeEntity(hass, entry, tv_id)
 
             tracked[tv_id] = (screen_on_entity, art_mode_entity)
             new_entities.extend([screen_on_entity, art_mode_entity])
@@ -173,7 +171,7 @@ async def async_setup_entry(
     hass.async_create_task(async_poll_tv_status(None))
 
 
-class FrameArtScreenOnEntity(CoordinatorEntity[FrameArtCoordinator], BinarySensorEntity):
+class FrameArtScreenOnEntity(BinarySensorEntity):
     """Binary sensor for TV screen power state."""
 
     entity_description = SCREEN_ON_DESCRIPTION
@@ -183,11 +181,9 @@ class FrameArtScreenOnEntity(CoordinatorEntity[FrameArtCoordinator], BinarySenso
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
-        super().__init__(coordinator)
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -218,7 +214,7 @@ class FrameArtScreenOnEntity(CoordinatorEntity[FrameArtCoordinator], BinarySenso
         return get_tv_config(self._entry, self._tv_id) is not None
 
 
-class FrameArtArtModeEntity(CoordinatorEntity[FrameArtCoordinator], BinarySensorEntity):
+class FrameArtArtModeEntity(BinarySensorEntity):
     """Binary sensor for TV art mode state."""
 
     entity_description = ART_MODE_DESCRIPTION
@@ -228,11 +224,9 @@ class FrameArtArtModeEntity(CoordinatorEntity[FrameArtCoordinator], BinarySensor
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
-        super().__init__(coordinator)
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
