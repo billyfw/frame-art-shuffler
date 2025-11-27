@@ -856,7 +856,7 @@ class FrameArtTriggerMotionOffButton(CoordinatorEntity[FrameArtCoordinator], But
     """Button entity to trigger auto motion off (turn TV off) now."""
 
     _attr_has_entity_name = True
-    _attr_name = "Auto-Motion Trigger Off"
+    _attr_name = "Auto-Motion Off Now"
     _attr_icon = "mdi:television-off"
     # No entity_category = shows in Controls section
 
