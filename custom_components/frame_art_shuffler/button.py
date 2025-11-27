@@ -262,6 +262,15 @@ class FrameArtTVOnButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity): 
         try:
             await self.hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
             _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}")
+            
+            # Start motion off timer if auto-motion is enabled
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config and tv_config.get("enable_motion_control", False):
+                data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+                start_motion_off_timer = data.get("start_motion_off_timer")
+                if start_motion_off_timer:
+                    start_motion_off_timer(self._tv_id)
+                    _LOGGER.debug(f"Started motion off timer for {self._tv_name} after TV On")
         except FrameArtError as err:
             _LOGGER.error(f"Failed to turn on {self._tv_name}: {err}")
 

@@ -604,9 +604,10 @@ if _HA_AVAILABLE:
             """Sync wrapper to start motion listener."""
             hass.async_create_task(async_start_motion_listener(tv_id))
 
-        # Store helper functions for switches
+        # Store helper functions for switches and other platforms
         hass.data[DOMAIN][entry.entry_id]["start_motion_listener"] = start_motion_listener
         hass.data[DOMAIN][entry.entry_id]["stop_motion_listener"] = stop_motion_listener
+        hass.data[DOMAIN][entry.entry_id]["start_motion_off_timer"] = start_motion_off_timer
 
         # Start motion listeners for all TVs that have motion control enabled
         tv_configs = list_tv_configs(entry)

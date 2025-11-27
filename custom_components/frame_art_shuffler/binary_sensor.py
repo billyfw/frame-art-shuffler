@@ -134,6 +134,16 @@ async def async_setup_entry(
                     tv_status_cache[tv_id]["art_mode"] = art_mode
                 except Exception as err:
                     _LOGGER.debug(f"Failed to check art mode for {tv_name}: {err}")
+                
+                # Fallback: Start motion off timer if TV is on but no timer exists
+                # This catches external power-on (remote, app, etc.)
+                if tv_config.get("enable_motion_control", False):
+                    motion_off_times = data.get("motion_off_times", {})
+                    if tv_id not in motion_off_times:
+                        start_motion_off_timer = data.get("start_motion_off_timer")
+                        if start_motion_off_timer:
+                            start_motion_off_timer(tv_id)
+                            _LOGGER.info(f"Auto motion: Started off timer for {tv_name} (external power-on detected)")
             else:
                 # If screen is off, art mode check would fail anyway
                 # Keep the last known art mode value or set to None
