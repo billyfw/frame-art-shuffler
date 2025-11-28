@@ -93,7 +93,7 @@ if _HA_AVAILABLE:
             success = await async_generate_dashboard(hass, entry)
             if success:
                 _LOGGER.info(
-                    "Dashboard YAML generated at custom_components/frame_art_shuffler/dashboards/frame_art.yaml. "
+                    "Dashboard YAML generated at custom_components/frame_art_shuffler/dashboards/frame_tv_manager.yaml. "
                     "See README.md for manual registration instructions."
                 )
             else:
