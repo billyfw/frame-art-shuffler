@@ -239,12 +239,14 @@ class FrameArtActivitySensor(RestoreEntity, SensorEntity):
                 ts = datetime.fromisoformat(event.get("timestamp", ""))
                 # Convert to local time for display
                 local_ts = ts.astimezone()
-                formatted_time = local_ts.strftime("%I:%M %p").lstrip("0")
-                formatted_date = local_ts.strftime("%b %d")
+                # Format: "Tue 11/28 5:08PM"
+                day_abbrev = local_ts.strftime("%a")  # Mon, Tue, Wed, etc.
+                date_part = local_ts.strftime("%-m/%d")  # 11/28 (no leading zero on month)
+                time_part = local_ts.strftime("%-I:%M%p").replace("AM", "am").replace("PM", "pm")  # 5:08pm
+                formatted_time = f"{day_abbrev} {date_part} {time_part}"
                 
                 formatted_history.append({
                     "time": formatted_time,
-                    "date": formatted_date,
                     "timestamp": event.get("timestamp"),
                     "event_type": event.get("event_type"),
                     "message": event.get("message"),
