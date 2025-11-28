@@ -658,7 +658,7 @@ async def async_generate_dashboard(hass: Any, entry: Any) -> bool:
     from pathlib import Path
     
     # Output path for the dashboard
-    output_path = Path(__file__).parent / "dashboards" / "frame_art.yaml"
+    output_path = Path(__file__).parent / "dashboards" / "frame_tv_manager.yaml"
     
     # Run the generation in the executor since it does file I/O
     result = await hass.async_add_executor_job(

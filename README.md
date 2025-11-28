@@ -259,7 +259,7 @@ lovelace:
       title: Frame Art Shuffler
       icon: mdi:television-ambient-light
       show_in_sidebar: true
-      filename: custom_components/frame_art_shuffler/dashboards/frame_art.yaml
+      filename: custom_components/frame_art_shuffler/dashboards/frame_tv_manager.yaml
 ```
 
 Then restart Home Assistant. The "Frame Art Shuffler" dashboard will appear in the sidebar with:
