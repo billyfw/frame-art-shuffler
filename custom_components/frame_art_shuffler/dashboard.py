@@ -598,10 +598,8 @@ def _build_activity_section(entities: dict[str, str]) -> dict[str, Any] | None:
 {{% if history | length == 0 %}}
 _No activity recorded yet_
 {{% else %}}
-| Time | Event |
-|------|-------|
 {{% for event in history[:20] %}}
-| {{{{ event.time }}}} | {{{{ event.message }}}} |
+**{{{{ event.time }}}}** - {{{{ event.message }}}}
 {{% endfor %}}
 {{% endif %}}"""
     

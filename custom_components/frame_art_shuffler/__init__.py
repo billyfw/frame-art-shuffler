@@ -359,11 +359,11 @@ if _HA_AVAILABLE:
                     f"Auto brightness: {tv_name} already at brightness {target_brightness}, skipping"
                 )
                 # Log that we checked but didn't need to adjust
-                log_activity(
-                    hass, entry.entry_id, tv_id,
-                    "brightness_skipped",
-                    f"Already at brightness {target_brightness}",
-                )
+                # log_activity(
+                #     hass, entry.entry_id, tv_id,
+                #     "brightness_skipped",
+                #     f"Already at brightness {target_brightness}",
+                # )
                 # Still restart timer if requested
                 if restart_timer and tv_config.get("enable_dynamic_brightness", False):
                     start_tv_timer(tv_id)
