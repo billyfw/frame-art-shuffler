@@ -27,7 +27,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Maximum number of events to keep per TV
-MAX_HISTORY_EVENTS = 20
+MAX_HISTORY_EVENTS = 30
 
 # Dispatcher signal prefix for activity updates
 ACTIVITY_SIGNAL_PREFIX = f"{DOMAIN}_activity_update"
@@ -207,27 +207,6 @@ class FrameArtActivitySensor(RestoreEntity, SensorEntity):
             signal,
             _activity_updated,
         )
-        
-        # Log integration start event (only if this is a fresh start, not a restore)
-        history = get_activity_history(self._hass, self._entry.entry_id, self._tv_id)
-        if not history or (
-            history and history[0].get("event_type") != "integration_start"
-        ):
-            # Check if last event was recent (within 60 seconds) - if so, skip
-            if history:
-                try:
-                    last_ts = datetime.fromisoformat(history[0].get("timestamp", ""))
-                    if (datetime.now(timezone.utc) - last_ts).total_seconds() < 60:
-                        return
-                except (ValueError, TypeError):
-                    pass
-            
-            log_activity(
-                self._hass,
-                self._entry.entry_id,
-                self._tv_id,
-                "integration_start",
-            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from updates."""

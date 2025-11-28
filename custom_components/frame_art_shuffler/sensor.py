@@ -256,11 +256,25 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
             "exclude_tags": tv.get("notTags", []),
             "motion_sensor": tv.get(CONF_MOTION_SENSOR),
             "light_sensor": tv.get(CONF_LIGHT_SENSOR),
+            "entity_picture": self.entity_picture,
         }
         shuffle = tv.get("shuffle") or {}
         if isinstance(shuffle, dict):
             data["shuffle_frequency"] = shuffle.get(CONF_SHUFFLE_FREQUENCY)
         return data
+
+    @property
+    def entity_picture(self) -> str:
+        """Return the URL to the current artwork image for picture-entity card.
+        
+        Always returns a valid URL - uses black placeholder if no image available.
+        This ensures picture-entity card never fails due to missing image.
+        """
+        current = self.native_value
+        if current and current != "Unknown":
+            return f"/local/frame_art/library/{current}"
+        # Return black placeholder so picture-entity card doesn't error
+        return "/local/frame_art/library/_black_placeholder.jpg"
 
 
 class FrameArtLastShuffleImageEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):

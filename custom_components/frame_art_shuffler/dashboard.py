@@ -92,59 +92,50 @@ def _build_dashboard(
     device_registry: Any,
     entity_registry: Any,
 ) -> dict[str, Any]:
-    """Build the complete dashboard configuration."""
+    """Build the complete dashboard configuration.
+    
+    Each TV gets its own tab (view) in the dashboard.
+    """
     from .const import DOMAIN
     
-    # Build cards for each TV
-    tv_cards = []
+    views = []
+    
+    # Build a view (tab) for each TV
     for tv_id, tv_config in tv_configs.items():
         tv_name = tv_config.get("name", tv_id)
-        card = _build_tv_card(hass, entry, tv_id, tv_name, entity_registry)
-        if card:
-            tv_cards.append(card)
-
-    # Wrap in grid layout if more than one TV
-    if len(tv_cards) > 1:
-        # Use a grid with 2 columns for multiple TVs
-        content_card = {
-            "type": "grid",
-            "columns": 2,
-            "square": False,
-            "cards": tv_cards,
-        }
-    elif len(tv_cards) == 1:
-        content_card = tv_cards[0]
-    else:
-        content_card = {
-            "type": "markdown",
-            "content": "No Frame Art TVs configured. Add a TV through the integration settings.",
-        }
-
-    # Build the view
-    view = {
-        "title": "Frame Art Shuffler",
-        "path": "frame-art-shuffler",
-        "icon": "mdi:television-ambient-light",
-        "cards": [content_card] if not isinstance(content_card, list) else content_card,
-    }
+        view = _build_tv_view(hass, entry, tv_id, tv_name, entity_registry)
+        if view:
+            views.append(view)
+    
+    # If no TVs configured, show a placeholder view
+    if not views:
+        views.append({
+            "title": "Frame TV Manager",
+            "path": "frame-tv-manager",
+            "icon": "mdi:television-ambient-light",
+            "cards": [{
+                "type": "markdown",
+                "content": "No Frame Art TVs configured. Add a TV through the integration settings.",
+            }],
+        })
 
     # Build complete dashboard
     dashboard = {
-        "title": "Frame Art Shuffler: TV Management",
-        "views": [view],
+        "title": "Frame TV Manager",
+        "views": views,
     }
 
     return dashboard
 
 
-def _build_tv_card(
+def _build_tv_view(
     hass: Any,
     entry: Any,
     tv_id: str,
     tv_name: str,
     entity_registry: Any,
 ) -> dict[str, Any] | None:
-    """Build a card for a single TV with all its sections."""
+    """Build a view (tab) for a single TV with two-column layout."""
     from .const import DOMAIN
     
     # Find all entities for this TV
@@ -153,50 +144,87 @@ def _build_tv_card(
     if not entities:
         return None
 
-    # Build the vertical stack with sections
-    cards = []
-
-    # === Header with TV name ===
-    cards.append({
-        "type": "markdown",
-        "content": f"## 📺 {tv_name}",
-    })
-
-    # === Status Section ===
+    # === LEFT COLUMN: Status, Artwork, Recent Activity ===
+    left_cards = []
+    
+    # Status Section
     status_card = _build_status_section(entities)
     if status_card:
-        cards.append(status_card)
-
-    # === Current Image Section ===
-    image_card = _build_image_section(entities)
-    if image_card:
-        cards.append(image_card)
-
-    # === Brightness Control Section ===
-    brightness_card = _build_brightness_section(entities)
-    if brightness_card:
-        cards.append(brightness_card)
-
-    # === Auto-Brightness Section ===
-    auto_bright_card = _build_auto_brightness_section(entities)
-    if auto_bright_card:
-        cards.append(auto_bright_card)
-
-    # === Auto-Motion Section ===
-    auto_motion_card = _build_auto_motion_section(entities)
-    if auto_motion_card:
-        cards.append(auto_motion_card)
-
-    # === Recent Activity Section (at bottom) ===
+        left_cards.append(status_card)
+    
+    # Combined Current Artwork (image + details)
+    artwork_card = _build_artwork_section(entities)
+    if artwork_card:
+        left_cards.append(artwork_card)
+    
+    # Recent Activity at bottom of left column
     activity_card = _build_activity_section(entities)
     if activity_card:
-        cards.append(activity_card)
-
-    # Wrap everything in a vertical stack
-    return {
+        left_cards.append(activity_card)
+    
+    left_column = {
         "type": "vertical-stack",
-        "cards": cards,
+        "cards": left_cards,
+    } if left_cards else None
+
+    # === RIGHT COLUMN: Power Controls, Motion, Brightness ===
+    right_cards = []
+    
+    # Power Controls
+    power_card = _build_power_controls_section(entities)
+    if power_card:
+        right_cards.append(power_card)
+    
+    # Motion
+    auto_motion_card = _build_auto_motion_section(entities)
+    if auto_motion_card:
+        right_cards.append(auto_motion_card)
+    
+    # Combined Brightness (manual + auto)
+    brightness_card = _build_combined_brightness_section(entities)
+    if brightness_card:
+        right_cards.append(brightness_card)
+    
+    right_column = {
+        "type": "vertical-stack",
+        "cards": right_cards,
+    } if right_cards else None
+
+    # Build the two-column grid
+    top_row_cards = [c for c in [left_column, right_column] if c]
+    
+    # Use a vertical-stack to wrap the grid
+    all_cards = []
+    
+    if len(top_row_cards) == 2:
+        all_cards.append({
+            "type": "grid",
+            "columns": 2,
+            "square": False,
+            "cards": top_row_cards,
+        })
+    elif top_row_cards:
+        all_cards.extend(top_row_cards)
+
+    # Wrap everything in a vertical-stack to enforce top-to-bottom layout
+    view_cards = [{
+        "type": "vertical-stack",
+        "cards": all_cards,
+    }] if all_cards else []
+
+    # Create a safe path from TV name
+    safe_path = tv_id.lower().replace(" ", "-").replace("_", "-")
+    
+    return {
+        "title": tv_name,
+        "path": safe_path,
+        "icon": "mdi:television-ambient-light",
+        "panel": True,  # Full width layout instead of centered masonry
+        "cards": view_cards,
     }
+
+
+# _build_tv_card removed - replaced by _build_tv_view which creates a full view per TV
 
 
 def _get_tv_entities(
@@ -304,7 +332,7 @@ def _get_platform_for_key(key: str) -> str:
 
 
 def _build_status_section(entities: dict[str, str]) -> dict[str, Any] | None:
-    """Build the status section showing on/off and art mode."""
+    """Build the status section showing on/off and art mode (without power controls)."""
     status_entities = []
     
     # Screen on/off status
@@ -321,42 +349,122 @@ def _build_status_section(entities: dict[str, str]) -> dict[str, Any] | None:
             "name": "Art Mode",
         })
     
-    # Power control buttons
+    if not status_entities:
+        return None
+    
+    return {
+        "type": "entities",
+        "title": "Status",
+        "entities": status_entities,
+    }
+
+
+def _build_power_controls_section(entities: dict[str, str]) -> dict[str, Any] | None:
+    """Build the power controls section."""
     button_entities = []
     if "tv_on" in entities:
         button_entities.append({
             "entity": entities["tv_on"],
+            "name": "TV On",
         })
     if "tv_off" in entities:
         button_entities.append({
             "entity": entities["tv_off"],
+            "name": "TV Off",
         })
     if "art_mode_button" in entities:
         button_entities.append({
             "entity": entities["art_mode_button"],
+            "name": "Art Mode",
         })
     if "on_art_mode" in entities:
         button_entities.append({
             "entity": entities["on_art_mode"],
+            "name": "On + Art Mode",
         })
     
-    if not status_entities and not button_entities:
+    # Brightness level at the bottom
+    if "brightness" in entities:
+        button_entities.append({
+            "entity": entities["brightness"],
+            "name": "Brightness Level",
+        })
+    
+    if not button_entities:
         return None
+    
+    return {
+        "type": "entities",
+        "title": "Power Controls",
+        "entities": button_entities,
+    }
+
+
+def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
+    """Build artwork section with image on top, controls below.
+    
+    Structure:
+    - Markdown card with title "Artwork" and image
+    - Entities card with shuffle button and details combined
+    """
+    if "current_artwork" not in entities:
+        return None
+    
+    artwork_entity = entities["current_artwork"]
+    screen_on_entity = entities.get("screen_on")
     
     cards = []
     
-    if status_entities:
-        cards.append({
-            "type": "entities",
-            "title": "Status",
-            "entities": status_entities,
+    # Build image template that includes screen off indicator
+    if screen_on_entity:
+        image_template = f"""{{% if is_state('{screen_on_entity}', 'on') %}}
+![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})
+{{% else %}}
+![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})
+
+<center>***** Screen is off *****</center>
+{{% endif %}}"""
+    else:
+        image_template = f"![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})"
+    
+    # Image card with title on top
+    cards.append({
+        "type": "markdown",
+        "title": "Artwork",
+        "content": image_template,
+    })
+    
+    # Combined controls: shuffle button + details
+    control_entities = []
+    
+    if "shuffle" in entities:
+        control_entities.append({
+            "entity": entities["shuffle"],
+            "name": "Shuffle Image",
         })
     
-    if button_entities:
+    if "current_artwork" in entities:
+        control_entities.append({
+            "entity": entities["current_artwork"],
+            "name": "Current Image",
+        })
+    
+    if "shuffle_frequency" in entities:
+        control_entities.append({
+            "entity": entities["shuffle_frequency"],
+            "name": "Shuffle Frequency",
+        })
+    
+    if "last_shuffle_timestamp" in entities:
+        control_entities.append({
+            "entity": entities["last_shuffle_timestamp"],
+            "name": "Last Shuffle",
+        })
+    
+    if control_entities:
         cards.append({
             "type": "entities",
-            "title": "Power Controls",
-            "entities": button_entities,
+            "entities": control_entities,
         })
     
     return {
@@ -365,163 +473,91 @@ def _build_status_section(entities: dict[str, str]) -> dict[str, Any] | None:
     }
 
 
-def _build_image_section(entities: dict[str, str]) -> dict[str, Any] | None:
-    """Build the current image section."""
-    image_entities = []
+def _build_combined_brightness_section(entities: dict[str, str]) -> dict[str, Any] | None:
+    """Build combined brightness section with auto-brightness settings in ONE card."""
+    all_entities = []
     
-    if "current_artwork" in entities:
-        image_entities.append({
-            "entity": entities["current_artwork"],
-            "name": "Current Image",
-        })
-    
-    if "shuffle" in entities:
-        image_entities.append({
-            "entity": entities["shuffle"],
-        })
-    
-    if "shuffle_frequency" in entities:
-        image_entities.append({
-            "entity": entities["shuffle_frequency"],
-            "name": "Shuffle Frequency",
-        })
-    
-    if "last_shuffle_timestamp" in entities:
-        image_entities.append({
-            "entity": entities["last_shuffle_timestamp"],
-            "name": "Last Shuffle",
-        })
-    
-    if not image_entities:
-        return None
-    
-    return {
-        "type": "entities",
-        "title": "🎨 Current Artwork",
-        "entities": image_entities,
-    }
-
-
-def _build_brightness_section(entities: dict[str, str]) -> dict[str, Any] | None:
-    """Build the manual brightness control section."""
-    if "brightness" not in entities:
-        return None
-    
-    return {
-        "type": "entities",
-        "title": "💡 Brightness",
-        "entities": [
-            {
-                "entity": entities["brightness"],
-                "name": "Brightness Level",
-            },
-        ],
-    }
-
-
-def _build_auto_brightness_section(entities: dict[str, str]) -> dict[str, Any] | None:
-    """Build the auto-brightness management section."""
-    section_entities = []
-    
-    # Enable/disable switch
+    # Auto-brightness enable/disable switch
     if "dynamic_brightness" in entities:
-        section_entities.append({
+        all_entities.append({
             "entity": entities["dynamic_brightness"],
-            "name": "Auto-Bright Enable",
+            "name": "Auto-Brightness",
         })
     
     # Trigger button
     if "trigger_brightness" in entities:
-        section_entities.append({
+        all_entities.append({
             "entity": entities["trigger_brightness"],
         })
     
     # Status sensors
     if "auto_bright_sensor_lux" in entities:
-        section_entities.append({
+        all_entities.append({
             "entity": entities["auto_bright_sensor_lux"],
             "name": "Current Lux",
         })
     
     if "auto_bright_target" in entities:
-        section_entities.append({
+        all_entities.append({
             "entity": entities["auto_bright_target"],
             "name": "Target Brightness",
         })
     
     if "auto_bright_next" in entities:
-        section_entities.append({
+        all_entities.append({
             "entity": entities["auto_bright_next"],
             "name": "Next Adjustment",
         })
     
     if "auto_bright_last" in entities:
-        section_entities.append({
+        all_entities.append({
             "entity": entities["auto_bright_last"],
             "name": "Last Adjustment",
         })
     
-    # Configuration entities
-    config_entities = []
-    
+    # Configuration entities - add to same list
     if "min_lux" in entities:
-        config_entities.append({
+        all_entities.append({
             "entity": entities["min_lux"],
             "name": "Min Lux (Dark)",
         })
     
     if "max_lux" in entities:
-        config_entities.append({
+        all_entities.append({
             "entity": entities["max_lux"],
             "name": "Max Lux (Bright)",
         })
     
     if "min_brightness" in entities:
-        config_entities.append({
+        all_entities.append({
             "entity": entities["min_brightness"],
             "name": "Min Level",
         })
     
     if "max_brightness" in entities:
-        config_entities.append({
+        all_entities.append({
             "entity": entities["max_brightness"],
             "name": "Max Level",
         })
     
     # Calibration buttons
     if "calibrate_dark" in entities:
-        config_entities.append({
+        all_entities.append({
             "entity": entities["calibrate_dark"],
         })
     
     if "calibrate_bright" in entities:
-        config_entities.append({
+        all_entities.append({
             "entity": entities["calibrate_bright"],
         })
     
-    if not section_entities and not config_entities:
+    if not all_entities:
         return None
     
-    cards = []
-    
-    if section_entities:
-        cards.append({
-            "type": "entities",
-            "title": "☀️ Auto-Brightness",
-            "entities": section_entities,
-        })
-    
-    if config_entities:
-        cards.append({
-            "type": "entities",
-            "title": "Auto-Brightness Configuration",
-            "entities": config_entities,
-            "state_color": False,
-        })
-    
     return {
-        "type": "vertical-stack",
-        "cards": cards,
+        "type": "entities",
+        "title": "Brightness",
+        "entities": all_entities,
     }
 
 
@@ -574,7 +610,7 @@ def _build_auto_motion_section(entities: dict[str, str]) -> dict[str, Any] | Non
     
     return {
         "type": "entities",
-        "title": "🚶 Auto-Motion",
+        "title": "Motion",
         "entities": section_entities,
     }
 
@@ -592,13 +628,13 @@ def _build_activity_section(entities: dict[str, str]) -> dict[str, Any] | None:
     
     # Build a markdown template that renders the history nicely
     # The template iterates over the formatted_history attribute
-    template_content = f"""## 📋 Recent Activity
+    template_content = f"""## Recent Activity
 
 {{% set history = state_attr('{activity_entity}', 'formatted_history') or [] %}}
 {{% if history | length == 0 %}}
 _No activity recorded yet_
 {{% else %}}
-{{% for event in history[:20] %}}
+{{% for event in history[:30] %}}
 **{{{{ event.time }}}}** - {{{{ event.message }}}}
 {{% endfor %}}
 {{% endif %}}"""

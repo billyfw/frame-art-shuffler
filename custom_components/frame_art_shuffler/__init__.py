@@ -453,10 +453,14 @@ if _HA_AVAILABLE:
                 # Signal sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}")
 
-        def start_motion_off_timer(tv_id: str) -> None:
-            """Start or restart the motion off timer for a specific TV."""
-            cancel_motion_off_timer(tv_id)
-
+        def start_motion_off_timer(tv_id: str, check_staleness: bool = False) -> None:
+            """Start or restart the motion off timer for a specific TV.
+            
+            Args:
+                tv_id: The TV identifier
+                check_staleness: If True, only start timer if last_motion_timestamp is recent.
+                                 If False, start a fresh timer from now (for motion detection).
+            """
             tv_configs = list_tv_configs(entry)
             tv_config = tv_configs.get(tv_id)
             if not tv_config:
@@ -464,9 +468,44 @@ if _HA_AVAILABLE:
 
             off_delay_minutes = tv_config.get("motion_off_delay", 15)
             tv_name = tv_config.get("name", tv_id)
-
-            # Calculate when TV will turn off
-            off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
+            
+            # If checking staleness, verify last motion was recent enough
+            if check_staleness:
+                last_motion_str = tv_config.get("last_motion_timestamp")
+                if last_motion_str:
+                    try:
+                        last_motion = datetime.fromisoformat(last_motion_str)
+                        if last_motion.tzinfo is None:
+                            last_motion = last_motion.replace(tzinfo=timezone.utc)
+                        
+                        elapsed = datetime.now(timezone.utc) - last_motion
+                        elapsed_minutes = elapsed.total_seconds() / 60
+                        
+                        if elapsed_minutes >= off_delay_minutes:
+                            _LOGGER.debug(
+                                f"Auto motion: Skipping timer for {tv_name} - motion was {elapsed_minutes:.1f}m ago "
+                                f"(> {off_delay_minutes}m delay)"
+                            )
+                            return
+                        
+                        # Motion was recent - calculate off time based on last motion
+                        off_time = last_motion + timedelta(minutes=off_delay_minutes)
+                        remaining_minutes = (off_time - datetime.now(timezone.utc)).total_seconds() / 60
+                        _LOGGER.info(
+                            f"Auto motion: Timer for {tv_name} - motion was {elapsed_minutes:.1f}m ago, "
+                            f"off in {remaining_minutes:.1f}m"
+                        )
+                    except (ValueError, TypeError) as err:
+                        _LOGGER.debug(f"Auto motion: Could not parse last_motion_timestamp: {err}")
+                        return
+                else:
+                    _LOGGER.debug(f"Auto motion: Skipping timer for {tv_name} - no motion history")
+                    return
+            else:
+                # Fresh timer from now
+                off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
+            
+            cancel_motion_off_timer(tv_id)
             motion_off_times[tv_id] = off_time
             _LOGGER.debug(f"Auto motion: Off timer set for {tv_name} at {off_time} (tv_id={tv_id}, entry_id={entry.entry_id})")
             _LOGGER.debug(f"Auto motion: motion_off_times dict id={id(motion_off_times)}, contents={motion_off_times}")
@@ -647,14 +686,14 @@ if _HA_AVAILABLE:
             motion_listeners[tv_id] = unsubscribe
             entry.async_on_unload(unsubscribe)
 
-            # Only start the off timer if the TV is currently on
-            # This handles HA restart - don't set timer if TV is already off
+            # Only start the off timer if the TV is currently on AND motion was recent
+            # This handles HA restart - if motion is stale, don't set timer (TV was probably turned on manually)
             if ip:
                 try:
                     screen_on = await hass.async_add_executor_job(frame_tv.is_screen_on, ip)
                     if screen_on:
-                        _LOGGER.info(f"Auto motion: {tv_name} is on, starting off timer")
-                        start_motion_off_timer(tv_id)
+                        _LOGGER.info(f"Auto motion: {tv_name} is on at startup, checking motion staleness")
+                        start_motion_off_timer(tv_id, check_staleness=True)
                     else:
                         _LOGGER.info(f"Auto motion: {tv_name} is off, waiting for motion")
                 except Exception as err:
