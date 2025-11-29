@@ -144,13 +144,8 @@ def _build_tv_view(
     if not entities:
         return None
 
-    # === LEFT COLUMN: Status, Artwork, Recent Activity ===
+    # === LEFT COLUMN: Artwork, Recent Activity ===
     left_cards = []
-    
-    # Status Section
-    status_card = _build_status_section(entities)
-    if status_card:
-        left_cards.append(status_card)
     
     # Combined Current Artwork (image + details)
     artwork_card = _build_artwork_section(entities)
@@ -269,11 +264,10 @@ def _get_tv_entities(
         "max_brightness": f"{tv_id}_max_auto_brightness",
         "motion_off_delay": f"{tv_id}_motion_off_delay",
         # Switches
+        "power": f"{tv_id}_power",
         "dynamic_brightness": f"{tv_id}_dynamic_brightness",
         "motion_control": f"{tv_id}_motion_control",
         # Buttons
-        "tv_on": f"{tv_id}_tv_on",
-        "tv_off": f"{tv_id}_tv_off",
         "art_mode_button": f"{tv_id}_art_mode",
         "on_art_mode": f"{tv_id}_on_art_mode",
         "shuffle": f"{tv_id}_shuffle",
@@ -311,7 +305,7 @@ def _get_platform_for_key(key: str) -> str:
         "shuffle_frequency", "brightness", "min_lux", "max_lux",
         "min_brightness", "max_brightness", "motion_off_delay",
     }
-    switches = {"dynamic_brightness", "motion_control"}
+    switches = {"power", "dynamic_brightness", "motion_control"}
     buttons = {
         "tv_on", "tv_off", "art_mode_button", "on_art_mode", "shuffle",
         "clear_token", "calibrate_dark", "calibrate_bright",
@@ -331,46 +325,14 @@ def _get_platform_for_key(key: str) -> str:
     return "sensor"
 
 
-def _build_status_section(entities: dict[str, str]) -> dict[str, Any] | None:
-    """Build the status section showing on/off and art mode (without power controls)."""
-    status_entities = []
-    
-    # Screen on/off status
-    if "screen_on" in entities:
-        status_entities.append({
-            "entity": entities["screen_on"],
-            "name": "Screen",
-        })
-    
-    # Art mode status
-    if "art_mode" in entities:
-        status_entities.append({
-            "entity": entities["art_mode"],
-            "name": "Art Mode",
-        })
-    
-    if not status_entities:
-        return None
-    
-    return {
-        "type": "entities",
-        "title": "Status",
-        "entities": status_entities,
-    }
-
-
 def _build_power_controls_section(entities: dict[str, str]) -> dict[str, Any] | None:
     """Build the power controls section."""
     button_entities = []
-    if "tv_on" in entities:
+    # Power switch at the top - shows state and controls on/off
+    if "power" in entities:
         button_entities.append({
-            "entity": entities["tv_on"],
-            "name": "TV On",
-        })
-    if "tv_off" in entities:
-        button_entities.append({
-            "entity": entities["tv_off"],
-            "name": "TV Off",
+            "entity": entities["power"],
+            "name": "Power",
         })
     if "art_mode_button" in entities:
         button_entities.append({
