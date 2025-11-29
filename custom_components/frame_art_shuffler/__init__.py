@@ -586,16 +586,11 @@ if _HA_AVAILABLE:
             # Signal sensors to update
             async_dispatcher_send(hass, f"{DOMAIN}_motion_detected_{entry.entry_id}_{tv_id}")
 
-            # Check if screen is on - if so, just reset timer
+            # Check if screen is on - if so, just reset timer (no activity log - too noisy)
             try:
                 screen_on = await hass.async_add_executor_job(frame_tv.is_screen_on, ip)
                 if screen_on:
                     _LOGGER.debug(f"Auto motion: {tv_name} screen already on, resetting timer")
-                    log_activity(
-                        hass, entry.entry_id, tv_id,
-                        "motion_timer_reset",
-                        "Timer reset (motion)",
-                    )
                     start_motion_off_timer(tv_id)
                     return
             except Exception as err:
@@ -669,10 +664,7 @@ if _HA_AVAILABLE:
                 # Only trigger on motion detected (state = "on")
                 if new_state.state == "on":
                     _LOGGER.debug(f"Auto motion: Motion detected for {tv_name}")
-                    log_activity(
-                        hass, entry.entry_id, tv_id,
-                        "motion_detected",
-                    )
+                    # Don't log here - async_handle_motion logs appropriately based on TV state
                     hass.async_create_task(async_handle_motion(tv_id, tv_config))
 
             # Subscribe to state changes
