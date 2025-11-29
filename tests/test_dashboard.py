@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 # Test the dashboard module functions
 from custom_components.frame_art_shuffler.dashboard import (
     _get_platform_for_key,
-    _build_status_section,
     _build_image_section,
     _build_brightness_section,
     _build_auto_brightness_section,
@@ -39,53 +38,18 @@ class TestGetPlatformForKey:
 
     def test_switch_keys(self):
         """Test switch entity keys."""
+        assert _get_platform_for_key("power") == "switch"
         assert _get_platform_for_key("dynamic_brightness") == "switch"
         assert _get_platform_for_key("motion_control") == "switch"
 
     def test_button_keys(self):
         """Test button entity keys."""
-        assert _get_platform_for_key("tv_on") == "button"
         assert _get_platform_for_key("shuffle") == "button"
         assert _get_platform_for_key("trigger_brightness") == "button"
 
     def test_unknown_key_defaults_to_sensor(self):
         """Test unknown keys default to sensor."""
         assert _get_platform_for_key("unknown_key") == "sensor"
-
-
-class TestBuildStatusSection:
-    """Test the _build_status_section helper."""
-
-    def test_with_all_entities(self):
-        """Test with all status entities present."""
-        entities = {
-            "screen_on": "binary_sensor.tv_screen_on",
-            "art_mode": "binary_sensor.tv_art_mode",
-            "tv_on": "button.tv_on",
-            "tv_off": "button.tv_off",
-            "art_mode_button": "button.tv_art_mode",
-            "on_art_mode": "button.tv_on_art_mode",
-        }
-        result = _build_status_section(entities)
-        
-        assert result is not None
-        assert result["type"] == "vertical-stack"
-        assert len(result["cards"]) == 2
-
-    def test_with_no_entities(self):
-        """Test with no status entities."""
-        result = _build_status_section({})
-        assert result is None
-
-    def test_with_partial_entities(self):
-        """Test with only some entities present."""
-        entities = {
-            "screen_on": "binary_sensor.tv_screen_on",
-        }
-        result = _build_status_section(entities)
-        
-        assert result is not None
-        assert result["type"] == "vertical-stack"
 
 
 class TestBuildImageSection:

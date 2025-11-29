@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -16,8 +17,17 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
 from .coordinator import FrameArtCoordinator
+from .frame_tv import tv_on, tv_off, set_art_mode, is_screen_on, is_art_mode_enabled, FrameArtError
+from .activity import log_activity
 
 _LOGGER = logging.getLogger(__name__)
+
+# Delay before polling TV state after power commands
+# tv_off: hold_key takes 3s, then TV needs time to transition and REST API to stabilize
+# tv_on: already has ~18s of delays built-in, just need a small buffer
+_POWER_OFF_POLL_DELAY = 4  # seconds after tv_off completes
+_POWER_ON_POLL_DELAY = 3   # seconds after set_art_mode completes
+_STATUS_CHECK_TIMEOUT = 6  # timeout for status check (matches _SCREEN_CHECK_TIMEOUT)
 
 
 async def async_setup_entry(
@@ -29,6 +39,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
 
+    tracked_power: dict[str, FrameArtPowerSwitch] = {}
     tracked_dynamic_brightness: dict[str, FrameArtDynamicBrightnessSwitch] = {}
     tracked_motion_control: dict[str, FrameArtMotionControlSwitch] = {}
 
@@ -38,6 +49,9 @@ async def async_setup_entry(
         current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
 
         # Remove entities for TVs that no longer exist
+        for tv_id in list(tracked_power.keys()):
+            if tv_id not in current_tv_ids:
+                tracked_power.pop(tv_id)
         for tv_id in list(tracked_dynamic_brightness.keys()):
             if tv_id not in current_tv_ids:
                 tracked_dynamic_brightness.pop(tv_id)
@@ -50,6 +64,12 @@ async def async_setup_entry(
             tv_id = tv.get("id")
             if not tv_id:
                 continue
+
+            # Add power switch
+            if tv_id not in tracked_power:
+                entity = FrameArtPowerSwitch(hass, coordinator, entry, tv_id)
+                tracked_power[tv_id] = entity
+                new_entities.append(entity)
 
             # Add dynamic brightness switch
             if tv_id not in tracked_dynamic_brightness:
@@ -68,6 +88,182 @@ async def async_setup_entry(
 
     coordinator.async_add_listener(lambda: _process_tvs(coordinator.data or []))
     _process_tvs(coordinator.data or [])
+
+
+class FrameArtPowerSwitch(CoordinatorEntity, SwitchEntity):
+    """Switch entity to control TV power with art mode.
+    
+    This combines the TV On button (Wake-on-LAN + art mode) and TV Off button
+    (screen off while staying in art mode) into a single toggle switch that
+    also reflects the current screen state.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:television"
+    _attr_name = "Power"
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        coordinator: FrameArtCoordinator,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the power switch entity."""
+        super().__init__(coordinator)
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        if tv_config:
+            self._tv_name = tv_config.get("name", tv_id)
+            self._tv_ip = tv_config.get("ip")
+            self._tv_mac = tv_config.get("mac")
+        else:
+            self._tv_name = tv_id
+            self._tv_ip = None
+            self._tv_mac = None
+
+        self._attr_unique_id = f"{tv_id}_power"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=self._tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if the TV screen is on."""
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        status_cache = data.get("tv_status_cache", {})
+        tv_status = status_cache.get(self._tv_id, {})
+        return tv_status.get("screen_on")
+
+    async def _async_poll_and_update_state(self, delay: float) -> None:
+        """Poll TV state after a delay and update the cache.
+        
+        This confirms the actual TV state after a power command, updating both
+        the status cache and any binary sensors that depend on it.
+        """
+        await asyncio.sleep(delay)
+        
+        try:
+            # Poll screen and art mode status
+            screen_on = await self._hass.async_add_executor_job(
+                is_screen_on, self._tv_ip, _STATUS_CHECK_TIMEOUT
+            )
+            art_mode = await self._hass.async_add_executor_job(
+                is_art_mode_enabled, self._tv_ip
+            )
+            
+            # Update the cache with confirmed state
+            data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+            status_cache = data.get("tv_status_cache", {})
+            if self._tv_id in status_cache:
+                status_cache[self._tv_id]["screen_on"] = screen_on
+                status_cache[self._tv_id]["art_mode"] = art_mode
+            
+            _LOGGER.debug(
+                f"Power switch poll for {self._tv_name}: screen_on={screen_on}, art_mode={art_mode}"
+            )
+            
+            # Trigger state update for this switch and binary sensors
+            self.async_write_ha_state()
+            
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.debug(f"Power switch poll failed for {self._tv_name}: {err}")
+            # Keep optimistic state on failure - next regular poll will correct if needed
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on the TV and switch to art mode."""
+        if not self._tv_ip or not self._tv_mac:
+            _LOGGER.error(f"Cannot turn on {self._tv_name}: missing IP or MAC address in config")
+            return
+
+        try:
+            # First turn on the TV via Wake-on-LAN
+            await self._hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
+            _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}, waiting for TV to be ready...")
+            
+            # tv_on already includes the ~12 second wait for the TV to be ready
+            # Now switch to art mode
+            await self._hass.async_add_executor_job(set_art_mode, self._tv_ip)
+            _LOGGER.info(f"Switched {self._tv_name} to art mode")
+            
+            # Optimistically update the status cache so UI doesn't flip back
+            data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+            status_cache = data.get("tv_status_cache", {})
+            if self._tv_id in status_cache:
+                status_cache[self._tv_id]["screen_on"] = True
+                status_cache[self._tv_id]["art_mode"] = True
+            self.async_write_ha_state()
+            
+            # Schedule a delayed poll to confirm actual state and sync binary sensors
+            # tv_on + set_art_mode already waited ~18s, just need small buffer for REST API
+            self._hass.async_create_task(
+                self._async_poll_and_update_state(_POWER_ON_POLL_DELAY)
+            )
+            
+            # Log activity
+            log_activity(
+                self._hass, self._entry.entry_id, self._tv_id,
+                "screen_on",
+                "Screen turned on (power switch)",
+            )
+            
+            # Start motion off timer if auto-motion is enabled
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config and tv_config.get("enable_motion_control", False):
+                data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+                start_motion_off_timer = data.get("start_motion_off_timer")
+                if start_motion_off_timer:
+                    start_motion_off_timer(self._tv_id)
+                    _LOGGER.debug(f"Started motion off timer for {self._tv_name} after power on")
+        except FrameArtError as err:
+            _LOGGER.error(f"Failed to turn on {self._tv_name}: {err}")
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn off the TV screen (stays in art mode)."""
+        if not self._tv_ip:
+            _LOGGER.error(f"Cannot turn off {self._tv_name}: missing IP address in config")
+            return
+
+        try:
+            await self._hass.async_add_executor_job(tv_off, self._tv_ip)
+            _LOGGER.info(f"Turned off {self._tv_name} screen")
+            
+            # Optimistically update the status cache so UI doesn't flip back
+            data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+            status_cache = data.get("tv_status_cache", {})
+            if self._tv_id in status_cache:
+                status_cache[self._tv_id]["screen_on"] = False
+            self.async_write_ha_state()
+            
+            # Schedule a delayed poll to confirm actual state and sync binary sensors
+            # tv_off hold_key takes 3s, then TV needs time to transition and REST API to stabilize
+            self._hass.async_create_task(
+                self._async_poll_and_update_state(_POWER_OFF_POLL_DELAY)
+            )
+            
+            # Log activity
+            log_activity(
+                self._hass, self._entry.entry_id, self._tv_id,
+                "screen_off",
+                "Screen turned off (power switch)",
+            )
+            
+            # Cancel motion off timer since TV is now off
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config and tv_config.get("enable_motion_control", False):
+                data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+                cancel_motion_off_timer = data.get("cancel_motion_off_timer")
+                if cancel_motion_off_timer:
+                    cancel_motion_off_timer(self._tv_id)
+                    _LOGGER.debug(f"Cancelled motion off timer for {self._tv_name} after power off")
+        except FrameArtError as err:
+            _LOGGER.error(f"Failed to turn off {self._tv_name}: {err}")
 
 
 class FrameArtDynamicBrightnessSwitch(CoordinatorEntity, SwitchEntity):

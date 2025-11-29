@@ -36,8 +36,6 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
 
-    tracked_on: dict[str, FrameArtTVOnButton] = {}
-    tracked_off: dict[str, FrameArtTVOffButton] = {}
     tracked_art_mode: dict[str, FrameArtArtModeButton] = {}
     tracked_on_art: dict[str, FrameArtOnArtModeButton] = {}
     tracked_shuffle: dict[str, FrameArtShuffleButton] = {}
@@ -53,12 +51,6 @@ async def async_setup_entry(
         current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
 
         # Remove entities for TVs that no longer exist
-        for tv_id in list(tracked_on.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_on.pop(tv_id)
-        for tv_id in list(tracked_off.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_off.pop(tv_id)
         for tv_id in list(tracked_art_mode.keys()):
             if tv_id not in current_tv_ids:
                 tracked_art_mode.pop(tv_id)
@@ -89,18 +81,6 @@ async def async_setup_entry(
             tv_id = tv.get("id")
             if not tv_id:
                 continue
-            
-            # Add TV On button
-            if tv_id not in tracked_on:
-                entity = FrameArtTVOnButton(coordinator, entry, tv_id)
-                tracked_on[tv_id] = entity
-                new_entities.append(entity)
-            
-            # Add TV Off button
-            if tv_id not in tracked_off:
-                entity = FrameArtTVOffButton(coordinator, entry, tv_id)
-                tracked_off[tv_id] = entity
-                new_entities.append(entity)
             
             # Add Art Mode button
             if tv_id not in tracked_art_mode:
@@ -215,136 +195,6 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
         from .config_entry import remove_tv_config
         remove_tv_config(self.hass, self._entry, self._tv_id)
         _LOGGER.info(f"Removed TV {self._tv_name} from config entry")
-
-
-class FrameArtTVOnButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
-    """Button entity to turn TV screen on (Wake-on-LAN)."""
-
-    _attr_has_entity_name = True
-    _attr_name = "TV On (~12s)"
-    _attr_icon = "mdi:television"
-
-    def __init__(
-        self,
-        coordinator: FrameArtCoordinator,
-        entry: ConfigEntry,
-        tv_id: str,
-    ) -> None:
-        """Initialize the button entity."""
-        super().__init__(coordinator)
-        self._tv_id = tv_id
-        self._entry = entry
-
-        # Get TV config
-        tv_config = get_tv_config(entry, tv_id)
-        if tv_config:
-            self._tv_name = tv_config.get("name", tv_id)
-            self._tv_ip = tv_config.get("ip")
-            self._tv_mac = tv_config.get("mac")
-        else:
-            self._tv_name = tv_id
-            self._tv_ip = None
-            self._tv_mac = None
-
-        self._attr_unique_id = f"{tv_id}_tv_on"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
-
-    async def async_press(self) -> None:
-        """Handle the button press - turn TV screen on via Wake-on-LAN."""
-        if not self._tv_ip or not self._tv_mac:
-            _LOGGER.error(f"Cannot turn on {self._tv_name}: missing IP or MAC address in config")
-            return
-
-        try:
-            await self.hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
-            _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}")
-            
-            # Log activity
-            log_activity(
-                self.hass, self._entry.entry_id, self._tv_id,
-                "screen_on",
-                "Screen turned on (button)",
-            )
-            
-            # Start motion off timer if auto-motion is enabled
-            tv_config = get_tv_config(self._entry, self._tv_id)
-            if tv_config and tv_config.get("enable_motion_control", False):
-                data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-                start_motion_off_timer = data.get("start_motion_off_timer")
-                if start_motion_off_timer:
-                    start_motion_off_timer(self._tv_id)
-                    _LOGGER.debug(f"Started motion off timer for {self._tv_name} after TV On")
-        except FrameArtError as err:
-            _LOGGER.error(f"Failed to turn on {self._tv_name}: {err}")
-
-
-class FrameArtTVOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
-    """Button entity to turn TV screen off (stays in art mode)."""
-
-    _attr_has_entity_name = True
-    _attr_name = "TV Off (~3s)"
-    _attr_icon = "mdi:television-off"
-
-    def __init__(
-        self,
-        coordinator: FrameArtCoordinator,
-        entry: ConfigEntry,
-        tv_id: str,
-    ) -> None:
-        """Initialize the button entity."""
-        super().__init__(coordinator)
-        self._tv_id = tv_id
-        self._entry = entry
-
-        # Get TV config
-        tv_config = get_tv_config(entry, tv_id)
-        if tv_config:
-            self._tv_name = tv_config.get("name", tv_id)
-            self._tv_ip = tv_config.get("ip")
-        else:
-            self._tv_name = tv_id
-            self._tv_ip = None
-
-        self._attr_unique_id = f"{tv_id}_tv_off"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
-
-    async def async_press(self) -> None:
-        """Handle the button press - turn TV screen off."""
-        if not self._tv_ip:
-            _LOGGER.error(f"Cannot turn off {self._tv_name}: missing IP address in config")
-            return
-
-        try:
-            await self.hass.async_add_executor_job(tv_off, self._tv_ip)
-            _LOGGER.info(f"Sent screen off command to {self._tv_name}")
-            
-            # Log activity
-            log_activity(
-                self.hass, self._entry.entry_id, self._tv_id,
-                "screen_off",
-                "Screen turned off (button)",
-            )
-            
-            # Cancel motion off timer since TV is now off
-            tv_config = get_tv_config(self._entry, self._tv_id)
-            if tv_config and tv_config.get("enable_motion_control", False):
-                data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-                cancel_motion_off_timer = data.get("cancel_motion_off_timer")
-                if cancel_motion_off_timer:
-                    cancel_motion_off_timer(self._tv_id)
-                    _LOGGER.debug(f"Cancelled motion off timer for {self._tv_name} after TV Off")
-        except FrameArtError as err:
-            _LOGGER.error(f"Failed to turn off {self._tv_name}: {err}")
 
 
 class FrameArtArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
