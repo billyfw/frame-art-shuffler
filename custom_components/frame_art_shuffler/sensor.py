@@ -233,6 +233,14 @@ class FrameArtTVEntity(SensorEntity):
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
         """Return the current artwork."""
+        # Check runtime cache first (set by button.py shuffle)
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        cached_image = shuffle_cache.get("current_image")
+        if cached_image:
+            return str(cached_image)
+        
+        # Fall back to config entry (for initial value after restart)
         tv_config = get_tv_config(self._entry, self._tv_id)
         if not tv_config:
             return None
@@ -395,11 +403,17 @@ class FrameArtLastShuffleTimestampEntity(SensorEntity):
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
         """Return the last shuffle timestamp."""
-        tv_config = get_tv_config(self._entry, self._tv_id)
-        if not tv_config:
-            return None
+        # Check runtime cache first (set by button.py shuffle)
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        timestamp_str = shuffle_cache.get("last_shuffle_timestamp")
         
-        timestamp_str = tv_config.get("last_shuffle_timestamp")
+        # Fall back to config entry (for initial value after restart)
+        if not timestamp_str:
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config:
+                timestamp_str = tv_config.get("last_shuffle_timestamp")
+        
         if not timestamp_str:
             return None
         
@@ -886,12 +900,17 @@ class FrameArtAutoMotionLastMotionEntity(SensorEntity):
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
         """Return the last motion timestamp."""
-        # Fall back to persisted config value (from auto-motion handler)
-        tv_config = get_tv_config(self._entry, self._tv_id)
-        if not tv_config:
-            return None
+        # Check runtime cache first (set by motion handler)
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        motion_cache = data.get("motion_cache", {})
+        timestamp_str = motion_cache.get(self._tv_id)
         
-        timestamp_str = tv_config.get("last_motion_timestamp")
+        # Fall back to persisted config value (legacy)
+        if not timestamp_str:
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config:
+                timestamp_str = tv_config.get("last_motion_timestamp")
+        
         if not timestamp_str:
             return None
         

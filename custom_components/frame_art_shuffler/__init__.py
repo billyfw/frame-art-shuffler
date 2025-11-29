@@ -473,7 +473,9 @@ if _HA_AVAILABLE:
             
             # If checking staleness, verify last motion was recent enough
             if check_staleness:
-                last_motion_str = tv_config.get("last_motion_timestamp")
+                # Check runtime cache first, then fall back to config
+                motion_cache = hass.data[DOMAIN][entry.entry_id].get("motion_cache", {})
+                last_motion_str = motion_cache.get(tv_id) or tv_config.get("last_motion_timestamp")
                 if last_motion_str:
                     try:
                         last_motion = datetime.fromisoformat(last_motion_str)
@@ -577,14 +579,9 @@ if _HA_AVAILABLE:
                 _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
                 return
 
-            # Update last motion timestamp
-            from .config_entry import update_tv_config as update_config
-            update_config(
-                hass,
-                entry,
-                tv_id,
-                {"last_motion_timestamp": datetime.now(timezone.utc).isoformat()},
-            )
+            # Update last motion timestamp in runtime cache (NOT entry.data to avoid reload)
+            motion_cache = hass.data[DOMAIN][entry.entry_id].setdefault("motion_cache", {})
+            motion_cache[tv_id] = datetime.now(timezone.utc).isoformat()
 
             # Signal sensors to update
             async_dispatcher_send(hass, f"{DOMAIN}_motion_detected_{entry.entry_id}_{tv_id}")
