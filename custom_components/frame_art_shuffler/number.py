@@ -246,14 +246,10 @@ class FrameArtBrightnessEntity(NumberEntity):
             brightness_cache = data.setdefault("brightness_cache", {})
             brightness_cache[self._tv_id] = target_value
             
-            # Persist to config so it survives restart
-            from .config_entry import update_tv_config
-            update_tv_config(
-                self.hass,
-                self._entry,
-                self._tv_id,
-                {"current_brightness": target_value},
-            )
+            # NOTE: We don't persist brightness to config entry here because
+            # update_tv_config() triggers an integration reload, causing a 
+            # cascade of logbook events. Brightness is persisted by auto-brightness
+            # code during its periodic adjustments instead.
             
             _LOGGER.info(
                 "Brightness set to %d for %s",

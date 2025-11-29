@@ -108,6 +108,10 @@ async def async_setup_entry(
                 continue
 
             tv_name = tv_config.get("name", tv_id)
+            
+            # Capture old values to detect changes
+            old_screen_on = tv_status_cache[tv_id].get("screen_on")
+            old_art_mode = tv_status_cache[tv_id].get("art_mode")
 
             # Check screen status (read-only REST call)
             try:
@@ -117,10 +121,6 @@ async def async_setup_entry(
                 tv_status_cache[tv_id]["screen_on"] = screen_on
             except Exception as err:
                 _LOGGER.debug(f"Failed to check screen status for {tv_name}: {err}")
-                # Don't clear the cache - keep last known value
-                # Only set to None if we've never had a value
-                if tv_status_cache[tv_id]["screen_on"] is None:
-                    tv_status_cache[tv_id]["screen_on"] = None
 
             # Check art mode status (read-only WebSocket call)
             # Only check if screen appears to be on, to avoid unnecessary connections
@@ -155,10 +155,16 @@ async def async_setup_entry(
                 # Also clear art mode since we can't check it when screen is off
                 tv_status_cache[tv_id]["art_mode"] = None
 
-        # Trigger sensor updates
-        for tv_id, entities in tracked.items():
-            for entity in entities:
-                entity.async_write_ha_state()
+            # Only notify HA if state actually changed
+            new_screen_on = tv_status_cache[tv_id].get("screen_on")
+            new_art_mode = tv_status_cache[tv_id].get("art_mode")
+            
+            if tv_id in tracked:
+                screen_entity, art_entity = tracked[tv_id]
+                if new_screen_on != old_screen_on:
+                    screen_entity.async_write_ha_state()
+                if new_art_mode != old_art_mode:
+                    art_entity.async_write_ha_state()
 
     # Start polling
     cancel_poll = async_track_time_interval(

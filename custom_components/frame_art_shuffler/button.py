@@ -270,7 +270,11 @@ class FrameArtShuffleButton(ButtonEntity):
 
         include_tags = tv_config.get("tags", [])
         exclude_tags = tv_config.get("exclude_tags", [])
-        current_image = tv_config.get("current_image")
+        
+        # Check runtime cache first for current_image, then fall back to config
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        current_image = shuffle_cache.get("current_image") or tv_config.get("current_image")
 
         # Get metadata path and load images
         metadata_path = Path(self._entry.data.get("metadata_path", ""))
@@ -336,17 +340,15 @@ class FrameArtShuffleButton(ButtonEntity):
                 f"Shuffled to {image_filename}",
             )
 
-            # Update current_image and last_shuffle_timestamp in config
+            # Update runtime cache (NOT entry.data to avoid reload)
+            # These are runtime state, not user settings
             from datetime import datetime, timezone
-            update_tv_config(
-                self.hass,
-                self._entry,
-                self._tv_id,
-                {
-                    "current_image": image_filename,
-                    "last_shuffle_timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+            data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+            shuffle_cache = data.setdefault("shuffle_cache", {})
+            shuffle_cache[self._tv_id] = {
+                "current_image": image_filename,
+                "last_shuffle_timestamp": datetime.now(timezone.utc).isoformat(),
+            }
             
             # Send shuffle signal so sensors update
             signal = f"{DOMAIN}_shuffle_{self._entry.entry_id}_{self._tv_id}"
