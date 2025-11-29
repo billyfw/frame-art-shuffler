@@ -12,11 +12,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
-from .coordinator import FrameArtCoordinator
 from .frame_tv import tv_on, tv_off, set_art_mode, is_screen_on, is_art_mode_enabled, FrameArtError
 from .activity import log_activity
 
@@ -36,61 +34,25 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Frame Art switch entities for a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: FrameArtCoordinator = data["coordinator"]
+    # Read TV configs directly from entry (stored as dict with tv_id as key)
+    tvs_dict = entry.data.get("tvs", {})
+    
+    entities: list[SwitchEntity] = []
+    for tv_id, tv in tvs_dict.items():
+        if not tv_id:
+            continue
 
-    tracked_power: dict[str, FrameArtPowerSwitch] = {}
-    tracked_dynamic_brightness: dict[str, FrameArtDynamicBrightnessSwitch] = {}
-    tracked_motion_control: dict[str, FrameArtMotionControlSwitch] = {}
+        entities.extend([
+            FrameArtPowerSwitch(hass, entry, tv_id),
+            FrameArtDynamicBrightnessSwitch(hass, entry, tv_id),
+            FrameArtMotionControlSwitch(hass, entry, tv_id),
+        ])
 
-    @callback
-    def _process_tvs(tvs: list[dict[str, Any]]) -> None:
-        new_entities: list[SwitchEntity] = []
-        current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
-
-        # Remove entities for TVs that no longer exist
-        for tv_id in list(tracked_power.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_power.pop(tv_id)
-        for tv_id in list(tracked_dynamic_brightness.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_dynamic_brightness.pop(tv_id)
-        for tv_id in list(tracked_motion_control.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_motion_control.pop(tv_id)
-
-        # Add entities for new TVs
-        for tv in tvs:
-            tv_id = tv.get("id")
-            if not tv_id:
-                continue
-
-            # Add power switch
-            if tv_id not in tracked_power:
-                entity = FrameArtPowerSwitch(hass, coordinator, entry, tv_id)
-                tracked_power[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add dynamic brightness switch
-            if tv_id not in tracked_dynamic_brightness:
-                entity = FrameArtDynamicBrightnessSwitch(coordinator, entry, tv_id)
-                tracked_dynamic_brightness[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add motion control switch
-            if tv_id not in tracked_motion_control:
-                entity = FrameArtMotionControlSwitch(hass, coordinator, entry, tv_id)
-                tracked_motion_control[tv_id] = entity
-                new_entities.append(entity)
-
-        if new_entities:
-            async_add_entities(new_entities)
-
-    coordinator.async_add_listener(lambda: _process_tvs(coordinator.data or []))
-    _process_tvs(coordinator.data or [])
+    if entities:
+        async_add_entities(entities)
 
 
-class FrameArtPowerSwitch(CoordinatorEntity, SwitchEntity):
+class FrameArtPowerSwitch(SwitchEntity):
     """Switch entity to control TV power with art mode.
     
     This combines the TV On button (Wake-on-LAN + art mode) and TV Off button
@@ -106,12 +68,10 @@ class FrameArtPowerSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the power switch entity."""
-        super().__init__(coordinator)
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -268,7 +228,7 @@ class FrameArtPowerSwitch(CoordinatorEntity, SwitchEntity):
             _LOGGER.error(f"Failed to turn off {self._tv_name}: {err}")
 
 
-class FrameArtDynamicBrightnessSwitch(CoordinatorEntity, SwitchEntity):
+class FrameArtDynamicBrightnessSwitch(SwitchEntity):
     """Switch entity to enable/disable auto brightness automation."""
 
     _attr_has_entity_name = True
@@ -278,12 +238,12 @@ class FrameArtDynamicBrightnessSwitch(CoordinatorEntity, SwitchEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the switch entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -323,7 +283,7 @@ class FrameArtDynamicBrightnessSwitch(CoordinatorEntity, SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Enabled auto brightness for {tv_name}")
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable auto brightness."""
@@ -341,10 +301,10 @@ class FrameArtDynamicBrightnessSwitch(CoordinatorEntity, SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Disabled auto brightness for {tv_name}")
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
 
-class FrameArtMotionControlSwitch(CoordinatorEntity, SwitchEntity):
+class FrameArtMotionControlSwitch(SwitchEntity):
     """Switch entity to enable/disable auto motion TV on/off control."""
 
     _attr_has_entity_name = True
@@ -355,12 +315,10 @@ class FrameArtMotionControlSwitch(CoordinatorEntity, SwitchEntity):
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the switch entity."""
-        super().__init__(coordinator)
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -401,7 +359,7 @@ class FrameArtMotionControlSwitch(CoordinatorEntity, SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Enabled auto motion control for {tv_name}")
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable auto motion control."""
@@ -419,4 +377,4 @@ class FrameArtMotionControlSwitch(CoordinatorEntity, SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Disabled auto motion control for {tv_name}")
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()

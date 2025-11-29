@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .config_entry import get_tv_config
 from .const import (
@@ -22,6 +22,10 @@ from .const import (
 )
 from .coordinator import FrameArtCoordinator
 from .activity import FrameArtActivitySensor
+
+# Signal names for event-driven updates
+SIGNAL_SHUFFLE = f"{DOMAIN}_shuffle"  # {SIGNAL_SHUFFLE}_{entry_id}_{tv_id}
+SIGNAL_BRIGHTNESS = f"{DOMAIN}_brightness_adjusted"  # {SIGNAL_BRIGHTNESS}_{entry_id}_{tv_id}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -146,21 +150,21 @@ async def async_setup_entry(
                 continue
             
             # Create all sensors per TV
-            current_artwork_entity = FrameArtTVEntity(coordinator, entry, tv_id)
-            last_image_entity = FrameArtLastShuffleImageEntity(coordinator, entry, tv_id)
-            last_timestamp_entity = FrameArtLastShuffleTimestampEntity(coordinator, entry, tv_id)
-            ip_entity = FrameArtIPEntity(coordinator, entry, tv_id)
-            mac_entity = FrameArtMACEntity(coordinator, entry, tv_id)
-            motion_entity = FrameArtMotionSensorEntity(coordinator, entry, tv_id)
-            light_entity = FrameArtLightSensorEntity(coordinator, entry, tv_id)
+            current_artwork_entity = FrameArtTVEntity(hass, entry, tv_id)
+            last_image_entity = FrameArtLastShuffleImageEntity(hass, entry, tv_id)
+            last_timestamp_entity = FrameArtLastShuffleTimestampEntity(hass, entry, tv_id)
+            ip_entity = FrameArtIPEntity(entry, tv_id)
+            mac_entity = FrameArtMACEntity(entry, tv_id)
+            motion_entity = FrameArtMotionSensorEntity(entry, tv_id)
+            light_entity = FrameArtLightSensorEntity(entry, tv_id)
             # Auto brightness sensors
-            auto_bright_last_entity = FrameArtAutoBrightLastAdjustEntity(coordinator, entry, tv_id)
-            auto_bright_next_entity = FrameArtAutoBrightNextAdjustEntity(coordinator, entry, tv_id)
-            auto_bright_target_entity = FrameArtAutoBrightTargetEntity(hass, coordinator, entry, tv_id)
-            auto_bright_lux_entity = FrameArtAutoBrightSensorLuxEntity(hass, coordinator, entry, tv_id)
+            auto_bright_last_entity = FrameArtAutoBrightLastAdjustEntity(hass, entry, tv_id)
+            auto_bright_next_entity = FrameArtAutoBrightNextAdjustEntity(hass, entry, tv_id)
+            auto_bright_target_entity = FrameArtAutoBrightTargetEntity(hass, entry, tv_id)
+            auto_bright_lux_entity = FrameArtAutoBrightSensorLuxEntity(hass, entry, tv_id)
             # Auto motion sensors
-            auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(hass, coordinator, entry, tv_id)
-            auto_motion_off_at_entity = FrameArtAutoMotionOffAtEntity(hass, coordinator, entry, tv_id)
+            auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(hass, entry, tv_id)
+            auto_motion_off_at_entity = FrameArtAutoMotionOffAtEntity(hass, entry, tv_id)
             # Activity history sensor
             activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
@@ -170,8 +174,10 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
+    # Process initial TVs from coordinator data
     _process_tvs(coordinator.data or [])
 
+    # Listen for new TVs (coordinator still tracks TV list for entity creation)
     @callback
     def _handle_coordinator_update() -> None:
         _process_tvs(coordinator.data or [])
@@ -180,55 +186,64 @@ async def async_setup_entry(
     entry.async_on_unload(unsubscribe)
 
 
-class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
-    """Representation of a Frame TV from metadata."""
+class FrameArtTVEntity(SensorEntity):
+    """Representation of a Frame TV current artwork sensor."""
 
     entity_description = TV_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Current Artwork"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._entry = entry
         self._tv_id = tv_id
-        # Use just tv_id as identifier (no home prefix)
-        identifier = tv_id
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, identifier)},
-            name=self._derive_name(),
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
             manufacturer="Samsung",
             model="Frame TV",
         )
 
-    def _derive_name(self) -> str:
-        tv = self._current_tv
-        if not tv:
-            return "Frame TV"
-        return tv.get(CONF_NAME) or tv.get("name") or "Frame TV"
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            """Handle shuffle signal."""
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
 
-    @property
-    def _current_tv(self) -> dict[str, Any] | None:
-        tvs = self.coordinator.data or []
-        for tv in tvs:
-            if tv.get("id") == self._tv_id:
-                return tv
-        return None
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
         """Return the current artwork."""
-        tv = self._current_tv
-        if not tv:
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
             return None
         
         # Check top-level current_image first (set by button.py)
-        current = tv.get("current_image")
+        current = tv_config.get("current_image")
         if current:
             return str(current)
 
         # Fallback to legacy shuffle structure
-        shuffle = tv.get("shuffle", {})
+        shuffle = tv_config.get("shuffle", {})
         if isinstance(shuffle, dict):
             current = shuffle.get("currentImage") or shuffle.get("current")
             if current:
@@ -241,24 +256,24 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
     @property
     def available(self) -> bool:  # type: ignore[override]
         """Return if entity is available."""
-        return self._current_tv is not None
+        return get_tv_config(self._entry, self._tv_id) is not None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:  # type: ignore[override]
         """Return extra state attributes."""
-        tv = self._current_tv
-        if not tv:
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
             return None
         data = {
-            "ip": tv.get("ip"),
-            "mac": tv.get("mac"),
-            "tags": tv.get("tags", []),
-            "exclude_tags": tv.get("notTags", []),
-            "motion_sensor": tv.get(CONF_MOTION_SENSOR),
-            "light_sensor": tv.get(CONF_LIGHT_SENSOR),
+            "ip": tv_config.get("ip"),
+            "mac": tv_config.get("mac"),
+            "tags": tv_config.get("tags", []),
+            "exclude_tags": tv_config.get("notTags", []),
+            "motion_sensor": tv_config.get(CONF_MOTION_SENSOR),
+            "light_sensor": tv_config.get(CONF_LIGHT_SENSOR),
             "entity_picture": self.entity_picture,
         }
-        shuffle = tv.get("shuffle") or {}
+        shuffle = tv_config.get("shuffle") or {}
         if isinstance(shuffle, dict):
             data["shuffle_frequency"] = shuffle.get(CONF_SHUFFLE_FREQUENCY)
         return data
@@ -277,18 +292,19 @@ class FrameArtTVEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         return "/local/frame_art/library/_black_placeholder.jpg"
 
 
-class FrameArtLastShuffleImageEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtLastShuffleImageEntity(SensorEntity):
     """Sensor entity for last shuffled image filename."""
 
     entity_description = LAST_SHUFFLE_IMAGE_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Last Shuffle Image"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_last_shuffle_image"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -299,6 +315,25 @@ class FrameArtLastShuffleImageEntity(CoordinatorEntity[FrameArtCoordinator], Sen
             manufacturer="Samsung",
             model="Frame TV",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -314,18 +349,19 @@ class FrameArtLastShuffleImageEntity(CoordinatorEntity[FrameArtCoordinator], Sen
         return get_tv_config(self._entry, self._tv_id) is not None
 
 
-class FrameArtLastShuffleTimestampEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtLastShuffleTimestampEntity(SensorEntity):
     """Sensor entity for last shuffle timestamp."""
 
     entity_description = LAST_SHUFFLE_TIMESTAMP_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Last Shuffle Timestamp"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_last_shuffle_timestamp"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -336,6 +372,25 @@ class FrameArtLastShuffleTimestampEntity(CoordinatorEntity[FrameArtCoordinator],
             manufacturer="Samsung",
             model="Frame TV",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
 
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
@@ -364,15 +419,14 @@ class FrameArtLastShuffleTimestampEntity(CoordinatorEntity[FrameArtCoordinator],
         return get_tv_config(self._entry, self._tv_id) is not None
 
 
-class FrameArtIPEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtIPEntity(SensorEntity):
     """Diagnostic sensor for TV IP address."""
 
     entity_description = IP_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "IP Address"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, entry: ConfigEntry, tv_id: str) -> None:
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_ip"
@@ -396,15 +450,14 @@ class FrameArtIPEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         return tv_config.get("ip")
 
 
-class FrameArtMACEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtMACEntity(SensorEntity):
     """Diagnostic sensor for TV MAC address."""
 
     entity_description = MAC_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "MAC Address"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, entry: ConfigEntry, tv_id: str) -> None:
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_mac"
@@ -428,15 +481,14 @@ class FrameArtMACEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
         return tv_config.get("mac")
 
 
-class FrameArtMotionSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtMotionSensorEntity(SensorEntity):
     """Diagnostic sensor for TV motion sensor entity ID."""
 
     entity_description = MOTION_SENSOR_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Motion Sensor"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, entry: ConfigEntry, tv_id: str) -> None:
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_motion_sensor"
@@ -460,15 +512,14 @@ class FrameArtMotionSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorE
         return tv_config.get("motion_sensor")
 
 
-class FrameArtLightSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtLightSensorEntity(SensorEntity):
     """Diagnostic sensor for TV light sensor entity ID."""
 
     entity_description = LIGHT_SENSOR_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Light Source"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, entry: ConfigEntry, tv_id: str) -> None:
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_light_sensor"
@@ -492,18 +543,19 @@ class FrameArtLightSensorEntity(CoordinatorEntity[FrameArtCoordinator], SensorEn
         return tv_config.get("light_sensor")
 
 
-class FrameArtAutoBrightLastAdjustEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtAutoBrightLastAdjustEntity(SensorEntity):
     """Sensor for last auto brightness adjustment timestamp."""
 
     entity_description = AUTO_BRIGHT_LAST_ADJUST_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Bright Last Adjust"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_bright_last"
+        self._unsubscribe_brightness: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -514,6 +566,25 @@ class FrameArtAutoBrightLastAdjustEntity(CoordinatorEntity[FrameArtCoordinator],
             manufacturer="Samsung",
             model="Frame TV",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to brightness signal for updates."""
+        @callback
+        def _brightness_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_BRIGHTNESS}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_brightness = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _brightness_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from brightness signal."""
+        if self._unsubscribe_brightness:
+            self._unsubscribe_brightness()
+            self._unsubscribe_brightness = None
 
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
@@ -536,18 +607,19 @@ class FrameArtAutoBrightLastAdjustEntity(CoordinatorEntity[FrameArtCoordinator],
             return None
 
 
-class FrameArtAutoBrightNextAdjustEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtAutoBrightNextAdjustEntity(SensorEntity):
     """Sensor for next auto brightness adjustment timestamp."""
 
     entity_description = AUTO_BRIGHT_NEXT_ADJUST_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Bright Next Adjust"
 
-    def __init__(self, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_bright_next"
+        self._unsubscribe_brightness: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -558,6 +630,25 @@ class FrameArtAutoBrightNextAdjustEntity(CoordinatorEntity[FrameArtCoordinator],
             manufacturer="Samsung",
             model="Frame TV",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to brightness signal for updates."""
+        @callback
+        def _brightness_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_BRIGHTNESS}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_brightness = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _brightness_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from brightness signal."""
+        if self._unsubscribe_brightness:
+            self._unsubscribe_brightness()
+            self._unsubscribe_brightness = None
 
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
@@ -571,7 +662,7 @@ class FrameArtAutoBrightNextAdjustEntity(CoordinatorEntity[FrameArtCoordinator],
             return None
         
         # Get the actual scheduled next time from hass.data (set by the timer)
-        data = self.coordinator.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         next_times = data.get("auto_brightness_next_times", {})
         next_time = next_times.get(self._tv_id)
         
@@ -583,15 +674,14 @@ class FrameArtAutoBrightNextAdjustEntity(CoordinatorEntity[FrameArtCoordinator],
         return None
 
 
-class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtAutoBrightTargetEntity(SensorEntity):
     """Sensor for calculated target brightness based on current lux."""
 
     entity_description = AUTO_BRIGHT_TARGET_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Bright Target"
 
-    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -610,8 +700,6 @@ class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], Sen
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to light sensor state changes for real-time updates."""
-        await super().async_added_to_hass()
-        
         tv_config = get_tv_config(self._entry, self._tv_id)
         light_sensor = tv_config.get("light_sensor") if tv_config else None
         
@@ -634,7 +722,6 @@ class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], Sen
         if self._unsubscribe_light_sensor:
             self._unsubscribe_light_sensor()
             self._unsubscribe_light_sensor = None
-        await super().async_will_remove_from_hass()
 
     @property
     def native_value(self) -> int | None:  # type: ignore[override]
@@ -677,15 +764,14 @@ class FrameArtAutoBrightTargetEntity(CoordinatorEntity[FrameArtCoordinator], Sen
         return max(min_brightness, min(max_brightness, target))
 
 
-class FrameArtAutoBrightSensorLuxEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtAutoBrightSensorLuxEntity(SensorEntity):
     """Sensor that mirrors the configured light sensor's lux value."""
 
     entity_description = AUTO_BRIGHT_SENSOR_LUX_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Bright Sensor Lux"
 
-    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -704,8 +790,6 @@ class FrameArtAutoBrightSensorLuxEntity(CoordinatorEntity[FrameArtCoordinator], 
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to light sensor state changes for real-time updates."""
-        await super().async_added_to_hass()
-        
         tv_config = get_tv_config(self._entry, self._tv_id)
         light_sensor = tv_config.get("light_sensor") if tv_config else None
         
@@ -728,7 +812,6 @@ class FrameArtAutoBrightSensorLuxEntity(CoordinatorEntity[FrameArtCoordinator], 
         if self._unsubscribe_light_sensor:
             self._unsubscribe_light_sensor()
             self._unsubscribe_light_sensor = None
-        await super().async_will_remove_from_hass()
 
     @property
     def native_value(self) -> float | None:  # type: ignore[override]
@@ -753,15 +836,14 @@ class FrameArtAutoBrightSensorLuxEntity(CoordinatorEntity[FrameArtCoordinator], 
             return None
 
 
-class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtAutoMotionLastMotionEntity(SensorEntity):
     """Sensor for last detected motion timestamp."""
 
     entity_description = AUTO_MOTION_LAST_MOTION_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Motion Last Motion"
 
-    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -781,10 +863,6 @@ class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator],
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to motion detected signals for real-time updates."""
-        await super().async_added_to_hass()
-        
-        from homeassistant.helpers.dispatcher import async_dispatcher_connect
-        
         @callback
         def _motion_detected() -> None:
             """Handle motion detected signal."""
@@ -804,7 +882,6 @@ class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator],
         if self._unsubscribe_motion_sensor:
             self._unsubscribe_motion_sensor()
             self._unsubscribe_motion_sensor = None
-        await super().async_will_remove_from_hass()
 
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
@@ -827,15 +904,14 @@ class FrameArtAutoMotionLastMotionEntity(CoordinatorEntity[FrameArtCoordinator],
             return None
 
 
-class FrameArtAutoMotionOffAtEntity(CoordinatorEntity[FrameArtCoordinator], SensorEntity):
+class FrameArtAutoMotionOffAtEntity(SensorEntity):
     """Sensor for when TV will turn off due to no motion."""
 
     entity_description = AUTO_MOTION_OFF_AT_DESCRIPTION
     _attr_has_entity_name = True
     _attr_name = "Auto-Motion Off At"
 
-    def __init__(self, hass: HomeAssistant, coordinator: FrameArtCoordinator, entry: ConfigEntry, tv_id: str) -> None:
-        super().__init__(coordinator)
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -854,10 +930,6 @@ class FrameArtAutoMotionOffAtEntity(CoordinatorEntity[FrameArtCoordinator], Sens
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to off time update signals."""
-        await super().async_added_to_hass()
-        
-        from homeassistant.helpers.dispatcher import async_dispatcher_connect
-        
         # Capture self references for use in callback
         entity = self
         tv_id = self._tv_id
@@ -880,7 +952,6 @@ class FrameArtAutoMotionOffAtEntity(CoordinatorEntity[FrameArtCoordinator], Sens
         if self._unsubscribe_dispatcher:
             self._unsubscribe_dispatcher()
             self._unsubscribe_dispatcher = None
-        await super().async_will_remove_from_hass()
 
     @property
     def available(self) -> bool:
