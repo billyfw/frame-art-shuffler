@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -101,6 +101,7 @@ class FrameArtPowerSwitch(CoordinatorEntity, SwitchEntity):
     _attr_has_entity_name = True
     _attr_icon = "mdi:television"
     _attr_name = "Power"
+    _attr_device_class = SwitchDeviceClass.SWITCH  # Standard toggle switch
 
     def __init__(
         self,
@@ -134,12 +135,13 @@ class FrameArtPowerSwitch(CoordinatorEntity, SwitchEntity):
         )
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool:
         """Return true if the TV screen is on."""
         data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         status_cache = data.get("tv_status_cache", {})
         tv_status = status_cache.get(self._tv_id, {})
-        return tv_status.get("screen_on")
+        # Return False if unknown - prevents "unknown" state lightning bolt icon
+        return tv_status.get("screen_on") or False
 
     async def _async_poll_and_update_state(self, delay: float) -> None:
         """Poll TV state after a delay and update the cache.
