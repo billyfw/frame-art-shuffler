@@ -597,6 +597,12 @@ if _HA_AVAILABLE:
                 _LOGGER.debug(f"Auto motion: Could not check screen state for {tv_name}: {err}")
                 # Continue to wake anyway - WOL is harmless if TV is already on
 
+            power_on_in_progress = hass.data[DOMAIN][entry.entry_id].setdefault("power_on_in_progress", {})
+
+            if power_on_in_progress.get(tv_id):
+                _LOGGER.debug(f"Auto motion: {tv_name} power-on already in progress, skipping")
+                return
+
             # Optimistically start the off timer so UI updates immediately
             # (The 15s wake sequence would otherwise leave the sensor 'unknown' for too long)
             start_motion_off_timer(tv_id)
@@ -604,6 +610,7 @@ if _HA_AVAILABLE:
             # Turn on TV via Wake-on-LAN
             if mac:
                 try:
+                    power_on_in_progress[tv_id] = True
                     _LOGGER.info(f"Auto motion: Waking {tv_name} ({ip}) via WOL")
                     await hass.async_add_executor_job(frame_tv.tv_on, ip, mac)
                     _LOGGER.info(f"Auto motion: {tv_name} wake sequence complete")
@@ -621,6 +628,8 @@ if _HA_AVAILABLE:
                     )
                     # If wake failed, cancel the timer we just started
                     cancel_motion_off_timer(tv_id)
+                finally:
+                    power_on_in_progress.pop(tv_id, None)
             else:
                 _LOGGER.warning(f"Auto motion: No MAC address for {tv_name}, cannot wake")
                 cancel_motion_off_timer(tv_id)
