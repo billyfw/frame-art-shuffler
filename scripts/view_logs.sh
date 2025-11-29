@@ -33,9 +33,9 @@ HA_HOST="ha"
 HA_USER=""
 MODE="follow"
 TAIL_LINES=20
-PRETTY=false
-LOG_LEVEL=""
-TRUNCATE_WIDTH=0
+PRETTY=true
+LOG_LEVEL="INFO"
+TRUNCATE_WIDTH=200
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
