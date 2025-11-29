@@ -12,11 +12,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
-from .coordinator import FrameArtCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,49 +25,31 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Frame Art text entities for a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: FrameArtCoordinator = data["coordinator"]
+    # Read TV configs directly from entry (stored as dict with tv_id as key)
+    tvs_dict = entry.data.get("tvs", {})
+    
+    entities: list[TextEntity] = []
+    for tv_id, tv in tvs_dict.items():
+        if not tv_id:
+            continue
 
-    tracked: dict[str, list[TextEntity]] = {}
+        entities.extend([
+            FrameArtTagsEntity(hass, entry, tv_id),
+            FrameArtExcludeTagsEntity(hass, entry, tv_id),
+        ])
 
-    @callback
-    def _process_tvs(tvs: list[dict[str, Any]]) -> None:
-        new_entities: list[TextEntity] = []
-        current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
-
-        # Remove entities for TVs that no longer exist
-        for tv_id in list(tracked.keys()):
-            if tv_id not in current_tv_ids:
-                tracked.pop(tv_id)
-
-        # Add entities for new TVs
-        for tv in tvs:
-            tv_id = tv.get("id")
-            if not tv_id or tv_id in tracked:
-                continue
-
-            entities = [
-                FrameArtTagsEntity(coordinator, entry, tv_id),
-                FrameArtExcludeTagsEntity(coordinator, entry, tv_id),
-            ]
-            tracked[tv_id] = entities
-            new_entities.extend(entities)
-
-        if new_entities:
-            async_add_entities(new_entities)
-
-    coordinator.async_add_listener(lambda: _process_tvs(coordinator.data or []))
-    _process_tvs(coordinator.data or [])
+    if entities:
+        async_add_entities(entities)
 
 
-class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
+class FrameArtTextEntityBase(TextEntity):
     """Base class for Frame Art text entities."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
         key: str,
@@ -78,7 +58,7 @@ class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
         pattern: str | None = None,
     ) -> None:
         """Initialize the text entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._key = key
@@ -144,8 +124,8 @@ class FrameArtTextEntityBase(CoordinatorEntity, TextEntity):
             tv_name,
         )
         
-        # Refresh coordinator
-        await self.coordinator.async_request_refresh()
+        # Update UI to reflect new value
+        self.async_write_ha_state()
 
 
 class FrameArtTagsEntity(FrameArtTextEntityBase):
@@ -155,13 +135,13 @@ class FrameArtTagsEntity(FrameArtTextEntityBase):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the tags entity."""
         super().__init__(
-            coordinator,
+            hass,
             entry,
             tv_id,
             "tags",
@@ -175,13 +155,13 @@ class FrameArtExcludeTagsEntity(FrameArtTextEntityBase):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the exclude tags entity."""
         super().__init__(
-            coordinator,
+            hass,
             entry,
             tv_id,
             "exclude_tags",

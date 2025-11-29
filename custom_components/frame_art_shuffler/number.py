@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
-from .coordinator import FrameArtCoordinator
 from .frame_tv import FrameArtError, set_tv_brightness
 from .activity import log_activity
 
@@ -29,109 +28,29 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Frame Art number entities for a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: FrameArtCoordinator = data["coordinator"]
+    # Read TV configs directly from entry (stored as dict with tv_id as key)
+    tvs_dict = entry.data.get("tvs", {})
+    
+    entities: list[NumberEntity] = []
+    for tv_id, tv in tvs_dict.items():
+        if not tv_id:
+            continue
 
-    tracked_frequency: dict[str, FrameArtShuffleFrequencyEntity] = {}
-    tracked_brightness: dict[str, FrameArtBrightnessEntity] = {}
-    tracked_min_lux: dict[str, FrameArtMinLuxEntity] = {}
-    tracked_max_lux: dict[str, FrameArtMaxLuxEntity] = {}
-    tracked_min_brightness: dict[str, FrameArtMinBrightnessEntity] = {}
-    tracked_max_brightness: dict[str, FrameArtMaxBrightnessEntity] = {}
-    tracked_motion_off_delay: dict[str, FrameArtMotionOffDelayEntity] = {}
+        entities.extend([
+            FrameArtShuffleFrequencyEntity(hass, entry, tv_id),
+            FrameArtBrightnessEntity(hass, entry, tv_id),
+            FrameArtMinLuxEntity(hass, entry, tv_id),
+            FrameArtMaxLuxEntity(hass, entry, tv_id),
+            FrameArtMinBrightnessEntity(hass, entry, tv_id),
+            FrameArtMaxBrightnessEntity(hass, entry, tv_id),
+            FrameArtMotionOffDelayEntity(hass, entry, tv_id),
+        ])
 
-    @callback
-    def _process_tvs(tvs: list[dict[str, Any]]) -> None:
-        new_entities: list[NumberEntity] = []
-        current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
-
-        # Remove entities for TVs that no longer exist
-        for tv_id in list(tracked_frequency.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_frequency.pop(tv_id)
-        for tv_id in list(tracked_brightness.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_brightness.pop(tv_id)
-        for tv_id in list(tracked_min_lux.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_min_lux.pop(tv_id)
-        for tv_id in list(tracked_max_lux.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_max_lux.pop(tv_id)
-        for tv_id in list(tracked_min_brightness.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_min_brightness.pop(tv_id)
-        for tv_id in list(tracked_max_brightness.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_max_brightness.pop(tv_id)
-        for tv_id in list(tracked_motion_off_delay.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_motion_off_delay.pop(tv_id)
-
-        # Add entities for new TVs
-        for tv in tvs:
-            tv_id = tv.get("id")
-            if not tv_id:
-                continue
-
-            # Add shuffle frequency entity
-            if tv_id not in tracked_frequency:
-                entity = FrameArtShuffleFrequencyEntity(
-                    coordinator,
-                    entry,
-                    tv_id,
-                )
-                tracked_frequency[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add brightness entity
-            if tv_id not in tracked_brightness:
-                entity = FrameArtBrightnessEntity(
-                    coordinator,
-                    entry,
-                    tv_id,
-                )
-                tracked_brightness[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add min lux entity
-            if tv_id not in tracked_min_lux:
-                entity = FrameArtMinLuxEntity(coordinator, entry, tv_id)
-                tracked_min_lux[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add max lux entity
-            if tv_id not in tracked_max_lux:
-                entity = FrameArtMaxLuxEntity(coordinator, entry, tv_id)
-                tracked_max_lux[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add min brightness entity
-            if tv_id not in tracked_min_brightness:
-                entity = FrameArtMinBrightnessEntity(coordinator, entry, tv_id)
-                tracked_min_brightness[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add max brightness entity
-            if tv_id not in tracked_max_brightness:
-                entity = FrameArtMaxBrightnessEntity(coordinator, entry, tv_id)
-                tracked_max_brightness[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add motion off delay entity
-            if tv_id not in tracked_motion_off_delay:
-                entity = FrameArtMotionOffDelayEntity(coordinator, entry, tv_id)
-                tracked_motion_off_delay[tv_id] = entity
-                new_entities.append(entity)
-
-        if new_entities:
-            async_add_entities(new_entities)
-
-    coordinator.async_add_listener(lambda: _process_tvs(coordinator.data or []))
-    _process_tvs(coordinator.data or [])
+    if entities:
+        async_add_entities(entities)
 
 
-class FrameArtShuffleFrequencyEntity(CoordinatorEntity, NumberEntity):
+class FrameArtShuffleFrequencyEntity(NumberEntity):
     """Number entity for TV shuffle frequency in minutes."""
 
     _attr_has_entity_name = True
@@ -146,12 +65,12 @@ class FrameArtShuffleFrequencyEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -198,13 +117,11 @@ class FrameArtShuffleFrequencyEntity(CoordinatorEntity, NumberEntity):
             tv_name,
         )
         
-        # TODO: Reschedule shuffle timer when scheduler is implemented
-        
-        # Refresh coordinator
-        await self.coordinator.async_request_refresh()
+        # Update UI to reflect new value
+        self.async_write_ha_state()
 
 
-class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
+class FrameArtBrightnessEntity(NumberEntity):
     """Number entity for TV art mode brightness (1-10)."""
 
     _attr_has_entity_name = True
@@ -217,16 +134,17 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the brightness number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
         self._last_known_value: float | None = None
         self._setting_brightness = False
+        self._unsubscribe_brightness: Callable[[], None] | None = None
 
         # Get TV details from config entry
         tv_config = get_tv_config(entry, tv_id)
@@ -240,11 +158,30 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
             model="Frame TV",
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to brightness adjusted signals for real-time updates."""
+        @callback
+        def _brightness_adjusted() -> None:
+            """Handle brightness adjusted signal from auto-brightness."""
+            self.async_write_ha_state()
+        
+        signal = f"{DOMAIN}_brightness_adjusted_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_brightness = async_dispatcher_connect(
+            self.hass,
+            signal,
+            _brightness_adjusted,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from brightness adjusted signals."""
+        if self._unsubscribe_brightness:
+            self._unsubscribe_brightness()
+            self._unsubscribe_brightness = None
+
     @property
     def native_value(self) -> float | None:
         """Return the current brightness value from cache, config, or default."""
         # Check hass.data brightness cache first (updated by both auto and manual)
-        from .const import DOMAIN
         data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         brightness_cache = data.get("brightness_cache", {})
         cached_brightness = brightness_cache.get(self._tv_id)
@@ -360,7 +297,7 @@ class FrameArtBrightnessEntity(CoordinatorEntity, NumberEntity):
             self.async_write_ha_state()
 
 
-class FrameArtMinLuxEntity(CoordinatorEntity, NumberEntity):
+class FrameArtMinLuxEntity(NumberEntity):
     """Number entity for min lux configuration (darkest room value)."""
 
     _attr_has_entity_name = True
@@ -375,12 +312,12 @@ class FrameArtMinLuxEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -411,10 +348,10 @@ class FrameArtMinLuxEntity(CoordinatorEntity, NumberEntity):
             self._tv_id,
             {"min_lux": int(value)},
         )
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
 
-class FrameArtMaxLuxEntity(CoordinatorEntity, NumberEntity):
+class FrameArtMaxLuxEntity(NumberEntity):
     """Number entity for max lux configuration (brightest room value)."""
 
     _attr_has_entity_name = True
@@ -429,12 +366,12 @@ class FrameArtMaxLuxEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -465,10 +402,10 @@ class FrameArtMaxLuxEntity(CoordinatorEntity, NumberEntity):
             self._tv_id,
             {"max_lux": int(value)},
         )
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
 
-class FrameArtMinBrightnessEntity(CoordinatorEntity, NumberEntity):
+class FrameArtMinBrightnessEntity(NumberEntity):
     """Number entity for min auto brightness (brightness at darkest)."""
 
     _attr_has_entity_name = True
@@ -482,12 +419,12 @@ class FrameArtMinBrightnessEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -518,10 +455,10 @@ class FrameArtMinBrightnessEntity(CoordinatorEntity, NumberEntity):
             self._tv_id,
             {"min_brightness": int(value)},
         )
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
 
-class FrameArtMaxBrightnessEntity(CoordinatorEntity, NumberEntity):
+class FrameArtMaxBrightnessEntity(NumberEntity):
     """Number entity for max auto brightness (brightness at brightest)."""
 
     _attr_has_entity_name = True
@@ -535,12 +472,12 @@ class FrameArtMaxBrightnessEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -571,10 +508,10 @@ class FrameArtMaxBrightnessEntity(CoordinatorEntity, NumberEntity):
             self._tv_id,
             {"max_brightness": int(value)},
         )
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()
 
 
-class FrameArtMotionOffDelayEntity(CoordinatorEntity, NumberEntity):
+class FrameArtMotionOffDelayEntity(NumberEntity):
     """Number entity for auto-motion off delay in minutes."""
 
     _attr_has_entity_name = True
@@ -589,12 +526,12 @@ class FrameArtMotionOffDelayEntity(CoordinatorEntity, NumberEntity):
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the number entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -625,4 +562,4 @@ class FrameArtMotionOffDelayEntity(CoordinatorEntity, NumberEntity):
             self._tv_id,
             {"motion_off_delay": int(value)},
         )
-        await self.coordinator.async_request_refresh()
+        self.async_write_ha_state()

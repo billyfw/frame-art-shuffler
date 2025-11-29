@@ -396,8 +396,10 @@ if _HA_AVAILABLE:
                 brightness_cache = hass.data[DOMAIN][entry.entry_id].setdefault("brightness_cache", {})
                 brightness_cache[tv_id] = target_brightness
                 
-                # Trigger coordinator refresh so Brightness entity updates state (for logbook)
-                await coordinator.async_request_refresh()
+                # Send brightness signal so sensors update
+                from homeassistant.helpers.dispatcher import async_dispatcher_send
+                signal = f"{DOMAIN}_brightness_adjusted_{entry.entry_id}_{tv_id}"
+                async_dispatcher_send(hass, signal)
                 
                 _LOGGER.info(
                     f"Auto brightness: {tv_name} successfully set to {target_brightness} "

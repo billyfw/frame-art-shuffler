@@ -14,13 +14,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers import device_registry as dr
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
-from .coordinator import FrameArtCoordinator
 from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
 from .activity import log_activity
 
@@ -33,109 +32,30 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Frame Art button entities for a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: FrameArtCoordinator = data["coordinator"]
+    # Read TV configs directly from entry (stored as dict with tv_id as key)
+    tvs_dict = entry.data.get("tvs", {})
+    
+    entities: list[ButtonEntity] = []
+    for tv_id, tv in tvs_dict.items():
+        if not tv_id:
+            continue
 
-    tracked_art_mode: dict[str, FrameArtArtModeButton] = {}
-    tracked_on_art: dict[str, FrameArtOnArtModeButton] = {}
-    tracked_shuffle: dict[str, FrameArtShuffleButton] = {}
-    tracked_clear_token: dict[str, FrameArtClearTokenButton] = {}
-    tracked_calibrate_dark: dict[str, FrameArtCalibrateDarkButton] = {}
-    tracked_calibrate_bright: dict[str, FrameArtCalibrateBrightButton] = {}
-    tracked_trigger_brightness: dict[str, FrameArtTriggerBrightnessButton] = {}
-    tracked_trigger_motion_off: dict[str, FrameArtTriggerMotionOffButton] = {}
+        entities.extend([
+            FrameArtArtModeButton(hass, entry, tv_id),
+            FrameArtOnArtModeButton(hass, entry, tv_id),
+            FrameArtShuffleButton(hass, entry, tv_id),
+            FrameArtClearTokenButton(hass, entry, tv_id),
+            FrameArtCalibrateDarkButton(hass, entry, tv_id),
+            FrameArtCalibrateBrightButton(hass, entry, tv_id),
+            FrameArtTriggerBrightnessButton(hass, entry, tv_id),
+            FrameArtTriggerMotionOffButton(hass, entry, tv_id),
+        ])
 
-    @callback
-    def _process_tvs(tvs: list[dict[str, Any]]) -> None:
-        new_entities: list[ButtonEntity] = []
-        current_tv_ids = {tv.get("id") for tv in tvs if tv.get("id")}
+    if entities:
+        async_add_entities(entities)
 
-        # Remove entities for TVs that no longer exist
-        for tv_id in list(tracked_art_mode.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_art_mode.pop(tv_id)
-        for tv_id in list(tracked_on_art.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_on_art.pop(tv_id)
-        for tv_id in list(tracked_shuffle.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_shuffle.pop(tv_id)
-        for tv_id in list(tracked_clear_token.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_clear_token.pop(tv_id)
-        for tv_id in list(tracked_calibrate_dark.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_calibrate_dark.pop(tv_id)
-        for tv_id in list(tracked_calibrate_bright.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_calibrate_bright.pop(tv_id)
-        for tv_id in list(tracked_trigger_brightness.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_trigger_brightness.pop(tv_id)
-        for tv_id in list(tracked_trigger_motion_off.keys()):
-            if tv_id not in current_tv_ids:
-                tracked_trigger_motion_off.pop(tv_id)
 
-        # Add entities for new TVs
-        for tv in tvs:
-            tv_id = tv.get("id")
-            if not tv_id:
-                continue
-            
-            # Add Art Mode button
-            if tv_id not in tracked_art_mode:
-                entity = FrameArtArtModeButton(coordinator, entry, tv_id)
-                tracked_art_mode[tv_id] = entity
-                new_entities.append(entity)
-            
-            # Add On+Art Mode button
-            if tv_id not in tracked_on_art:
-                entity = FrameArtOnArtModeButton(coordinator, entry, tv_id)
-                tracked_on_art[tv_id] = entity
-                new_entities.append(entity)
-            
-            # Add Shuffle button
-            if tv_id not in tracked_shuffle:
-                entity = FrameArtShuffleButton(coordinator, entry, tv_id)
-                tracked_shuffle[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add Clear Token button
-            if tv_id not in tracked_clear_token:
-                entity = FrameArtClearTokenButton(coordinator, entry, tv_id)
-                tracked_clear_token[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add Calibrate Dark button
-            if tv_id not in tracked_calibrate_dark:
-                entity = FrameArtCalibrateDarkButton(coordinator, entry, tv_id)
-                tracked_calibrate_dark[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add Calibrate Bright button
-            if tv_id not in tracked_calibrate_bright:
-                entity = FrameArtCalibrateBrightButton(coordinator, entry, tv_id)
-                tracked_calibrate_bright[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add Trigger Brightness button
-            if tv_id not in tracked_trigger_brightness:
-                entity = FrameArtTriggerBrightnessButton(coordinator, entry, tv_id)
-                tracked_trigger_brightness[tv_id] = entity
-                new_entities.append(entity)
-
-            # Add Trigger Motion Off button
-            if tv_id not in tracked_trigger_motion_off:
-                entity = FrameArtTriggerMotionOffButton(hass, coordinator, entry, tv_id)
-                tracked_trigger_motion_off[tv_id] = entity
-                new_entities.append(entity)
-
-        if new_entities:
-            async_add_entities(new_entities)
-
-    coordinator.async_add_listener(lambda: _process_tvs(coordinator.data or []))
-    _process_tvs(coordinator.data or [])
-class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtRemoveTVButton(ButtonEntity):
     """Button entity to remove a TV."""
 
     _attr_has_entity_name = True
@@ -145,12 +65,12 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -197,7 +117,7 @@ class FrameArtRemoveTVButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntit
         _LOGGER.info(f"Removed TV {self._tv_name} from config entry")
 
 
-class FrameArtArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtArtModeButton(ButtonEntity):
     """Button entity to switch TV to art mode."""
 
     _attr_has_entity_name = True
@@ -206,12 +126,12 @@ class FrameArtArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -245,7 +165,7 @@ class FrameArtArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
             _LOGGER.error(f"Failed to switch {self._tv_name} to art mode: {err}")
 
 
-class FrameArtOnArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtOnArtModeButton(ButtonEntity):
     """Button entity to turn TV on and then switch to art mode."""
 
     _attr_has_entity_name = True
@@ -254,12 +174,12 @@ class FrameArtOnArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEnti
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -301,7 +221,7 @@ class FrameArtOnArtModeButton(CoordinatorEntity[FrameArtCoordinator], ButtonEnti
             _LOGGER.error(f"Failed to turn on and switch {self._tv_name} to art mode: {err}")
 
 
-class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtShuffleButton(ButtonEntity):
     """Button entity to shuffle to a random image."""
 
     _attr_has_entity_name = True
@@ -310,12 +230,12 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the shuffle button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -417,7 +337,20 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
             )
 
             # Update current_image and last_shuffle_timestamp in config
-            await self.coordinator.async_set_active_image(self._tv_id, image_filename, is_shuffle=True)
+            from datetime import datetime, timezone
+            update_tv_config(
+                self.hass,
+                self._entry,
+                self._tv_id,
+                {
+                    "current_image": image_filename,
+                    "last_shuffle_timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            
+            # Send shuffle signal so sensors update
+            signal = f"{DOMAIN}_shuffle_{self._entry.entry_id}_{self._tv_id}"
+            async_dispatcher_send(self.hass, signal)
 
         except FrameArtError as err:
             _LOGGER.error(f"Failed to upload {image_filename} to {self._tv_name}: {err}")
@@ -514,7 +447,7 @@ class FrameArtShuffleButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity
         return selected
 
 
-class FrameArtClearTokenButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtClearTokenButton(ButtonEntity):
     """Button entity to clear the saved token for a TV."""
 
     _attr_has_entity_name = True
@@ -524,12 +457,12 @@ class FrameArtClearTokenButton(CoordinatorEntity[FrameArtCoordinator], ButtonEnt
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -563,7 +496,7 @@ class FrameArtClearTokenButton(CoordinatorEntity[FrameArtCoordinator], ButtonEnt
             _LOGGER.error(f"Failed to clear token for {self._tv_name}: {err}")
 
 
-class FrameArtCalibrateDarkButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtCalibrateDarkButton(ButtonEntity):
     """Button entity to calibrate min lux (set to current sensor value)."""
 
     _attr_has_entity_name = True
@@ -573,12 +506,12 @@ class FrameArtCalibrateDarkButton(CoordinatorEntity[FrameArtCoordinator], Button
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -623,10 +556,9 @@ class FrameArtCalibrateDarkButton(CoordinatorEntity[FrameArtCoordinator], Button
             {"min_lux": int(current_lux)},
         )
         _LOGGER.info(f"Calibrated min_lux for {self._tv_name} to {int(current_lux)}")
-        await self.coordinator.async_request_refresh()
 
 
-class FrameArtCalibrateBrightButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtCalibrateBrightButton(ButtonEntity):
     """Button entity to calibrate max lux (set to current sensor value)."""
 
     _attr_has_entity_name = True
@@ -636,12 +568,12 @@ class FrameArtCalibrateBrightButton(CoordinatorEntity[FrameArtCoordinator], Butt
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -686,10 +618,9 @@ class FrameArtCalibrateBrightButton(CoordinatorEntity[FrameArtCoordinator], Butt
             {"max_lux": int(current_lux)},
         )
         _LOGGER.info(f"Calibrated max_lux for {self._tv_name} to {int(current_lux)}")
-        await self.coordinator.async_request_refresh()
 
 
-class FrameArtTriggerBrightnessButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtTriggerBrightnessButton(ButtonEntity):
     """Button entity to trigger auto brightness adjustment now."""
 
     _attr_has_entity_name = True
@@ -699,12 +630,12 @@ class FrameArtTriggerBrightnessButton(CoordinatorEntity[FrameArtCoordinator], Bu
 
     def __init__(
         self,
-        coordinator: FrameArtCoordinator,
+        hass: HomeAssistant,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
+        self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
 
@@ -738,11 +669,9 @@ class FrameArtTriggerBrightnessButton(CoordinatorEntity[FrameArtCoordinator], Bu
             _LOGGER.info(f"Triggered auto brightness adjustment for {self._tv_name}")
         else:
             _LOGGER.warning(f"Auto brightness adjustment failed for {self._tv_name}")
-        
-        await self.coordinator.async_request_refresh()
 
 
-class FrameArtTriggerMotionOffButton(CoordinatorEntity[FrameArtCoordinator], ButtonEntity):  # type: ignore[misc]
+class FrameArtTriggerMotionOffButton(ButtonEntity):
     """Button entity to trigger auto motion off (turn TV off) now."""
 
     _attr_has_entity_name = True
@@ -753,12 +682,10 @@ class FrameArtTriggerMotionOffButton(CoordinatorEntity[FrameArtCoordinator], But
     def __init__(
         self,
         hass: HomeAssistant,
-        coordinator: FrameArtCoordinator,
         entry: ConfigEntry,
         tv_id: str,
     ) -> None:
         """Initialize the button entity."""
-        super().__init__(coordinator)
         self._hass = hass
         self._tv_id = tv_id
         self._entry = entry
@@ -803,5 +730,3 @@ class FrameArtTriggerMotionOffButton(CoordinatorEntity[FrameArtCoordinator], But
             _LOGGER.info(f"Auto motion trigger: {self._tv_name} turned off successfully")
         except Exception as err:
             _LOGGER.warning(f"Auto motion trigger: Failed to turn off {self._tv_name}: {err}")
-
-        await self.coordinator.async_request_refresh()

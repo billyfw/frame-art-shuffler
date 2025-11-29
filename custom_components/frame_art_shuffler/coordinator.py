@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import logging
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class FrameArtCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
-    """Coordinator that keeps track of all TVs."""
+    """Coordinator that keeps track of all TVs.
+    
+    Note: update_interval is None because we use event-driven updates.
+    Entities update via dispatcher signals rather than periodic polling.
+    The coordinator is retained for potential future TV discovery features.
+    """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, metadata_path: Path) -> None:
         self._entry = entry
@@ -26,7 +30,7 @@ class FrameArtCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             hass,
             _LOGGER,
             name="Frame Art Shuffler",
-            update_interval=timedelta(minutes=5),
+            update_interval=None,  # Event-driven, no periodic polling
         )
 
     @property
