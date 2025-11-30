@@ -63,14 +63,13 @@ if _HA_AVAILABLE:
     from .const import (
         CONF_ENABLE_AUTO_SHUFFLE,
         CONF_METADATA_PATH,
-        CONF_NEXT_SHUFFLE_TIME,
         CONF_SHUFFLE_FREQUENCY,
         CONF_TOKEN_DIR,
         DOMAIN,
         SIGNAL_AUTO_SHUFFLE_NEXT,
     )
     from .coordinator import FrameArtCoordinator
-    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config, update_tv_config
+    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
     from .metadata import MetadataStore
@@ -532,26 +531,21 @@ if _HA_AVAILABLE:
         # ===== AUTO SHUFFLE MANAGEMENT =====
         auto_shuffle_timers: dict[str, Callable[[], None]] = {}
         auto_shuffle_next_times = hass.data[DOMAIN][entry.entry_id]["auto_shuffle_next_times"]
-        _drift_tolerance = timedelta(seconds=30)
 
-        def _set_auto_shuffle_next_time(tv_id: str, next_time: datetime | None, persist: bool = True) -> None:
+        def _set_auto_shuffle_next_time(tv_id: str, next_time: datetime | None) -> None:
             if next_time is None:
                 auto_shuffle_next_times.pop(tv_id, None)
-                if persist:
-                    update_tv_config(hass, entry, tv_id, {CONF_NEXT_SHUFFLE_TIME: None})
             else:
                 auto_shuffle_next_times[tv_id] = next_time
-                if persist:
-                    update_tv_config(hass, entry, tv_id, {CONF_NEXT_SHUFFLE_TIME: next_time.isoformat()})
             signal = f"{SIGNAL_AUTO_SHUFFLE_NEXT}_{entry.entry_id}_{tv_id}"
             async_dispatcher_send(hass, signal)
 
-        def cancel_auto_shuffle_timer(tv_id: str, *, persist: bool = True) -> None:
+        def cancel_auto_shuffle_timer(tv_id: str) -> None:
             """Cancel the auto shuffle timer for a specific TV."""
             if tv_id in auto_shuffle_timers:
                 auto_shuffle_timers[tv_id]()
                 del auto_shuffle_timers[tv_id]
-            _set_auto_shuffle_next_time(tv_id, None, persist=persist)
+            _set_auto_shuffle_next_time(tv_id, None)
 
         async def async_run_auto_shuffle(tv_id: str) -> None:
             """Execute an auto shuffle cycle for a TV."""
@@ -602,56 +596,13 @@ if _HA_AVAILABLE:
                 cancel_auto_shuffle_timer(tv_id)
                 return
 
-            # Stop any existing timer but keep persisted next time for restoration
-            cancel_auto_shuffle_timer(tv_id, persist=False)
+            cancel_auto_shuffle_timer(tv_id)
 
             frequency_minutes = int(tv_config.get(CONF_SHUFFLE_FREQUENCY, 60) or 60)
             if frequency_minutes <= 0:
                 frequency_minutes = 1
             interval = timedelta(minutes=frequency_minutes)
             tv_name = tv_config.get("name", tv_id)
-
-            # Try to restore persisted next shuffle time
-            now = datetime.now(timezone.utc)
-            persisted_next_str = tv_config.get(CONF_NEXT_SHUFFLE_TIME)
-            _LOGGER.debug(
-                "Auto shuffle (%s): Checking persisted time, value='%s'",
-                tv_name, persisted_next_str
-            )
-            if persisted_next_str:
-                try:
-                    persisted_next = datetime.fromisoformat(persisted_next_str)
-                    if persisted_next > now:
-                        # Future time - use it
-                        next_time = persisted_next
-                        _LOGGER.debug(
-                            "Auto shuffle (%s): Restored next shuffle time %s",
-                            tv_name, next_time.isoformat()
-                        )
-                    else:
-                        # Past time - schedule fresh and log activity
-                        next_time = now + interval
-                        log_activity(
-                            hass,
-                            entry.entry_id,
-                            tv_id,
-                            "auto_shuffle_rescheduled",
-                            f"Missed shuffle during restart; next in {frequency_minutes} min",
-                        )
-                        _LOGGER.info(
-                            "Auto shuffle (%s): Persisted time was in past, rescheduling to %s",
-                            tv_name, next_time.isoformat()
-                        )
-                except (ValueError, TypeError) as err:
-                    _LOGGER.warning(
-                        "Auto shuffle (%s): Failed to parse persisted time '%s': %s",
-                        tv_name, persisted_next_str, err
-                    )
-                    next_time = now + interval
-            else:
-                next_time = now + interval
-
-            _set_auto_shuffle_next_time(tv_id, next_time)
 
             async def async_auto_shuffle_tick(_now: Any) -> None:
                 tv_configs_inner = list_tv_configs(entry)
@@ -660,21 +611,7 @@ if _HA_AVAILABLE:
                     cancel_auto_shuffle_timer(tv_id)
                     return
 
-                now = datetime.now(timezone.utc)
-                stored_next = auto_shuffle_next_times.get(tv_id)
-                if stored_next and stored_next < now - _drift_tolerance:
-                    drift_seconds = int((now - stored_next).total_seconds())
-                    message = f"Schedule drift detected ({drift_seconds}s late); rescheduling"
-                    _LOGGER.error("Auto shuffle (%s): %s", tv_config_inner.get("name", tv_id), message)
-                    log_activity(
-                        hass,
-                        entry.entry_id,
-                        tv_id,
-                        "auto_shuffle_error",
-                        message,
-                    )
-
-                _set_auto_shuffle_next_time(tv_id, now + interval)
+                _set_auto_shuffle_next_time(tv_id, datetime.now(timezone.utc) + interval)
                 await async_run_auto_shuffle(tv_id)
 
             unsubscribe = async_track_time_interval(
@@ -684,6 +621,14 @@ if _HA_AVAILABLE:
             )
             auto_shuffle_timers[tv_id] = unsubscribe
             entry.async_on_unload(unsubscribe)
+
+            next_time = datetime.now(timezone.utc) + interval
+            _set_auto_shuffle_next_time(tv_id, next_time)
+            _LOGGER.debug(
+                "Auto shuffle (%s): Next shuffle scheduled at %s",
+                tv_name,
+                next_time.isoformat(),
+            )
 
 
         hass.data[DOMAIN][entry.entry_id]["start_auto_shuffle_timer"] = start_auto_shuffle_timer
