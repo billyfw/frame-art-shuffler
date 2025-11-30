@@ -312,6 +312,13 @@ class FrameArtShuffleButton(ButtonEntity):
             )
             return
 
+        # Log that shuffle is starting (before the potentially slow upload)
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "shuffle_initiated",
+            f"Shuffling to {image_filename}...",
+        )
+
         try:
             _LOGGER.info(f"Uploading {image_filename} to {self._tv_name}...")
             # Get matte and filter from selected image metadata
