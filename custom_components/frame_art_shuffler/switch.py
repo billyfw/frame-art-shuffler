@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
-from .frame_tv import tv_on, tv_off, set_art_mode, is_screen_on, is_art_mode_enabled, FrameArtError
+from .frame_tv import tv_on, tv_off, set_art_mode, is_screen_on, FrameArtError
 from .activity import log_activity
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,12 +112,9 @@ class FrameArtPowerSwitch(SwitchEntity):
         await asyncio.sleep(delay)
         
         try:
-            # Poll screen and art mode status
+            # Poll screen status
             screen_on = await self._hass.async_add_executor_job(
                 is_screen_on, self._tv_ip, _STATUS_CHECK_TIMEOUT
-            )
-            art_mode = await self._hass.async_add_executor_job(
-                is_art_mode_enabled, self._tv_ip
             )
             
             # Update the cache with confirmed state
@@ -125,10 +122,9 @@ class FrameArtPowerSwitch(SwitchEntity):
             status_cache = data.get("tv_status_cache", {})
             if self._tv_id in status_cache:
                 status_cache[self._tv_id]["screen_on"] = screen_on
-                status_cache[self._tv_id]["art_mode"] = art_mode
             
             _LOGGER.debug(
-                f"Power switch poll for {self._tv_name}: screen_on={screen_on}, art_mode={art_mode}"
+                f"Power switch poll for {self._tv_name}: screen_on={screen_on}"
             )
             
             # Trigger state update for this switch and binary sensors
@@ -159,7 +155,6 @@ class FrameArtPowerSwitch(SwitchEntity):
             status_cache = data.get("tv_status_cache", {})
             if self._tv_id in status_cache:
                 status_cache[self._tv_id]["screen_on"] = True
-                status_cache[self._tv_id]["art_mode"] = True
             self.async_write_ha_state()
             
             # Schedule a delayed poll to confirm actual state and sync binary sensors

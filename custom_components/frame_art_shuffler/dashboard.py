@@ -239,7 +239,6 @@ def _get_tv_entities(
     patterns = {
         # Binary sensors
         "screen_on": f"{entry_id}_{tv_id}_screen_on",
-        "art_mode": f"{entry_id}_{tv_id}_art_mode",
         # Sensors
         "current_artwork": f"{entry_id}_{tv_id}",
         "last_shuffle_image": f"{entry_id}_{tv_id}_last_shuffle_image",
@@ -293,7 +292,7 @@ def _get_tv_entities(
 
 def _get_platform_for_key(key: str) -> str:
     """Get the platform (domain) for an entity key."""
-    binary_sensors = {"screen_on", "art_mode"}
+    binary_sensors = {"screen_on"}
     sensors = {
         "current_artwork", "last_shuffle_image", "last_shuffle_timestamp",
         "ip_address", "mac_address", "motion_sensor", "light_sensor",

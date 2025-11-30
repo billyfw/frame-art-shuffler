@@ -68,8 +68,6 @@ EVENT_TYPES = {
     "shuffle": ("mdi:shuffle-variant", "Image shuffled"),
     "screen_on": ("mdi:television", "Screen turned on"),
     "screen_off": ("mdi:television-off", "Screen turned off"),
-    "art_mode_on": ("mdi:palette", "Art mode activated"),
-    "art_mode_off": ("mdi:palette-outline", "Art mode deactivated"),
     "integration_start": ("mdi:play-circle", "Integration started"),
     "error": ("mdi:alert-circle", "Error occurred"),
 }

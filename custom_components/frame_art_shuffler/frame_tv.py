@@ -449,8 +449,13 @@ def set_tv_brightness(ip: str, brightness: int) -> None:
             _LOGGER.info("Brightness command sent to %s (verification timed out)", ip)
 
 
-def is_art_mode_enabled(ip: str) -> bool:
-    """Return True when the TV reports art mode is active (screen may be on or off)."""
+def is_art_mode_enabled(ip: str) -> Optional[bool]:
+    """Return True when the TV reports art mode is active, False if not, None if unknown.
+    
+    Returns None if the Art WebSocket connection times out or fails, indicating
+    the state could not be determined. This allows callers to distinguish between
+    "art mode is definitely off" (False) and "we couldn't check" (None).
+    """
 
     with _FrameTVSession(ip) as session:
         try:
@@ -459,47 +464,30 @@ def is_art_mode_enabled(ip: str) -> bool:
             return status == _ART_MODE_ON
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.debug("Art mode check failed for %s: %s", ip, err)
-            return False
+            return None  # Unknown state - couldn't connect to check
 
 
 def is_screen_on(ip: str, timeout: Optional[float] = None) -> bool:
     """Return True when the TV screen is actually on and displaying content.
 
-    This checks the TV's power state, not just art mode status.
-    Note: This requires the REST API to be responsive, which may fail if the TV
-    is in a low-power state or the screen is off.
+    This checks the TV's power state via REST API, not WebSocket.
+    REST API is faster and more reliable for status checks since it doesn't
+    require opening a WebSocket connection.
+    
+    Note: May return False if the TV is in a deep sleep state where REST
+    API is also unresponsive.
     """
-
-    token_path = _token_path(ip)
-    remote: Optional[SamsungTVWS] = None
+    # Import here to avoid circular imports
+    from .samsungtvws.rest import SamsungTVRest
+    
     try:
-        remote = _build_client(ip, token_path, timeout=timeout)
-        remote.open()
-
-        rest_api = remote._get_rest_api()  # type: ignore[attr-defined]
-        try:
-            power_state = rest_api.rest_power_state()
-            return bool(power_state)
-        except Exception:  # pylint: disable=broad-except
-            device_info = rest_api.rest_device_info()
-            state = (
-                str(device_info.get("device", {}).get("PowerState", "")).lower()
-                if isinstance(device_info, dict)
-                else ""
-            )
-            if state in {"on", "off"}:
-                return state == "on"
-            return bool(device_info)
-
+        # Use REST API directly - no WebSocket connection needed
+        # This is faster and more reliable than opening WebSocket first
+        rest_api = SamsungTVRest(ip, DEFAULT_PORT, timeout or _SCREEN_CHECK_TIMEOUT)
+        return rest_api.rest_power_state()
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.debug("Screen status check failed for %s: %s", ip, err)
         return False
-    finally:
-        if remote is not None:
-            try:
-                remote.close()
-            except Exception:  # pragma: no cover - best effort cleanup
-                pass
 
 
 # Backwards compatibility alias
@@ -508,8 +496,13 @@ def is_tv_on(ip: str) -> bool:
     
     This function checks if art mode is enabled, not if the screen is on.
     For screen state, use is_screen_on().
+    
+    Note: Returns False if art mode status cannot be determined (connection failed).
+    For explicit handling of unknown state, use is_art_mode_enabled() which returns
+    Optional[bool].
     """
-    return is_art_mode_enabled(ip)
+    result = is_art_mode_enabled(ip)
+    return result is True  # Convert None to False for backwards compatibility
 
 
 def tv_on(ip: str, mac_address: str) -> bool:
