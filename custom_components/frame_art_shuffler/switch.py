@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
@@ -12,9 +13,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .config_entry import get_tv_config, update_tv_config
-from .const import DOMAIN
+from .const import DOMAIN, CONF_ENABLE_AUTO_SHUFFLE
 from .frame_tv import tv_on, tv_off, set_art_mode, is_screen_on, FrameArtError
 from .activity import log_activity
 
@@ -46,6 +48,7 @@ async def async_setup_entry(
             FrameArtPowerSwitch(hass, entry, tv_id),
             FrameArtDynamicBrightnessSwitch(hass, entry, tv_id),
             FrameArtMotionControlSwitch(hass, entry, tv_id),
+            FrameArtAutoShuffleSwitch(hass, entry, tv_id),
         ])
 
     if entities:
@@ -395,5 +398,86 @@ class FrameArtMotionControlSwitch(SwitchEntity):
             self.hass, self._entry.entry_id, self._tv_id,
             "auto_motion_disabled",
             "Auto-motion disabled",
+        )
+        self.async_write_ha_state()
+
+
+class FrameArtAutoShuffleSwitch(SwitchEntity):
+    """Switch entity to enable/disable automatic shuffling."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:shuffle-variant"
+    _attr_name = "Auto-Shuffle Enable"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._tv_id = tv_id
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_auto_shuffle"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return False
+        return tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {CONF_ENABLE_AUTO_SHUFFLE: True},
+        )
+
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if data:
+            starter = data.get("start_auto_shuffle_timer")
+            if starter:
+                starter(self._tv_id)
+        log_activity(
+            self.hass,
+            self._entry.entry_id,
+            self._tv_id,
+            "auto_shuffle_enabled",
+            "Auto-shuffle enabled",
+        )
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        if data:
+            canceller = data.get("cancel_auto_shuffle_timer")
+            if canceller:
+                canceller(self._tv_id)
+
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {CONF_ENABLE_AUTO_SHUFFLE: False},
+        )
+        log_activity(
+            self.hass,
+            self._entry.entry_id,
+            self._tv_id,
+            "auto_shuffle_disabled",
+            "Auto-shuffle disabled",
         )
         self.async_write_ha_state()

@@ -2,13 +2,13 @@
 
 ## Overview
 
-Each Frame TV now has a "Shuffle Image" button that randomly selects and uploads an image from your `www/frame_art/` directory based on the TV's tag filtering preferences.
+Each Frame TV now has an on-demand "Auto-Shuffle Now" button *and* an optional auto-shuffle scheduler. Both paths use the same guarded upload pipeline so a TV never receives overlapping transfers, and both honor the TV's tag filtering preferences.
 
 ## How It Works
 
 ### Button Behavior
 
-When you press the "Shuffle Image" button for a TV:
+When you press the "Auto-Shuffle Now" button for a TV:
 
 1. **Load images** from `metadata.json` in `/config/www/frame_art/`
 2. **Filter by tags**:
@@ -17,6 +17,18 @@ When you press the "Shuffle Image" button for a TV:
 3. **Select randomly** from matching images, excluding the current image
 4. **Upload** the selected image using `--delete-others` flag (removes all other images from TV)
 5. **Update sensors** with the new image name and timestamp
+
+### Auto Shuffle Scheduler
+
+When the "Auto-Shuffle Enable" switch is turned on for a TV (or the option is enabled in the config flow), Home Assistant starts a dedicated timer for that TV:
+
+1. **Frequency** comes from the `Shuffle Frequency` number entity (minutes). Changing the number immediately restarts the timer.
+2. **Power-aware**: the scheduler relies on the existing `tv_status_cache`. If the screen is off *or* the power state is unknown, the shuffle is skipped, logged, and the next run is scheduled without waking the panel.
+3. **Guarded uploads**: every scheduled shuffle calls `async_shuffle_tv(..., skip_if_screen_off=True)` so it reuses the same per-TV upload lock as the manual button and the `display_image` service.
+4. **Health checks**: timers should always stay in the future. If the next scheduled time ever drifts into the past, the integration logs an `auto_shuffle_error`, records it in Recent Activity, and immediately reschedules.
+5. **Next run + persistence**: the `auto_shuffle_next` sensor (see below) exposes the upcoming timestamp, and the same value is persisted in the config entry so it survives Home Assistant restarts. On startup the timer restarts from the saved timestamp instead of starting over.
+
+When auto-shuffle is enabled, the manual button also routes through the scheduler. Pressing it immediately runs `async_run_auto_shuffle`, logs the outcome, and then restarts the timer so the next run remains frequency minutes in the future.
 
 ### Logging
 
@@ -47,7 +59,7 @@ After filtering, if the only candidate is already displayed, the button will sel
 
 ## Sensors
 
-Each TV gets two new sensors automatically created:
+Each TV gets these shuffle-related sensors automatically created:
 
 ### `sensor.<tv_name>_last_shuffle_image`
 - Shows the filename of the last shuffled image
@@ -60,13 +72,19 @@ Each TV gets two new sensors automatically created:
 - Example: `2025-11-02T14:32:15.123456`
 - Updates immediately when shuffle button is pressed
 
+### `sensor.<tv_name>_auto_shuffle_next`
+- Device class: `timestamp`
+- Shows the exact UTC time the scheduler will attempt the next shuffle
+- Returns `unknown` whenever auto-shuffle is disabled for that TV
+
 ## State Storage
 
-The integration tracks three pieces of state per TV in the config entry:
+The integration tracks four pieces of state per TV in the config entry:
 
 - `current_image`: Filename currently displayed (used to avoid re-selection)
 - `last_shuffle_image`: Filename of last shuffle (for sensor)
 - `last_shuffle_timestamp`: ISO timestamp of last shuffle (for sensor)
+- `next_shuffle_time`: ISO timestamp for the next scheduled auto shuffle (used to restore timers on restart)
 
 These are persisted across HA restarts.
 
@@ -131,11 +149,11 @@ Image evaluation:
 - `tags: ["nature", "people", "landscape"]` ❌ Has "people" (excluded)
 - `tags: ["city", "urban"]` ❌ Missing both "nature" and "art"
 
-## No Pre-flight Checks
+## Upload Guard & Power Awareness
 
-The button does **NOT** check if the TV screen is on or in art mode before uploading. It simply attempts the upload and lets `frame_tv.py` handle any connection errors naturally.
-
-**Why:** Pre-flight checks using `is_screen_on()` and `is_art_mode_enabled()` might wake the TV from sleep, which is undesirable. Instead, we let the upload fail gracefully if the TV isn't ready.
+- Manual button presses and the `display_image` service both route through `async_guarded_upload`, guaranteeing only one upload per TV at a time.
+- Auto shuffle uses the same helper *and* performs a cached power-state check. If the cached state is off/unknown, the scheduler logs a skip and never attempts to wake the panel.
+- Because we rely on cached state instead of fresh REST polls, the TVs never receive extra wake pings just to see if a shuffle is needed.
 
 ## Error Handling
 
@@ -164,7 +182,7 @@ All errors are logged but do not crash the integration. The sensors remain at th
 1. Add images to `/config/www/frame_art/`
 2. Update `metadata.json` with image tags
 3. Configure TV with include/exclude tags in HA
-4. Press "Shuffle Image" button in HA UI
+4. Press "Auto-Shuffle Now" button in HA UI
 
 ### Dashboard Card
 ```yaml
@@ -176,17 +194,7 @@ entities:
 ```
 
 ### Automation
-```yaml
-automation:
-  - alias: "Shuffle art every morning"
-    trigger:
-      - platform: time
-        at: "08:00:00"
-    action:
-      - service: button.press
-        target:
-          entity_id: button.living_room_shuffle_image
-```
+You can still automate manual shuffles (e.g., specific tags at certain times) by calling the button, but most users will prefer enabling the built-in auto-shuffle switch so the integration tracks the schedule, skips when the TV is off, and exposes status sensors.
 
 ## Technical Details
 
@@ -227,4 +235,3 @@ Potential improvements not implemented:
 - [ ] Persistent notification on success/failure
 - [ ] Upload progress indicator
 - [ ] Batch shuffle multiple TVs
-- [ ] Scheduled automatic shuffles (use HA automations for now)
