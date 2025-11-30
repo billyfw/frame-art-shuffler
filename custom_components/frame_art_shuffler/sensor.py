@@ -140,6 +140,24 @@ CURRENT_FILTER_DESCRIPTION = SensorEntityDescription(
     translation_key="current_filter",
 )
 
+MATTE_FILTER_DESCRIPTION = SensorEntityDescription(
+    key="matte_filter",
+    icon="mdi:image-filter-frames",
+    translation_key="matte_filter",
+)
+
+TAGS_COMBINED_DESCRIPTION = SensorEntityDescription(
+    key="tags_combined",
+    icon="mdi:tag-multiple",
+    translation_key="tags_combined",
+)
+
+MATCHING_IMAGE_COUNT_DESCRIPTION = SensorEntityDescription(
+    key=\"matching_image_count\",
+    icon="mdi:image-multiple-outline",
+    translation_key="shuffled_matching_images",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -180,11 +198,16 @@ async def async_setup_entry(
             # Current matte and filter sensors
             current_matte_entity = FrameArtCurrentMatteEntity(hass, entry, tv_id)
             current_filter_entity = FrameArtCurrentFilterEntity(hass, entry, tv_id)
+            # Combined display sensors for dashboard
+            matte_filter_entity = FrameArtMatteFilterEntity(hass, entry, tv_id)
+            tags_combined_entity = FrameArtTagsCombinedEntity(hass, entry, tv_id)
+            # Matching count sensor (tags are text entities, not sensors)
+            matching_count_entity = FrameArtMatchingImageCountEntity(hass, entry, tv_id)
             # Activity history sensor
             activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, activity_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, activity_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -1125,6 +1148,178 @@ class FrameArtCurrentFilterEntity(SensorEntity):
         cached_filter = shuffle_cache.get("current_filter")
         if cached_filter:
             return str(cached_filter)
+        return None
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtMatteFilterEntity(SensorEntity):
+    """Sensor entity combining matte and filter display."""
+
+    entity_description = MATTE_FILTER_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Matte / Filter"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_matte_filter"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return combined matte / filter value."""
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        
+        matte = shuffle_cache.get("current_matte") or "none"
+        filter_val = shuffle_cache.get("current_filter") or "none"
+        
+        return f"{matte} / {filter_val}"
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtTagsCombinedEntity(SensorEntity):
+    """Sensor entity combining include and exclude tags display."""
+
+    entity_description = TAGS_COMBINED_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Tags"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_tags_combined"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return combined tags display: [+] include / [-] exclude."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        
+        include_tags = tv_config.get("tags", [])
+        exclude_tags = tv_config.get("exclude_tags", [])
+        
+        parts = []
+        if include_tags:
+            include_str = ", ".join(include_tags) if isinstance(include_tags, list) else str(include_tags)
+            parts.append(f"[+] {include_str}")
+        if exclude_tags:
+            exclude_str = ", ".join(exclude_tags) if isinstance(exclude_tags, list) else str(exclude_tags)
+            parts.append(f"[-] {exclude_str}")
+        
+        if not parts:
+            return "none"
+        
+        return " / ".join(parts)
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtMatchingImageCountEntity(SensorEntity):
+    """Sensor entity for count of images matching shuffle criteria."""
+
+    entity_description = MATCHING_IMAGE_COUNT_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Shuffled Matching Images"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_matching_image_count"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
+
+    @property
+    def native_value(self) -> int | None:  # type: ignore[override]
+        """Return the count of images matching shuffle criteria."""
+        # Check runtime cache (set by button.py shuffle)
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        count = shuffle_cache.get("matching_image_count")
+        if count is not None:
+            return int(count)
         return None
 
     @property

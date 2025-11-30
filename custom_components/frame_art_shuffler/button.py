@@ -293,7 +293,7 @@ class FrameArtShuffleButton(ButtonEntity):
 
         # Select random image using executor job
         try:
-            selected_image = await self.hass.async_add_executor_job(
+            selected_image, matching_count = await self.hass.async_add_executor_job(
                 self._select_random_image,
                 metadata_path,
                 include_tags,
@@ -356,6 +356,9 @@ class FrameArtShuffleButton(ButtonEntity):
 
             # Update runtime cache (NOT entry.data to avoid reload)
             # These are runtime state, not user settings
+            # NOTE: If adding non-shuffle upload paths in the future, set:
+            #   - matching_image_count: 0
+            # This indicates the image was not selected via shuffle.
             from datetime import datetime, timezone
             data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
             shuffle_cache = data.setdefault("shuffle_cache", {})
@@ -363,6 +366,7 @@ class FrameArtShuffleButton(ButtonEntity):
                 "current_image": image_filename,
                 "current_matte": image_matte,
                 "current_filter": image_filter,
+                "matching_image_count": matching_count,
                 "last_shuffle_timestamp": datetime.now(timezone.utc).isoformat(),
             }
             
@@ -381,10 +385,10 @@ class FrameArtShuffleButton(ButtonEntity):
         include_tags: list[str],
         exclude_tags: list[str],
         current_image: str | None,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, int]:
         """Select a random image matching tag criteria (runs in executor).
         
-        Returns the selected image dict or None if no suitable image found.
+        Returns tuple of (selected image dict or None, count of eligible images).
         """
         import json
 
@@ -394,12 +398,12 @@ class FrameArtShuffleButton(ButtonEntity):
                 metadata = json.load(f)
         except Exception as err:
             _LOGGER.error(f"Failed to load metadata from {metadata_path}: {err}")
-            return None
+            return None, 0
 
         images = metadata.get("images", {})
         if not images:
             _LOGGER.warning(f"No images found in metadata for {self._tv_name}")
-            return None
+            return None, 0
 
         # Filter images by tags
         eligible_images = []
@@ -422,17 +426,19 @@ class FrameArtShuffleButton(ButtonEntity):
             image_data_with_filename = {**image_data, "filename": filename}
             eligible_images.append(image_data_with_filename)
 
+        eligible_count = len(eligible_images)
+
         if not eligible_images:
             _LOGGER.warning(
                 f"No images matching tag criteria for {self._tv_name} "
                 f"(include: {include_tags}, exclude: {exclude_tags})"
             )
-            return None
+            return None, 0
 
         # Log the eligible set
         eligible_filenames = [img["filename"] for img in eligible_images]
         _LOGGER.info(
-            f"Shuffle for {self._tv_name}: Found {len(eligible_images)} images matching criteria "
+            f"Shuffle for {self._tv_name}: Found {eligible_count} images matching criteria "
             f"(include: {include_tags}, exclude: {exclude_tags}). "
             f"Candidates: {eligible_filenames}"
         )
@@ -447,22 +453,22 @@ class FrameArtShuffleButton(ButtonEntity):
                     f"Only one image ({eligible_images[0]['filename']}) matches criteria "
                     f"for {self._tv_name} and it's already displayed. No shuffle performed."
                 )
-                return None
+                return None, eligible_count
             else:
                 # This shouldn't happen (all eligible == current?)
                 _LOGGER.warning(
                     f"No candidate images for {self._tv_name} after removing current image"
                 )
-                return None
+                return None, eligible_count
 
         # Select random image
         selected = random.choice(candidates)
         _LOGGER.info(
             f"{selected['filename']} selected for TV {self._tv_name} "
-            f"from {len(eligible_images)} eligible images"
+            f"from {eligible_count} eligible images"
         )
 
-        return selected
+        return selected, eligible_count
 
 
 class FrameArtClearTokenButton(ButtonEntity):
