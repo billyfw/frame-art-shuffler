@@ -102,6 +102,35 @@ if _HA_AVAILABLE:
             _LOGGER.warning(f"Failed to generate dashboard: {err}")
 
 
+    def _get_structural_config(data: dict[str, Any]) -> dict[str, Any]:
+        """Extract structural config data that requires a reload when changed.
+        
+        Structural changes include:
+        - Adding/removing TVs
+        - Changing IP/MAC addresses
+        - Changing sensor entity IDs (requires re-attaching listeners)
+        
+        Runtime changes (skipped) include:
+        - Toggling features (motion/brightness)
+        - Changing thresholds/delays
+
+        MAINTENANCE NOTE:
+        If you add new configuration fields that require a component reload to take effect
+        (e.g. new connection parameters, new entity IDs that need listeners), you MUST
+        add them to the dictionary below. Otherwise, changing them will not trigger a reload.
+        """
+        tvs = data.get("tvs", {})
+        structural = {}
+        for tv_id, tv_data in tvs.items():
+            structural[tv_id] = {
+                "ip": tv_data.get("ip"),
+                "mac": tv_data.get("mac"),
+                "motion_sensor": tv_data.get("motion_sensor"),
+                "light_sensor": tv_data.get("light_sensor"),
+            }
+        return structural
+
+
     async def async_setup_entry(hass: Any, entry: Any) -> bool:
         """Set up a config entry for Frame Art Shuffler."""
 
@@ -122,6 +151,7 @@ if _HA_AVAILABLE:
             "coordinator": coordinator,
             "metadata_path": metadata_path,
             "token_dir": token_dir,
+            "config_snapshot": _get_structural_config(entry.data),
             # Initialize dicts that sensors need to read from
             # These will be populated by the timer code after platforms are set up
             "auto_brightness_next_times": {},
@@ -742,6 +772,20 @@ if _HA_AVAILABLE:
 
 
     async def _async_reload_entry(hass: Any, entry: Any) -> None:
+        """Reload config entry."""
+        # Check if reload is necessary
+        data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if data and "config_snapshot" in data:
+            old_structural = data["config_snapshot"]
+            new_structural = _get_structural_config(entry.data)
+            
+            if old_structural == new_structural:
+                _LOGGER.debug("Skipping reload for runtime config change")
+                # Update snapshot just in case (though it should be identical)
+                data["config_snapshot"] = new_structural
+                return
+
+        _LOGGER.info("Reloading entry due to structural config change")
         await hass.config_entries.async_reload(entry.entry_id)
 
 

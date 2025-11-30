@@ -68,6 +68,10 @@ EVENT_TYPES = {
     "shuffle": ("mdi:shuffle-variant", "Image shuffled"),
     "screen_on": ("mdi:television", "Screen turned on"),
     "screen_off": ("mdi:television-off", "Screen turned off"),
+    "auto_motion_enabled": ("mdi:motion-sensor", "Auto-motion enabled"),
+    "auto_motion_disabled": ("mdi:motion-sensor-off", "Auto-motion disabled"),
+    "auto_brightness_enabled": ("mdi:brightness-auto", "Auto-brightness enabled"),
+    "auto_brightness_disabled": ("mdi:brightness-5", "Auto-brightness disabled"),
     "integration_start": ("mdi:play-circle", "Integration started"),
     "error": ("mdi:alert-circle", "Error occurred"),
 }

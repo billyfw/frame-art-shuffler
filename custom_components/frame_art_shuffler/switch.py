@@ -278,6 +278,12 @@ class FrameArtDynamicBrightnessSwitch(SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Enabled auto brightness for {tv_name}")
+        
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "auto_brightness_enabled",
+            "Auto-brightness enabled",
+        )
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -296,6 +302,12 @@ class FrameArtDynamicBrightnessSwitch(SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Disabled auto brightness for {tv_name}")
+        
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "auto_brightness_disabled",
+            "Auto-brightness disabled",
+        )
         self.async_write_ha_state()
 
 
@@ -354,6 +366,12 @@ class FrameArtMotionControlSwitch(SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Enabled auto motion control for {tv_name}")
+        
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "auto_motion_enabled",
+            "Auto-motion enabled",
+        )
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -372,4 +390,10 @@ class FrameArtMotionControlSwitch(SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Disabled auto motion control for {tv_name}")
+        
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "auto_motion_disabled",
+            "Auto-motion disabled",
+        )
         self.async_write_ha_state()
