@@ -265,13 +265,21 @@ if _HA_AVAILABLE:
 
             tv_name = tv_data.get("name", tv_id)
 
+            # Determine display filename for logging
+            if filename:
+                display_filename = filename
+            elif final_path:
+                display_filename = Path(final_path).name
+            else:
+                display_filename = "unknown"
+
             async def _perform_upload() -> bool:
                 log_activity(
                     hass,
                     target_entry.entry_id,
                     tv_id,
                     "display_image",
-                    f"Displaying custom image via service call ({tv_name})",
+                    f"Displaying custom image ({display_filename}) via service call",
                 )
 
                 await hass.async_add_executor_job(
@@ -285,6 +293,14 @@ if _HA_AVAILABLE:
                         delete_others=True,
                     )
                 )
+
+                # Set matching_image_count to 0 since this is not a shuffle
+                shuffle_cache = data.setdefault("shuffle_cache", {}).setdefault(tv_id, {})
+                shuffle_cache["matching_image_count"] = 0
+
+                # Send signal to update sensors
+                signal = f"{DOMAIN}_shuffle_{target_entry.entry_id}_{tv_id}"
+                async_dispatcher_send(hass, signal)
 
                 if filename:
                     await coordinator.async_set_active_image(
