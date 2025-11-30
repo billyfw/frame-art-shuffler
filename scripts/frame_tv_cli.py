@@ -115,11 +115,16 @@ def main() -> int:
             return 0
 
         if args.command == "status":
-            if is_art_mode_enabled(ip):
+            result = is_art_mode_enabled(ip)
+            if result is True:
                 print("Art mode is enabled")
                 return 0
-            print("Art mode is not enabled")
-            return 1
+            elif result is False:
+                print("Art mode is not enabled")
+                return 1
+            else:
+                print("Art mode status unknown (connection failed)")
+                return 2
 
         if args.command == "screen-status":
             if is_screen_on(ip):

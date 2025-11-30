@@ -35,12 +35,6 @@ SCREEN_ON_DESCRIPTION = BinarySensorEntityDescription(
     translation_key="screen_on",
 )
 
-ART_MODE_DESCRIPTION = BinarySensorEntityDescription(
-    key="art_mode",
-    icon="mdi:palette",
-    translation_key="art_mode",
-)
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -69,15 +63,13 @@ async def async_setup_entry(
             # Initialize status cache for this TV
             tv_status_cache[tv_id] = {
                 "screen_on": None,
-                "art_mode": None,
             }
 
             # Create binary sensors per TV
             screen_on_entity = FrameArtScreenOnEntity(hass, entry, tv_id)
-            art_mode_entity = FrameArtArtModeEntity(hass, entry, tv_id)
 
-            tracked[tv_id] = (screen_on_entity, art_mode_entity)
-            new_entities.extend([screen_on_entity, art_mode_entity])
+            tracked[tv_id] = screen_on_entity
+            new_entities.append(screen_on_entity)
 
         if new_entities:
             async_add_entities(new_entities)
@@ -109,9 +101,8 @@ async def async_setup_entry(
 
             tv_name = tv_config.get("name", tv_id)
             
-            # Capture old values to detect changes
+            # Capture old value to detect changes
             old_screen_on = tv_status_cache[tv_id].get("screen_on")
-            old_art_mode = tv_status_cache[tv_id].get("art_mode")
 
             # Check screen status (read-only REST call)
             try:
@@ -122,17 +113,8 @@ async def async_setup_entry(
             except Exception as err:
                 _LOGGER.debug(f"Failed to check screen status for {tv_name}: {err}")
 
-            # Check art mode status (read-only WebSocket call)
-            # Only check if screen appears to be on, to avoid unnecessary connections
+            # Handle motion control based on screen state
             if tv_status_cache[tv_id]["screen_on"]:
-                try:
-                    art_mode = await hass.async_add_executor_job(
-                        frame_tv.is_art_mode_enabled, ip
-                    )
-                    tv_status_cache[tv_id]["art_mode"] = art_mode
-                except Exception as err:
-                    _LOGGER.debug(f"Failed to check art mode for {tv_name}: {err}")
-                
                 # Fallback: Start motion off timer if TV is on but no timer exists
                 # This catches external power-on (remote, app, etc.)
                 # Use check_staleness=True to avoid starting timer if motion is stale
@@ -152,19 +134,14 @@ async def async_setup_entry(
                         if cancel_motion_off_timer:
                             cancel_motion_off_timer(tv_id)
                             _LOGGER.info(f"Auto motion: Cancelled off timer for {tv_name} (screen is off)")
-                # Also clear art mode since we can't check it when screen is off
-                tv_status_cache[tv_id]["art_mode"] = None
 
             # Only notify HA if state actually changed
             new_screen_on = tv_status_cache[tv_id].get("screen_on")
-            new_art_mode = tv_status_cache[tv_id].get("art_mode")
             
             if tv_id in tracked:
-                screen_entity, art_entity = tracked[tv_id]
+                screen_entity = tracked[tv_id]
                 if new_screen_on != old_screen_on:
                     screen_entity.async_write_ha_state()
-                if new_art_mode != old_art_mode:
-                    art_entity.async_write_ha_state()
 
     # Start polling
     cancel_poll = async_track_time_interval(
@@ -213,49 +190,6 @@ class FrameArtScreenOnEntity(BinarySensorEntity):
         status_cache = data.get("tv_status_cache", {})
         tv_status = status_cache.get(self._tv_id, {})
         return tv_status.get("screen_on")
-
-    @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        # Available if we have a TV config
-        return get_tv_config(self._entry, self._tv_id) is not None
-
-
-class FrameArtArtModeEntity(BinarySensorEntity):
-    """Binary sensor for TV art mode state."""
-
-    entity_description = ART_MODE_DESCRIPTION
-    _attr_has_entity_name = True
-    _attr_name = "Art Mode"
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        tv_id: str,
-    ) -> None:
-        self._hass = hass
-        self._tv_id = tv_id
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_art_mode"
-
-        tv_config = get_tv_config(entry, tv_id)
-        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
-
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
-
-    @property
-    def is_on(self) -> bool | None:
-        """Return True if art mode is active."""
-        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
-        status_cache = data.get("tv_status_cache", {})
-        tv_status = status_cache.get(self._tv_id, {})
-        return tv_status.get("art_mode")
 
     @property
     def available(self) -> bool:

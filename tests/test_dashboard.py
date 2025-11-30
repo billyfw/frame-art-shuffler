@@ -21,7 +21,6 @@ class TestGetPlatformForKey:
     def test_binary_sensor_keys(self):
         """Test binary sensor entity keys."""
         assert _get_platform_for_key("screen_on") == "binary_sensor"
-        assert _get_platform_for_key("art_mode") == "binary_sensor"
 
     def test_sensor_keys(self):
         """Test sensor entity keys."""
