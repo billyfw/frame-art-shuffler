@@ -226,7 +226,7 @@ async def async_shuffle_tv(
             entry.entry_id,
             tv_id,
             "shuffle_initiated",
-            f"Shuffling to {image_filename} ({reason})...",
+            f"Shuffling to {image_filename}...",
         )
 
         upload_func = functools.partial(
