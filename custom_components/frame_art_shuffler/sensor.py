@@ -153,7 +153,7 @@ TAGS_COMBINED_DESCRIPTION = SensorEntityDescription(
 )
 
 MATCHING_IMAGE_COUNT_DESCRIPTION = SensorEntityDescription(
-    key=\"matching_image_count\",
+    key="matching_image_count",
     icon="mdi:image-multiple-outline",
     translation_key="shuffled_matching_images",
 )
