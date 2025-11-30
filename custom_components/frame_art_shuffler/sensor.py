@@ -128,6 +128,18 @@ AUTO_MOTION_OFF_AT_DESCRIPTION = SensorEntityDescription(
     translation_key="auto_motion_off_at",
 )
 
+CURRENT_MATTE_DESCRIPTION = SensorEntityDescription(
+    key="current_matte",
+    icon="mdi:image-filter-frames",
+    translation_key="current_matte",
+)
+
+CURRENT_FILTER_DESCRIPTION = SensorEntityDescription(
+    key="current_filter",
+    icon="mdi:image-filter-vintage",
+    translation_key="current_filter",
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -165,11 +177,14 @@ async def async_setup_entry(
             # Auto motion sensors
             auto_motion_last_entity = FrameArtAutoMotionLastMotionEntity(hass, entry, tv_id)
             auto_motion_off_at_entity = FrameArtAutoMotionOffAtEntity(hass, entry, tv_id)
+            # Current matte and filter sensors
+            current_matte_entity = FrameArtCurrentMatteEntity(hass, entry, tv_id)
+            current_filter_entity = FrameArtCurrentFilterEntity(hass, entry, tv_id)
             # Activity history sensor
             activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, activity_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, activity_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, activity_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, activity_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -996,3 +1011,123 @@ class FrameArtAutoMotionOffAtEntity(SensorEntity):
             return off_time
         
         return None
+
+
+class FrameArtCurrentMatteEntity(SensorEntity):
+    """Sensor entity for current image matte."""
+
+    entity_description = CURRENT_MATTE_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Current Matte"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_current_matte"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the current matte."""
+        # Check runtime cache first (set by button.py shuffle)
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        cached_matte = shuffle_cache.get("current_matte")
+        if cached_matte:
+            return str(cached_matte)
+        return None
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtCurrentFilterEntity(SensorEntity):
+    """Sensor entity for current image filter."""
+
+    entity_description = CURRENT_FILTER_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Current Filter"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_current_filter"
+        self._unsubscribe_shuffle: Callable[[], None] | None = None
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to shuffle signal for updates."""
+        @callback
+        def _shuffle_updated() -> None:
+            self.async_write_ha_state()
+        
+        signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_shuffle = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _shuffle_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unsubscribe from shuffle signal."""
+        if self._unsubscribe_shuffle:
+            self._unsubscribe_shuffle()
+            self._unsubscribe_shuffle = None
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the current filter."""
+        # Check runtime cache first (set by button.py shuffle)
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        shuffle_cache = data.get("shuffle_cache", {}).get(self._tv_id, {})
+        cached_filter = shuffle_cache.get("current_filter")
+        if cached_filter:
+            return str(cached_filter)
+        return None
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
