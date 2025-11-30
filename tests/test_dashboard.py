@@ -7,9 +7,8 @@ from unittest.mock import MagicMock, patch
 # Test the dashboard module functions
 from custom_components.frame_art_shuffler.dashboard import (
     _get_platform_for_key,
-    _build_image_section,
-    _build_brightness_section,
-    _build_auto_brightness_section,
+    _build_artwork_section,
+    _build_combined_brightness_section,
     _build_auto_motion_section,
     DASHBOARD_HEADER,
 )
@@ -51,74 +50,61 @@ class TestGetPlatformForKey:
         assert _get_platform_for_key("unknown_key") == "sensor"
 
 
-class TestBuildImageSection:
-    """Test the _build_image_section helper."""
+class TestBuildArtworkSection:
+    """Test the _build_artwork_section helper."""
 
     def test_with_all_entities(self):
-        """Test with all image entities present."""
+        """Artwork card should include auto shuffle controls when available."""
         entities = {
             "current_artwork": "sensor.tv_current_artwork",
             "shuffle": "button.tv_shuffle",
+            "auto_shuffle_switch": "switch.tv_auto_shuffle",
+            "auto_shuffle_next": "sensor.tv_auto_shuffle_next",
             "shuffle_frequency": "number.tv_shuffle_frequency",
             "last_shuffle_timestamp": "sensor.tv_last_shuffle",
+            "matte_filter": "sensor.tv_matte_filter",
         }
-        result = _build_image_section(entities)
-        
+        result = _build_artwork_section(entities)
+
         assert result is not None
-        assert result["type"] == "entities"
-        assert "🎨 Current Artwork" in result["title"]
-        assert len(result["entities"]) == 4
+        assert result["type"] == "vertical-stack"
+        assert len(result["cards"]) == 2  # markdown + entities card
+        entities_card = result["cards"][1]
+        entity_ids = [item["entity"] for item in entities_card["entities"]]
+        assert entity_ids[:2] == [
+            "switch.tv_auto_shuffle",
+            "button.tv_shuffle",
+        ]
+        assert "sensor.tv_auto_shuffle_next" in entity_ids
 
     def test_with_no_entities(self):
-        """Test with no image entities."""
-        result = _build_image_section({})
+        """If no artwork entities exist, return None."""
+        result = _build_artwork_section({})
         assert result is None
 
 
 class TestBuildBrightnessSection:
-    """Test the _build_brightness_section helper."""
+    """Test the combined brightness helper."""
 
-    def test_with_brightness_entity(self):
-        """Test with brightness entity present."""
-        entities = {
-            "brightness": "number.tv_brightness",
-        }
-        result = _build_brightness_section(entities)
-        
-        assert result is not None
-        assert result["type"] == "entities"
-        assert "💡 Brightness" in result["title"]
-
-    def test_without_brightness_entity(self):
-        """Test without brightness entity."""
-        result = _build_brightness_section({})
-        assert result is None
-
-
-class TestBuildAutoBrightnessSection:
-    """Test the _build_auto_brightness_section helper."""
-
-    def test_with_all_entities(self):
-        """Test with all auto-brightness entities."""
+    def test_with_brightness_entities(self):
+        """Card should render when at least one brightness entity exists."""
         entities = {
             "dynamic_brightness": "switch.tv_dynamic_brightness",
             "trigger_brightness": "button.tv_trigger_brightness",
-            "auto_bright_sensor_lux": "sensor.tv_auto_bright_lux",
-            "auto_bright_target": "sensor.tv_auto_bright_target",
-            "min_lux": "number.tv_min_lux",
-            "max_lux": "number.tv_max_lux",
-            "calibrate_dark": "button.tv_calibrate_dark",
+            "brightness": "number.tv_brightness",
         }
-        result = _build_auto_brightness_section(entities)
-        
-        assert result is not None
-        assert result["type"] == "vertical-stack"
-        assert len(result["cards"]) == 2
+        result = _build_combined_brightness_section(entities)
 
-    def test_with_no_entities(self):
-        """Test with no auto-brightness entities."""
-        result = _build_auto_brightness_section({})
+        assert result is not None
+        assert result["type"] == "entities"
+        assert result["entities"][0]["entity"] == "switch.tv_dynamic_brightness"
+
+    def test_without_brightness_entities(self):
+        """No card when nothing is supplied."""
+        result = _build_combined_brightness_section({})
         assert result is None
+
+
 
 
 class TestBuildAutoMotionSection:
@@ -137,7 +123,7 @@ class TestBuildAutoMotionSection:
         
         assert result is not None
         assert result["type"] == "entities"
-        assert "🚶 Auto-Motion" in result["title"]
+        assert "Motion" in result["title"]
         assert len(result["entities"]) == 5
 
     def test_with_no_entities(self):

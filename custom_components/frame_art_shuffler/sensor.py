@@ -15,16 +15,18 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .config_entry import get_tv_config
 from .const import (
+    CONF_ENABLE_AUTO_SHUFFLE,
     CONF_SHUFFLE_FREQUENCY,
     CONF_MOTION_SENSOR,
     CONF_LIGHT_SENSOR,
     DOMAIN,
+    SIGNAL_SHUFFLE,
+    SIGNAL_AUTO_SHUFFLE_NEXT,
 )
 from .coordinator import FrameArtCoordinator
 from .activity import FrameArtActivitySensor
 
 # Signal names for event-driven updates
-SIGNAL_SHUFFLE = f"{DOMAIN}_shuffle"  # {SIGNAL_SHUFFLE}_{entry_id}_{tv_id}
 SIGNAL_BRIGHTNESS = f"{DOMAIN}_brightness_adjusted"  # {SIGNAL_BRIGHTNESS}_{entry_id}_{tv_id}
 
 _LOGGER = logging.getLogger(__name__)
@@ -50,6 +52,14 @@ LAST_SHUFFLE_TIMESTAMP_DESCRIPTION = SensorEntityDescription(
     icon="mdi:clock-outline",
     device_class=SensorDeviceClass.TIMESTAMP,
     translation_key="last_shuffle_timestamp",
+)
+
+AUTO_SHUFFLE_NEXT_DESCRIPTION = SensorEntityDescription(
+    key="auto_shuffle_next",
+    icon="mdi:clock-fast",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    translation_key="auto_shuffle_next",
 )
 
 IP_DESCRIPTION = SensorEntityDescription(
@@ -183,6 +193,7 @@ async def async_setup_entry(
             current_artwork_entity = FrameArtTVEntity(hass, entry, tv_id)
             last_image_entity = FrameArtLastShuffleImageEntity(hass, entry, tv_id)
             last_timestamp_entity = FrameArtLastShuffleTimestampEntity(hass, entry, tv_id)
+            auto_shuffle_next_entity = FrameArtAutoShuffleNextEntity(hass, entry, tv_id)
             ip_entity = FrameArtIPEntity(entry, tv_id)
             mac_entity = FrameArtMACEntity(entry, tv_id)
             motion_entity = FrameArtMotionSensorEntity(entry, tv_id)
@@ -206,8 +217,8 @@ async def async_setup_entry(
             # Activity history sensor
             activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -469,6 +480,68 @@ class FrameArtLastShuffleTimestampEntity(SensorEntity):
     def available(self) -> bool:  # type: ignore[override]
         """Return if entity is available."""
         return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtAutoShuffleNextEntity(SensorEntity):
+    """Sensor entity showing next scheduled auto shuffle."""
+
+    entity_description = AUTO_SHUFFLE_NEXT_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Auto-Shuffle Next"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_auto_shuffle_next"
+        self._unsubscribe: Callable[[], None] | None = None
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        @callback
+        def _auto_shuffle_next_updated() -> None:
+            self.async_write_ha_state()
+
+        signal = f"{SIGNAL_AUTO_SHUFFLE_NEXT}_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe = async_dispatcher_connect(
+            self._hass,
+            signal,
+            _auto_shuffle_next_updated,
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+
+    @property
+    def native_value(self) -> datetime | None:  # type: ignore[override]
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config or not tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False):
+            return None
+
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        next_times = data.get("auto_shuffle_next_times", {})
+        next_time = next_times.get(self._tv_id)
+        if next_time and isinstance(next_time, datetime):
+            if next_time.tzinfo is None:
+                next_time = next_time.replace(tzinfo=timezone.utc)
+            return next_time
+        return None
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        return get_tv_config(self._entry, self._tv_id) is not None
+
 
 
 class FrameArtIPEntity(SensorEntity):

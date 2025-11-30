@@ -117,6 +117,13 @@ class FrameArtShuffleFrequencyEntity(NumberEntity):
             tv_name,
         )
         
+        data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if data and tv_config and tv_config.get("enable_auto_shuffle", False):
+            restart = data.get("start_auto_shuffle_timer")
+            if restart:
+                restart(self._tv_id)
+
         # Update UI to reflect new value
         self.async_write_ha_state()
 

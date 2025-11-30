@@ -27,6 +27,7 @@ from .const import (
     CONF_TV_ID,
     CONF_MOTION_SENSOR,
     CONF_LIGHT_SENSOR,
+    CONF_ENABLE_AUTO_SHUFFLE,
     CONF_MIN_LUX,
     CONF_MAX_LUX,
     CONF_MIN_BRIGHTNESS,
@@ -310,6 +311,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             max_brightness = user_input.get(CONF_MAX_BRIGHTNESS, 10)
             enable_dynamic_brightness = user_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)
             enable_motion_control = user_input.get(CONF_ENABLE_MOTION_CONTROL, False)
+            enable_auto_shuffle = user_input.get(CONF_ENABLE_AUTO_SHUFFLE, False)
             motion_off_delay = user_input.get(CONF_MOTION_OFF_DELAY, 15)
             re_pair = user_input.get(CONF_REPAIR, False)
 
@@ -349,6 +351,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     "tags": tags,
                     "exclude_tags": exclude_tags,
                     "shuffle_frequency_minutes": frequency,
+                    "enable_auto_shuffle": enable_auto_shuffle,
                     "motion_sensor": motion_sensor,
                     "light_sensor": light_sensor,
                     "min_lux": min_lux,
@@ -391,6 +394,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_TAGS, default=current_tags): str,
                 vol.Optional(CONF_EXCLUDE_TAGS, default=current_exclude): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=current_config.get("shuffle_frequency_minutes", 30)): vol.Coerce(int),
+                vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=current_config.get("enable_auto_shuffle", False)): bool,
                 vol.Optional(CONF_MOTION_SENSOR, default=current_config.get("motion_sensor")): EntitySelector(
                     EntitySelectorConfig(domain="binary_sensor")
                 ),
@@ -437,6 +441,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             max_brightness = user_input.get(CONF_MAX_BRIGHTNESS, 10)
             enable_dynamic_brightness = user_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)
             enable_motion_control = user_input.get(CONF_ENABLE_MOTION_CONTROL, False)
+            enable_auto_shuffle = user_input.get(CONF_ENABLE_AUTO_SHUFFLE, False)
             motion_off_delay = user_input.get(CONF_MOTION_OFF_DELAY, 15)
             skip_pairing = user_input.get(CONF_SKIP_PAIRING, False)
 
@@ -503,6 +508,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         "max_lux": max_lux,
                         "min_brightness": min_brightness,
                         "max_brightness": max_brightness,
+                        "enable_auto_shuffle": enable_auto_shuffle,
                         "enable_dynamic_brightness": enable_dynamic_brightness,
                         "enable_motion_control": enable_motion_control,
                         "motion_off_delay": motion_off_delay,
@@ -523,6 +529,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_TAGS, default=preserved_input.get(CONF_TAGS, "")): str,
                 vol.Optional(CONF_EXCLUDE_TAGS, default=preserved_input.get(CONF_EXCLUDE_TAGS, "")): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=preserved_input.get(CONF_SHUFFLE_FREQUENCY, 30)): vol.Coerce(int),
+                vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=preserved_input.get(CONF_ENABLE_AUTO_SHUFFLE, False)): bool,
                 vol.Optional(CONF_MOTION_SENSOR, default=preserved_input.get(CONF_MOTION_SENSOR)): EntitySelector(
                     EntitySelectorConfig(domain="binary_sensor")
                 ),

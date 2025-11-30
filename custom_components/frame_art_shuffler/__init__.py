@@ -60,14 +60,23 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         _HA_AVAILABLE = False
 
 if _HA_AVAILABLE:
-    from .const import CONF_METADATA_PATH, CONF_TOKEN_DIR, DOMAIN
+    from .const import (
+        CONF_ENABLE_AUTO_SHUFFLE,
+        CONF_METADATA_PATH,
+        CONF_NEXT_SHUFFLE_TIME,
+        CONF_SHUFFLE_FREQUENCY,
+        CONF_TOKEN_DIR,
+        DOMAIN,
+        SIGNAL_AUTO_SHUFFLE_NEXT,
+    )
     from .coordinator import FrameArtCoordinator
-    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config
+    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config, update_tv_config
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
     from .metadata import MetadataStore
     from .dashboard import async_generate_dashboard
     from .activity import log_activity
+    from .shuffle import async_guarded_upload, async_shuffle_tv
 
     PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
 else:
@@ -156,6 +165,9 @@ if _HA_AVAILABLE:
             # These will be populated by the timer code after platforms are set up
             "auto_brightness_next_times": {},
             "motion_off_times": {},
+            "shuffle_cache": {},
+            "upload_in_progress": set(),
+            "auto_shuffle_next_times": {},
         }
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -192,21 +204,25 @@ if _HA_AVAILABLE:
                 raise ValueError(f"Device {device_id} not found")
 
             # Find the config entry for this device
-            entry_id = None
+            target_entry: Any | None = None
             for eid in device.config_entries:
-                entry = hass.config_entries.async_get_entry(eid)
-                if entry and entry.domain == DOMAIN:
-                    entry_id = eid
+                config_entry = hass.config_entries.async_get_entry(eid)
+                if config_entry and config_entry.domain == DOMAIN:
+                    target_entry = config_entry
                     break
             
-            if not entry_id:
-                raise ValueError(f"No config entry found for device {device_id} in domain {DOMAIN}")
+            if not target_entry:
+                raise ValueError(
+                    f"No config entry found for device {device_id} in domain {DOMAIN}"
+                )
 
             # Get coordinator
-            data = hass.data.get(DOMAIN, {}).get(entry_id)
+            data = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
             if not data:
-                raise ValueError(f"Integration data not found for entry {entry_id}")
-            
+                raise ValueError(
+                    f"Integration data not found for entry {target_entry.entry_id}"
+                )
+
             coordinator = data["coordinator"]
             
             # Resolve image path
@@ -247,21 +263,51 @@ if _HA_AVAILABLE:
             ip = tv_data["ip"]
             mac = tv_data.get("mac")
 
-            await hass.async_add_executor_job(
-                functools.partial(
-                    frame_tv.set_art_on_tv_deleteothers,
-                    ip,
-                    final_path,
-                    mac_address=mac,
-                    matte=matte,
-                    photo_filter=filter_id,
-                    delete_others=True,
-                )
-            )
+            tv_name = tv_data.get("name", tv_id)
 
-            # Update current_image in config entry so sensors update
-            if filename:
-                await coordinator.async_set_active_image(tv_id, filename, is_shuffle=False)
+            async def _perform_upload() -> bool:
+                log_activity(
+                    hass,
+                    target_entry.entry_id,
+                    tv_id,
+                    "display_image",
+                    f"Displaying custom image via service call ({tv_name})",
+                )
+
+                await hass.async_add_executor_job(
+                    functools.partial(
+                        frame_tv.set_art_on_tv_deleteothers,
+                        ip,
+                        final_path,
+                        mac_address=mac,
+                        matte=matte,
+                        photo_filter=filter_id,
+                        delete_others=True,
+                    )
+                )
+
+                if filename:
+                    await coordinator.async_set_active_image(
+                        tv_id, filename, is_shuffle=False
+                    )
+
+                return True
+
+            def _on_skip() -> None:
+                _LOGGER.info(
+                    "display_image skipped for %s (%s): upload already running",
+                    tv_name,
+                    tv_id,
+                )
+
+            await async_guarded_upload(
+                hass,
+                target_entry,
+                tv_id,
+                "display_image",
+                _perform_upload,
+                _on_skip,
+            )
 
         hass.services.async_register(
             DOMAIN, "display_image", async_handle_display_image
@@ -466,6 +512,173 @@ if _HA_AVAILABLE:
 
         # Trigger a coordinator refresh so sensors pick up the new next_times
         await coordinator.async_request_refresh()
+
+        # ===== AUTO SHUFFLE MANAGEMENT =====
+        auto_shuffle_timers: dict[str, Callable[[], None]] = {}
+        auto_shuffle_next_times = hass.data[DOMAIN][entry.entry_id]["auto_shuffle_next_times"]
+        _drift_tolerance = timedelta(seconds=30)
+
+        def _set_auto_shuffle_next_time(tv_id: str, next_time: datetime | None, persist: bool = True) -> None:
+            if next_time is None:
+                auto_shuffle_next_times.pop(tv_id, None)
+                if persist:
+                    update_tv_config(hass, entry, tv_id, {CONF_NEXT_SHUFFLE_TIME: None})
+            else:
+                auto_shuffle_next_times[tv_id] = next_time
+                if persist:
+                    update_tv_config(hass, entry, tv_id, {CONF_NEXT_SHUFFLE_TIME: next_time.isoformat()})
+            signal = f"{SIGNAL_AUTO_SHUFFLE_NEXT}_{entry.entry_id}_{tv_id}"
+            async_dispatcher_send(hass, signal)
+
+        def cancel_auto_shuffle_timer(tv_id: str, *, persist: bool = True) -> None:
+            """Cancel the auto shuffle timer for a specific TV."""
+            if tv_id in auto_shuffle_timers:
+                auto_shuffle_timers[tv_id]()
+                del auto_shuffle_timers[tv_id]
+            _set_auto_shuffle_next_time(tv_id, None, persist=persist)
+
+        async def async_run_auto_shuffle(tv_id: str) -> None:
+            """Execute an auto shuffle cycle for a TV."""
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config or not tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False):
+                cancel_auto_shuffle_timer(tv_id)
+                return
+
+            tv_name = tv_config.get("name", tv_id)
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+            status_cache = data.get("tv_status_cache", {})
+            screen_state = status_cache.get(tv_id, {}).get("screen_on")
+
+            if screen_state is False:
+                log_activity(
+                    hass,
+                    entry.entry_id,
+                    tv_id,
+                    "shuffle_skipped",
+                    "Auto shuffle skipped: Screen off, waiting for art mode",
+                )
+                return
+
+            if screen_state is None:
+                log_activity(
+                    hass,
+                    entry.entry_id,
+                    tv_id,
+                    "shuffle_skipped",
+                    "Auto shuffle skipped: Screen state unknown",
+                )
+                return
+
+            await async_shuffle_tv(
+                hass,
+                entry,
+                tv_id,
+                reason="auto",
+                skip_if_screen_off=True,
+            )
+
+        def start_auto_shuffle_timer(tv_id: str) -> None:
+            """Start or restart the auto shuffle timer for a TV."""
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config or not tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False):
+                cancel_auto_shuffle_timer(tv_id)
+                return
+
+            # Stop any existing timer but keep persisted next time for restoration
+            cancel_auto_shuffle_timer(tv_id, persist=False)
+
+            frequency_minutes = int(tv_config.get(CONF_SHUFFLE_FREQUENCY, 60) or 60)
+            if frequency_minutes <= 0:
+                frequency_minutes = 1
+            interval = timedelta(minutes=frequency_minutes)
+            tv_name = tv_config.get("name", tv_id)
+
+            # Try to restore persisted next shuffle time
+            now = datetime.now(timezone.utc)
+            persisted_next_str = tv_config.get(CONF_NEXT_SHUFFLE_TIME)
+            _LOGGER.debug(
+                "Auto shuffle (%s): Checking persisted time, value='%s'",
+                tv_name, persisted_next_str
+            )
+            if persisted_next_str:
+                try:
+                    persisted_next = datetime.fromisoformat(persisted_next_str)
+                    if persisted_next > now:
+                        # Future time - use it
+                        next_time = persisted_next
+                        _LOGGER.debug(
+                            "Auto shuffle (%s): Restored next shuffle time %s",
+                            tv_name, next_time.isoformat()
+                        )
+                    else:
+                        # Past time - schedule fresh and log activity
+                        next_time = now + interval
+                        log_activity(
+                            hass,
+                            entry.entry_id,
+                            tv_id,
+                            "auto_shuffle_rescheduled",
+                            f"Missed shuffle during restart; next in {frequency_minutes} min",
+                        )
+                        _LOGGER.info(
+                            "Auto shuffle (%s): Persisted time was in past, rescheduling to %s",
+                            tv_name, next_time.isoformat()
+                        )
+                except (ValueError, TypeError) as err:
+                    _LOGGER.warning(
+                        "Auto shuffle (%s): Failed to parse persisted time '%s': %s",
+                        tv_name, persisted_next_str, err
+                    )
+                    next_time = now + interval
+            else:
+                next_time = now + interval
+
+            _set_auto_shuffle_next_time(tv_id, next_time)
+
+            async def async_auto_shuffle_tick(_now: Any) -> None:
+                tv_configs_inner = list_tv_configs(entry)
+                tv_config_inner = tv_configs_inner.get(tv_id)
+                if not tv_config_inner or not tv_config_inner.get(CONF_ENABLE_AUTO_SHUFFLE, False):
+                    cancel_auto_shuffle_timer(tv_id)
+                    return
+
+                now = datetime.now(timezone.utc)
+                stored_next = auto_shuffle_next_times.get(tv_id)
+                if stored_next and stored_next < now - _drift_tolerance:
+                    drift_seconds = int((now - stored_next).total_seconds())
+                    message = f"Schedule drift detected ({drift_seconds}s late); rescheduling"
+                    _LOGGER.error("Auto shuffle (%s): %s", tv_config_inner.get("name", tv_id), message)
+                    log_activity(
+                        hass,
+                        entry.entry_id,
+                        tv_id,
+                        "auto_shuffle_error",
+                        message,
+                    )
+
+                _set_auto_shuffle_next_time(tv_id, now + interval)
+                await async_run_auto_shuffle(tv_id)
+
+            unsubscribe = async_track_time_interval(
+                hass,
+                async_auto_shuffle_tick,
+                interval,
+            )
+            auto_shuffle_timers[tv_id] = unsubscribe
+            entry.async_on_unload(unsubscribe)
+
+
+        hass.data[DOMAIN][entry.entry_id]["start_auto_shuffle_timer"] = start_auto_shuffle_timer
+        hass.data[DOMAIN][entry.entry_id]["cancel_auto_shuffle_timer"] = cancel_auto_shuffle_timer
+        hass.data[DOMAIN][entry.entry_id]["async_run_auto_shuffle"] = async_run_auto_shuffle
+
+        tv_configs = list_tv_configs(entry)
+        for tv_id, tv_config in tv_configs.items():
+            if tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False):
+                _LOGGER.debug("Auto shuffle: Starting timer for %s", tv_config.get("name", tv_id))
+                start_auto_shuffle_timer(tv_id)
 
         # ===== AUTO MOTION CONTROL =====
         # Per-TV motion listener and off-timer management

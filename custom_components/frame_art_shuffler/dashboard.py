@@ -243,6 +243,7 @@ def _get_tv_entities(
         "current_artwork": f"{entry_id}_{tv_id}",
         "last_shuffle_image": f"{entry_id}_{tv_id}_last_shuffle_image",
         "last_shuffle_timestamp": f"{entry_id}_{tv_id}_last_shuffle_timestamp",
+        "auto_shuffle_next": f"{entry_id}_{tv_id}_auto_shuffle_next",
         "ip_address": f"{entry_id}_{tv_id}_ip",
         "mac_address": f"{entry_id}_{tv_id}_mac",
         "motion_sensor": f"{entry_id}_{tv_id}_motion_sensor",
@@ -274,6 +275,7 @@ def _get_tv_entities(
         "power": f"{tv_id}_power",
         "dynamic_brightness": f"{tv_id}_dynamic_brightness",
         "motion_control": f"{tv_id}_motion_control",
+        "auto_shuffle_switch": f"{tv_id}_auto_shuffle",
         # Buttons
         "art_mode_button": f"{tv_id}_art_mode",
         "on_art_mode": f"{tv_id}_on_art_mode",
@@ -303,6 +305,7 @@ def _get_platform_for_key(key: str) -> str:
     binary_sensors = {"screen_on"}
     sensors = {
         "current_artwork", "last_shuffle_image", "last_shuffle_timestamp",
+        "auto_shuffle_next",
         "ip_address", "mac_address", "motion_sensor", "light_sensor",
         "auto_bright_last", "auto_bright_next", "auto_bright_target",
         "auto_bright_sensor_lux", "auto_motion_last", "auto_motion_off_at",
@@ -314,7 +317,7 @@ def _get_platform_for_key(key: str) -> str:
         "shuffle_frequency", "brightness", "min_lux", "max_lux",
         "min_brightness", "max_brightness", "motion_off_delay",
     }
-    switches = {"power", "dynamic_brightness", "motion_control"}
+    switches = {"power", "dynamic_brightness", "motion_control", "auto_shuffle_switch"}
     buttons = {
         "tv_on", "tv_off", "art_mode_button", "on_art_mode", "shuffle",
         "clear_token", "calibrate_dark", "calibrate_bright",
@@ -361,6 +364,25 @@ def _build_power_controls_section(entities: dict[str, str]) -> dict[str, Any] | 
         button_entities.append({
             "entity": entities["brightness"],
             "name": "Brightness Level",
+        })
+
+    # Image metadata at bottom of this card
+    if "current_artwork" in entities:
+        button_entities.append({
+            "entity": entities["current_artwork"],
+            "name": "Current Image",
+        })
+
+    if "matte_filter" in entities:
+        button_entities.append({
+            "entity": entities["matte_filter"],
+            "name": "Matte / Filter",
+        })
+
+    if "tags_combined" in entities:
+        button_entities.append({
+            "entity": entities["tags_combined"],
+            "name": "Tags",
         })
     
     if not button_entities:
@@ -410,47 +432,40 @@ def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
     # Combined controls: shuffle button + details
     control_entities = []
     
+    if "auto_shuffle_switch" in entities:
+        control_entities.append({
+            "entity": entities["auto_shuffle_switch"],
+            "name": "Auto Shuffle",
+        })
+
     if "shuffle" in entities:
         control_entities.append({
             "entity": entities["shuffle"],
             "name": "Shuffle Image",
         })
-    
-    # Combined Matte / Filter sensor
-    if "matte_filter" in entities:
-        control_entities.append({
-            "entity": entities["matte_filter"],
-            "name": "Matte / Filter",
-        })
-    
-    if "current_artwork" in entities:
-        control_entities.append({
-            "entity": entities["current_artwork"],
-            "name": "Current Image",
-        })
-    
+
     if "shuffle_frequency" in entities:
         control_entities.append({
             "entity": entities["shuffle_frequency"],
             "name": "Shuffle Frequency",
         })
-    
+
+    if "auto_shuffle_next" in entities:
+        control_entities.append({
+            "entity": entities["auto_shuffle_next"],
+            "name": "Next Auto Shuffle",
+        })
+
     if "last_shuffle_timestamp" in entities:
         control_entities.append({
             "entity": entities["last_shuffle_timestamp"],
             "name": "Last Shuffle",
         })
-    
-    # Combined Tags sensor
-    if "tags_combined" in entities:
-        control_entities.append({
-            "entity": entities["tags_combined"],
-            "name": "Tags",
-        })
+
     if "matching_image_count" in entities:
         control_entities.append({
             "entity": entities["matching_image_count"],
-            "name": "Shuffled Matching Images",
+            "name": "Matching Images",
         })
     
     if control_entities:
