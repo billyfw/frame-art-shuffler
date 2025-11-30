@@ -217,6 +217,13 @@ class FrameArtOnArtModeButton(ButtonEntity):
             # Now switch to art mode
             await self.hass.async_add_executor_job(set_art_mode, self._tv_ip)
             _LOGGER.info(f"Switched {self._tv_name} to art mode")
+            
+            # Log activity
+            log_activity(
+                self.hass, self._entry.entry_id, self._tv_id,
+                "screen_on",
+                f"Turned on + Art Mode",
+            )
         except FrameArtError as err:
             _LOGGER.error(f"Failed to turn on and switch {self._tv_name} to art mode: {err}")
 
@@ -354,6 +361,8 @@ class FrameArtShuffleButton(ButtonEntity):
             shuffle_cache = data.setdefault("shuffle_cache", {})
             shuffle_cache[self._tv_id] = {
                 "current_image": image_filename,
+                "current_matte": image_matte,
+                "current_filter": image_filter,
                 "last_shuffle_timestamp": datetime.now(timezone.utc).isoformat(),
             }
             
