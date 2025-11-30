@@ -590,13 +590,6 @@ def _build_auto_motion_section(entities: dict[str, str]) -> dict[str, Any] | Non
             "name": "Last Motion",
         })
     
-    # Associated motion sensor
-    if "motion_sensor" in entities:
-        section_entities.append({
-            "entity": entities["motion_sensor"],
-            "name": "Motion Sensor",
-        })
-    
     if not section_entities:
         return None
     
