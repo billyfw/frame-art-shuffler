@@ -66,6 +66,7 @@ EVENT_TYPES = {
     "brightness_adjusted": ("mdi:brightness-6", "Brightness adjusted"),
     "brightness_skipped": ("mdi:brightness-auto", "Brightness unchanged"),
     "shuffle": ("mdi:shuffle-variant", "Image shuffled"),
+    "shuffle_initiated": ("mdi:shuffle", "Shuffle started"),
     "screen_on": ("mdi:television", "Screen turned on"),
     "screen_off": ("mdi:television-off", "Screen turned off"),
     "auto_motion_enabled": ("mdi:motion-sensor", "Auto-motion enabled"),
