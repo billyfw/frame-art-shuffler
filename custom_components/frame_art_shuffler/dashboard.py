@@ -144,62 +144,70 @@ def _build_tv_view(
     if not entities:
         return None
 
-    # === LEFT COLUMN: Artwork, Recent Activity ===
-    left_cards = []
+    # === COLUMN 1: Artwork ===
+    col1_cards = []
     
     # Combined Current Artwork (image + details)
     artwork_card = _build_artwork_section(entities)
     if artwork_card:
-        left_cards.append(artwork_card)
+        col1_cards.append(artwork_card)
     
-    # Recent Activity at bottom of left column
-    activity_card = _build_activity_section(entities)
-    if activity_card:
-        left_cards.append(activity_card)
-    
-    left_column = {
+    col1 = {
         "type": "vertical-stack",
-        "cards": left_cards,
-    } if left_cards else None
+        "cards": col1_cards,
+    } if col1_cards else None
 
-    # === RIGHT COLUMN: Power Controls, Motion, Brightness ===
-    right_cards = []
+    # === COLUMN 2: Power Controls, Motion, Brightness ===
+    col2_cards = []
     
     # Power Controls
     power_card = _build_power_controls_section(entities)
     if power_card:
-        right_cards.append(power_card)
+        col2_cards.append(power_card)
     
     # Motion
     auto_motion_card = _build_auto_motion_section(entities)
     if auto_motion_card:
-        right_cards.append(auto_motion_card)
+        col2_cards.append(auto_motion_card)
     
     # Combined Brightness (manual + auto)
     brightness_card = _build_combined_brightness_section(entities)
     if brightness_card:
-        right_cards.append(brightness_card)
+        col2_cards.append(brightness_card)
     
-    right_column = {
+    col2 = {
         "type": "vertical-stack",
-        "cards": right_cards,
-    } if right_cards else None
+        "cards": col2_cards,
+    } if col2_cards else None
 
-    # Build the two-column grid
-    top_row_cards = [c for c in [left_column, right_column] if c]
+    # === COLUMN 3: Recent Activity ===
+    col3_cards = []
+
+    # Recent Activity
+    activity_card = _build_activity_section(entities)
+    if activity_card:
+        col3_cards.append(activity_card)
+
+    col3 = {
+        "type": "vertical-stack",
+        "cards": col3_cards,
+    } if col3_cards else None
+
+    # Build the grid
+    grid_cards = [c for c in [col1, col2, col3] if c]
     
     # Use a vertical-stack to wrap the grid
     all_cards = []
     
-    if len(top_row_cards) == 2:
+    if len(grid_cards) > 1:
         all_cards.append({
             "type": "grid",
-            "columns": 2,
+            "columns": 3,
             "square": False,
-            "cards": top_row_cards,
+            "cards": grid_cards,
         })
-    elif top_row_cards:
-        all_cards.extend(top_row_cards)
+    elif grid_cards:
+        all_cards.extend(grid_cards)
 
     # Wrap everything in a vertical-stack to enforce top-to-bottom layout
     view_cards = [{
@@ -634,8 +642,13 @@ def _build_activity_section(entities: dict[str, str]) -> dict[str, Any] | None:
 {{% if history | length == 0 %}}
 _No activity recorded yet_
 {{% else %}}
+{{% set ns = namespace(last_day=None) %}}
 {{% for event in history[:30] %}}
-**{{{{ event.time }}}}** - {{{{ event.message }}}}
+{{% if event.day_header != ns.last_day %}}
+**{{{{ event.day_header }}}}**
+{{% set ns.last_day = event.day_header %}}
+{{% endif %}}
+{{{{ event.time_display }}}} - {{{{ event.message }}}}
 {{% endfor %}}
 {{% endif %}}"""
     

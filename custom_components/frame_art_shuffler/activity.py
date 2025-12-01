@@ -249,12 +249,20 @@ class FrameArtActivitySensor(RestoreEntity, SensorEntity):
                 local_ts = ts.astimezone()
                 # Format: "Tue 11/28 5:08PM"
                 day_abbrev = local_ts.strftime("%a")  # Mon, Tue, Wed, etc.
+                full_day = local_ts.strftime("%A")    # Monday, Tuesday, etc.
                 date_part = local_ts.strftime("%-m/%d")  # 11/28 (no leading zero on month)
                 time_part = local_ts.strftime("%-I:%M%p").replace("AM", "am").replace("PM", "pm")  # 5:08pm
+                
+                # Old format for backward compatibility if needed
                 formatted_time = f"{day_abbrev} {date_part} {time_part}"
+                
+                # New fields for grouped display
+                day_header = f"{full_day} {date_part}"
                 
                 formatted_history.append({
                     "time": formatted_time,
+                    "day_header": day_header,
+                    "time_display": time_part,
                     "timestamp": event.get("timestamp"),
                     "event_type": event.get("event_type"),
                     "message": event.get("message"),
