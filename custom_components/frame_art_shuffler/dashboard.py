@@ -268,9 +268,6 @@ def _get_tv_entities(
         "matte_filter": f"{entry_id}_{tv_id}_matte_filter",
         "tags_combined": f"{entry_id}_{tv_id}_tags_combined",
         "matching_image_count": f"{entry_id}_{tv_id}_matching_image_count",
-        # Text entities (editable config)
-        "tags_include": f"{tv_id}_tags",
-        "tags_exclude": f"{tv_id}_exclude_tags",
         # Numbers
         "shuffle_frequency": f"{tv_id}_shuffle_frequency",
         "brightness": f"{tv_id}_brightness",
@@ -320,7 +317,6 @@ def _get_platform_for_key(key: str) -> str:
         "recent_activity", "current_matte", "current_filter",
         "matte_filter", "tags_combined", "matching_image_count",
     }
-    texts = {"tags_include", "tags_exclude"}
     numbers = {
         "shuffle_frequency", "brightness", "min_lux", "max_lux",
         "min_brightness", "max_brightness", "motion_off_delay",
@@ -336,8 +332,6 @@ def _get_platform_for_key(key: str) -> str:
         return "binary_sensor"
     elif key in sensors:
         return "sensor"
-    elif key in texts:
-        return "text"
     elif key in numbers:
         return "number"
     elif key in switches:
