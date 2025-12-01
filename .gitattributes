@@ -1,0 +1,2 @@
+# Use custom merge driver for manifest.json to always take higher version
+custom_components/frame_art_shuffler/manifest.json merge=manifest-version

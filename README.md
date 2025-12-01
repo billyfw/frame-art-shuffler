@@ -230,7 +230,17 @@ Tips:
 
 - When iterating rapidly, set `version` in `manifest.json` to something like `0.1.0-dev` so you can distinguish local builds in the UI.
 - Use the Home Assistant developer tools → **Reload** helpers for quick retests (or call `homeassistant.reload_config_entry` with the Frame Art Shuffler entry ID) after editing code.
-- Keep `metadata.json` and `frame_art_shuffler/tokens/` backed up so a failed experiment doesn’t lose your art library or pairing tokens.
+- Keep `metadata.json` and `frame_art_shuffler/tokens/` backed up so a failed experiment doesn't lose your art library or pairing tokens.
+
+### Git Setup (One-Time Per Machine)
+
+After cloning the repo on a new machine, run:
+
+```bash
+./scripts/setup-git-hooks.sh
+```
+
+This configures a custom git merge driver that auto-resolves `manifest.json` version conflicts by keeping the higher version. Without this, you'll get merge conflicts when `dev_deploy.sh` has bumped the version on different machines.
 
 ### Managing TVs via Options flow
 
