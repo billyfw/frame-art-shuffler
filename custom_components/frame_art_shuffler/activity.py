@@ -60,7 +60,7 @@ class ActivityEvent:
 # Event type definitions with icons
 EVENT_TYPES = {
     "motion_detected": ("mdi:motion-sensor", "Motion detected"),
-    "motion_wake": ("mdi:power", "TV woken by motion"),
+    "motion_wake": ("mdi:power", "Screen on (woken by motion)"),
     "motion_off": ("mdi:power-off", "TV turned off (no motion)"),
     "motion_timer_reset": ("mdi:timer-refresh", "Motion timer reset"),
     "brightness_adjusted": ("mdi:brightness-6", "Brightness adjusted"),
