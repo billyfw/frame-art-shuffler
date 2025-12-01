@@ -1,0 +1,30 @@
+#!/bin/bash
+# Git merge driver for manifest.json - always keeps the higher version number.
+# This resolves conflicts when dev_deploy.sh has bumped the version on different machines.
+#
+# Arguments (passed by git):
+#   %O = ancestor (base)
+#   %A = ours (current branch)
+#   %B = theirs (branch being merged)
+
+set -e
+
+OURS="$2"
+THEIRS="$3"
+
+# Extract version strings
+ours_ver=$(grep -o '"version": *"[^"]*"' "$OURS" | sed 's/.*"\([^"]*\)"/\1/')
+theirs_ver=$(grep -o '"version": *"[^"]*"' "$THEIRS" | sed 's/.*"\([^"]*\)"/\1/')
+
+# Compare versions lexically (works for semver and dev timestamps like 0.1.0+dev20251201000353)
+if [[ "$theirs_ver" > "$ours_ver" ]]; then
+    # Theirs is newer - replace our version with theirs
+    sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$theirs_ver\"/" "$OURS"
+    rm -f "$OURS.bak"
+    echo "Manifest merge: using newer version $theirs_ver (was $ours_ver)"
+else
+    echo "Manifest merge: keeping version $ours_ver (theirs was $theirs_ver)"
+fi
+
+# Exit 0 = conflict resolved successfully
+exit 0
