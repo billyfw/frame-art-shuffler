@@ -822,16 +822,13 @@ if _HA_AVAILABLE:
                 _LOGGER.warning(f"Auto motion: No motion sensor configured for {tv_id}")
                 return
 
-            # Validate motion sensor entity exists
-            if not hass.states.get(motion_sensor):
-                _LOGGER.warning(
-                    f"Auto motion: Motion sensor '{motion_sensor}' not found for {tv_name}. "
-                    "Check that the entity exists and is spelled correctly."
-                )
-                return
-
             tv_name = tv_config.get("name", tv_id)
             ip = tv_config.get("ip")
+
+            # We don't check hass.states.get(motion_sensor) here because the sensor
+            # might not be initialized yet (e.g. Z-Wave/Zigbee at startup).
+            # async_track_state_change_event handles missing entities gracefully
+            # and will trigger once the entity becomes available.
 
             @callback
             def motion_state_changed(event: Any) -> None:
