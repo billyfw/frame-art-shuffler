@@ -772,7 +772,7 @@ if _HA_AVAILABLE:
                     log_activity(
                         hass, entry.entry_id, tv_id,
                         "motion_wake",
-                        "Woken by motion",
+                        "Screen on (woken by motion)",
                     )
                 except Exception as err:
                     _LOGGER.warning(f"Auto motion: Failed to wake {tv_name}: {err}")
