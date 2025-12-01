@@ -567,5 +567,15 @@ class FrameArtTriggerMotionOffButton(ButtonEntity):
             _LOGGER.info(f"Auto motion trigger: Turning off {self._tv_name} ({ip})")
             await self._hass.async_add_executor_job(tv_off, ip)
             _LOGGER.info(f"Auto motion trigger: {self._tv_name} turned off successfully")
+            log_activity(
+                self._hass, self._entry.entry_id, self._tv_id,
+                "motion_off",
+                "Turned off (button pressed)",
+            )
         except Exception as err:
             _LOGGER.warning(f"Auto motion trigger: Failed to turn off {self._tv_name}: {err}")
+            log_activity(
+                self._hass, self._entry.entry_id, self._tv_id,
+                "error",
+                f"Turn off failed: {err}",
+            )
