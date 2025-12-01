@@ -117,14 +117,13 @@ async def async_setup_entry(
             if tv_status_cache[tv_id]["screen_on"]:
                 # Fallback: Start motion off timer if TV is on but no timer exists
                 # This catches external power-on (remote, app, etc.)
-                # Use check_staleness=True to avoid starting timer if motion is stale
                 if tv_config.get("enable_motion_control", False):
                     motion_off_times = data.get("motion_off_times", {})
                     if tv_id not in motion_off_times:
                         start_motion_off_timer = data.get("start_motion_off_timer")
                         if start_motion_off_timer:
-                            start_motion_off_timer(tv_id, check_staleness=True)
-                            _LOGGER.debug(f"Auto motion: Checked off timer for {tv_name} (external power-on fallback)")
+                            start_motion_off_timer(tv_id)
+                            _LOGGER.debug(f"Auto motion: Started off timer for {tv_name} (external power-on)")
             else:
                 # Screen is off - cancel motion off timer if one exists
                 if tv_config.get("enable_motion_control", False):

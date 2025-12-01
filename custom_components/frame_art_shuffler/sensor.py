@@ -1067,7 +1067,6 @@ class FrameArtAutoMotionOffAtEntity(SensorEntity):
         @callback
         def _off_time_updated() -> None:
             """Handle off time update signal."""
-            _LOGGER.debug(f"Auto motion: Sensor received off time update signal for {tv_id}")
             entity.async_write_ha_state()
         
         signal = f"{DOMAIN}_motion_off_time_updated_{self._entry.entry_id}_{self._tv_id}"
@@ -1098,8 +1097,6 @@ class FrameArtAutoMotionOffAtEntity(SensorEntity):
         data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
         motion_off_times = data.get("motion_off_times", {})
         off_time = motion_off_times.get(self._tv_id)
-        
-        _LOGGER.debug(f"Auto motion Off At sensor: entry_id={self._entry.entry_id}, tv_id={self._tv_id}, dict_id={id(motion_off_times)}, off_time={off_time}")
         
         if off_time and isinstance(off_time, datetime):
             if off_time.tzinfo is None:
