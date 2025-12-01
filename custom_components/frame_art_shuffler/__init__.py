@@ -561,13 +561,6 @@ if _HA_AVAILABLE:
             screen_state = status_cache.get(tv_id, {}).get("screen_on")
 
             if screen_state is False:
-                log_activity(
-                    hass,
-                    entry.entry_id,
-                    tv_id,
-                    "shuffle_skipped",
-                    "Auto shuffle skipped: Screen off, waiting for art mode",
-                )
                 return
 
             if screen_state is None:
