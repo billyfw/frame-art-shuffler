@@ -890,6 +890,14 @@ if _HA_AVAILABLE:
         # Generate and register the Lovelace dashboard
         await _async_setup_dashboard(hass, entry)
 
+        # Log integration start for all TVs
+        for tv_id in tv_configs.keys():
+            log_activity(
+                hass, entry.entry_id, tv_id,
+                "integration_start",
+                "Integration loaded",
+            )
+
         return True
 
 
