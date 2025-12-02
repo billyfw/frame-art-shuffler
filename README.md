@@ -6,6 +6,16 @@ The integration depends on the [Nick Waterton fork of `samsungtvws`](https://git
 
 The official PyPI version (`samsungtvws` 2.7.2) has issues with image uploads ("Broken pipe" errors), while the Waterton fork handles uploads reliably. Both versions support brightness control and status queries.
 
+### Dashboard Dependency (Optional)
+
+The auto-generated dashboard uses [`layout-card`](https://github.com/thomasloven/lovelace-layout-card) for responsive mobile layout (3 columns on desktop → 1 column on mobile). Install via HACS:
+
+1. Open **HACS → Frontend → Explore & Download Repositories**
+2. Search for "layout-card" and install it
+3. Restart Home Assistant
+
+Without `layout-card`, the dashboard will show an error. You can still use all integration features by creating your own dashboard with the exposed entities.
+
 ## Important: TV Power States and Art Mode
 
 Samsung Frame TVs have specific behavior regarding art mode and remote control commands:
