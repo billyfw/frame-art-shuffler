@@ -22,6 +22,10 @@ DASHBOARD_HEADER = """\
 # integration. Any manual changes will be overwritten on the next restart.
 #
 # To customize, create your own dashboard and use these entities as reference.
+#
+# DEPENDENCY: This dashboard requires the 'layout-card' custom card for
+# responsive mobile layout. Install via HACS:
+#   https://github.com/thomasloven/lovelace-layout-card
 # ============================================================================
 
 """
@@ -193,17 +197,27 @@ def _build_tv_view(
         "cards": col3_cards,
     } if col3_cards else None
 
-    # Build the grid
+    # Build the responsive grid using layout-card
+    # This provides 3 columns on desktop, 1 column on mobile (<800px)
     grid_cards = [c for c in [col1, col2, col3] if c]
     
-    # Use a vertical-stack to wrap the grid
+    # Use layout-card for responsive columns
     all_cards = []
     
     if len(grid_cards) > 1:
+        # Use layout-card with CSS grid and media queries for responsiveness
         all_cards.append({
-            "type": "grid",
-            "columns": 3,
-            "square": False,
+            "type": "custom:layout-card",
+            "layout_type": "custom:grid-layout",
+            "layout": {
+                "grid-template-columns": "1fr 1fr 1fr",
+                "grid-gap": "16px",
+                "mediaquery": {
+                    "(max-width: 800px)": {
+                        "grid-template-columns": "1fr",
+                    },
+                },
+            },
             "cards": grid_cards,
         })
     elif grid_cards:
