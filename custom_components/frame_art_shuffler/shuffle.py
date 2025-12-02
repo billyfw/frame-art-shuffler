@@ -230,7 +230,8 @@ async def async_shuffle_tv(
 
         await hass.async_add_executor_job(upload_func, tv_ip, str(image_path))
 
-        timestamp = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
         shuffle_cache[tv_id] = {
             "current_image": image_filename,
             "current_matte": image_matte,
@@ -252,6 +253,18 @@ async def async_shuffle_tv(
 
         if coordinator := entry_data.get("coordinator"):
             await coordinator.async_set_active_image(tv_id, image_filename, is_shuffle=True)
+
+        display_log = entry_data.get("display_log")
+        if display_log:
+            display_log.note_display_start(
+                tv_id=tv_id,
+                tv_name=tv_name,
+                filename=image_filename,
+                tags=list(selected_image.get("tags", [])),
+                source="shuffle",
+                shuffle_mode=reason,
+                started_at=now,
+            )
 
         _notify("success", f"Shuffled to {image_filename}")
         return True

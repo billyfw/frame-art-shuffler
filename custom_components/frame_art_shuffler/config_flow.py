@@ -20,6 +20,9 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_EXCLUDE_TAGS,
+    CONF_LOGGING_ENABLED,
+    CONF_LOG_FLUSH_MINUTES,
+    CONF_LOG_RETENTION_MONTHS,
     CONF_METADATA_PATH,
     CONF_SHUFFLE_FREQUENCY,
     CONF_TAGS,
@@ -35,6 +38,9 @@ from .const import (
     CONF_ENABLE_DYNAMIC_BRIGHTNESS,
     CONF_ENABLE_MOTION_CONTROL,
     CONF_MOTION_OFF_DELAY,
+    DEFAULT_LOGGING_ENABLED,
+    DEFAULT_LOG_FLUSH_MINUTES,
+    DEFAULT_LOG_RETENTION_MONTHS,
     DEFAULT_METADATA_RELATIVE_PATH,
     DOMAIN,
     TOKEN_DIR_NAME,
@@ -48,6 +54,11 @@ from .metadata import (
 
 CONF_SKIP_PAIRING = "skip_pairing"
 CONF_REPAIR = "re_pair"
+
+LOG_RETENTION_MIN = 1
+LOG_RETENTION_MAX = 12
+LOG_FLUSH_MIN = 1
+LOG_FLUSH_MAX = 60
 
 
 def _default_metadata_path(hass: HomeAssistant) -> Path:
@@ -191,6 +202,20 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
     async def _list_tvs(self) -> list[dict[str, Any]]:
         return await self.hass.async_add_executor_job(self._store().list_tvs)
 
+    def _logging_option_defaults(self) -> dict[str, Any]:
+        options = dict(self.config_entry.options or {})
+        return {
+            CONF_LOGGING_ENABLED: options.get(CONF_LOGGING_ENABLED, DEFAULT_LOGGING_ENABLED),
+            CONF_LOG_RETENTION_MONTHS: options.get(
+                CONF_LOG_RETENTION_MONTHS,
+                DEFAULT_LOG_RETENTION_MONTHS,
+            ),
+            CONF_LOG_FLUSH_MINUTES: options.get(
+                CONF_LOG_FLUSH_MINUTES,
+                DEFAULT_LOG_FLUSH_MINUTES,
+            ),
+        }
+
     async def async_step_init(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         """Show the main menu."""
         return await self.async_step_menu(user_input)
@@ -204,12 +229,17 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_pick_edit_tv()
             elif user_input["action"] == "delete_tv":
                 return await self.async_step_delete_tv()
+            elif user_input["action"] == "logging_settings":
+                return await self.async_step_logging_settings()
 
         # Get list of existing TVs
         from .config_entry import list_tv_configs
         tvs = list_tv_configs(self.config_entry)
         
-        options = {"add_tv": "Add a new TV"}
+        options = {
+            "logging_settings": "Logging settings",
+            "add_tv": "Add a new TV",
+        }
         if tvs:
             options["edit_tv"] = "Edit a TV"
             options["delete_tv"] = "Delete a TV"
@@ -219,6 +249,72 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema({
                 vol.Required("action"): vol.In(options)
             }),
+        )
+
+    async def async_step_logging_settings(
+        self,
+        user_input: Optional[Dict[str, Any]] = None,
+    ) -> ConfigFlowResult:
+        """Configure logging/retention settings."""
+
+        defaults = self._logging_option_defaults()
+        errors: Dict[str, str] = {}
+
+        if user_input is not None:
+            enabled = bool(user_input.get(CONF_LOGGING_ENABLED, defaults[CONF_LOGGING_ENABLED]))
+            retention = user_input.get(CONF_LOG_RETENTION_MONTHS, defaults[CONF_LOG_RETENTION_MONTHS])
+            flush = user_input.get(CONF_LOG_FLUSH_MINUTES, defaults[CONF_LOG_FLUSH_MINUTES])
+
+            try:
+                retention_int = int(retention)
+                if not (LOG_RETENTION_MIN <= retention_int <= LOG_RETENTION_MAX):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors[CONF_LOG_RETENTION_MONTHS] = "invalid_retention"
+                retention_int = defaults[CONF_LOG_RETENTION_MONTHS]
+
+            try:
+                flush_int = int(flush)
+                if not (LOG_FLUSH_MIN <= flush_int <= LOG_FLUSH_MAX):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors[CONF_LOG_FLUSH_MINUTES] = "invalid_flush"
+                flush_int = defaults[CONF_LOG_FLUSH_MINUTES]
+
+            if not errors:
+                new_options = dict(self.config_entry.options or {})
+                new_options[CONF_LOGGING_ENABLED] = enabled
+                new_options[CONF_LOG_RETENTION_MONTHS] = retention_int
+                new_options[CONF_LOG_FLUSH_MINUTES] = flush_int
+
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=new_options,
+                )
+                return self.async_create_entry(title="", data={})
+
+        retention_choices = [str(value) for value in range(LOG_RETENTION_MIN, LOG_RETENTION_MAX + 1)]
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_LOGGING_ENABLED,
+                    default=defaults[CONF_LOGGING_ENABLED],
+                ): bool,
+                vol.Required(
+                    CONF_LOG_RETENTION_MONTHS,
+                    default=str(defaults[CONF_LOG_RETENTION_MONTHS]),
+                ): vol.In(retention_choices),
+                vol.Required(
+                    CONF_LOG_FLUSH_MINUTES,
+                    default=defaults[CONF_LOG_FLUSH_MINUTES],
+                ): vol.All(vol.Coerce(int), vol.Range(min=LOG_FLUSH_MIN, max=LOG_FLUSH_MAX)),
+            }
+        )
+
+        return self.async_show_form(
+            step_id="logging_settings",
+            data_schema=schema,
+            errors=errors,
         )
 
     async def async_step_pick_edit_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
