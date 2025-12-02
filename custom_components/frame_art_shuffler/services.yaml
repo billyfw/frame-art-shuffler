@@ -58,3 +58,32 @@ display_image:
       required: false
       selector:
         text:
+
+set_log_options:
+  name: Configure Display Logging
+  description: Update the shared display log settings used by the Frame Art Manager dashboard.
+  fields:
+    logging_enabled:
+      name: Enable logging
+      description: Turn logging on or off without deleting existing files.
+      required: false
+      selector:
+        boolean:
+    log_retention_months:
+      name: Retention window (months)
+      description: Keep raw display sessions for this many months (1-12, defaults to 6).
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: slider
+    log_flush_interval_minutes:
+      name: Flush interval (minutes)
+      description: How often queued sessions are flushed to disk (1-60, defaults to 5).
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 60
+          mode: slider

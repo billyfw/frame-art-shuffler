@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+import voluptuous as vol
+
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,12 +64,16 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
 if _HA_AVAILABLE:
     from .const import (
         CONF_ENABLE_AUTO_SHUFFLE,
+        CONF_LOGGING_ENABLED,
+        CONF_LOG_FLUSH_MINUTES,
+        CONF_LOG_RETENTION_MONTHS,
         CONF_METADATA_PATH,
         CONF_SHUFFLE_FREQUENCY,
         CONF_TOKEN_DIR,
         DOMAIN,
         SIGNAL_AUTO_SHUFFLE_NEXT,
     )
+    from .display_log import DisplayLogManager
     from .coordinator import FrameArtCoordinator
     from .config_entry import get_tv_config, list_tv_configs, remove_tv_config
     from . import frame_tv
@@ -168,6 +174,10 @@ if _HA_AVAILABLE:
             "upload_in_progress": set(),
             "auto_shuffle_next_times": {},
         }
+
+        display_log = DisplayLogManager(hass, entry)
+        await display_log.async_setup()
+        hass.data[DOMAIN][entry.entry_id]["display_log"] = display_log
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
@@ -326,6 +336,67 @@ if _HA_AVAILABLE:
 
         hass.services.async_register(
             DOMAIN, "display_image", async_handle_display_image
+        )
+
+        log_options_schema = vol.Schema(
+            {
+                vol.Optional(CONF_LOGGING_ENABLED): bool,
+                vol.Optional(CONF_LOG_RETENTION_MONTHS): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=12)
+                ),
+                vol.Optional(CONF_LOG_FLUSH_MINUTES): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=60)
+                ),
+            }
+        )
+
+        async def async_handle_set_log_options(call: ServiceCall) -> None:
+            """Update logging runtime settings without requiring a reload."""
+
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                raise ValueError("Integration data not available for logging update")
+
+            updated_options = dict(entry.options or {})
+            changed = False
+
+            if CONF_LOGGING_ENABLED in call.data:
+                value = bool(call.data[CONF_LOGGING_ENABLED])
+                if updated_options.get(CONF_LOGGING_ENABLED, DEFAULT_LOGGING_ENABLED) != value:
+                    updated_options[CONF_LOGGING_ENABLED] = value
+                    changed = True
+
+            if CONF_LOG_RETENTION_MONTHS in call.data:
+                value = int(call.data[CONF_LOG_RETENTION_MONTHS])
+                if updated_options.get(
+                    CONF_LOG_RETENTION_MONTHS,
+                    DEFAULT_LOG_RETENTION_MONTHS,
+                ) != value:
+                    updated_options[CONF_LOG_RETENTION_MONTHS] = value
+                    changed = True
+
+            if CONF_LOG_FLUSH_MINUTES in call.data:
+                value = int(call.data[CONF_LOG_FLUSH_MINUTES])
+                if updated_options.get(
+                    CONF_LOG_FLUSH_MINUTES,
+                    DEFAULT_LOG_FLUSH_MINUTES,
+                ) != value:
+                    updated_options[CONF_LOG_FLUSH_MINUTES] = value
+                    changed = True
+
+            if not changed:
+                return
+
+            hass.config_entries.async_update_entry(
+                entry,
+                options=updated_options,
+            )
+
+        hass.services.async_register(
+            DOMAIN,
+            "set_log_options",
+            async_handle_set_log_options,
+            schema=log_options_schema,
         )
 
         # Per-TV auto brightness timer management
@@ -900,6 +971,9 @@ if _HA_AVAILABLE:
 
         data = hass.data.get(DOMAIN)
         if data and entry.entry_id in data:
+            display_log: DisplayLogManager | None = data[entry.entry_id].get("display_log")
+            if display_log:
+                await display_log.async_shutdown()
             data.pop(entry.entry_id)
 
         if not hass.config_entries.async_entries(DOMAIN):
@@ -920,6 +994,14 @@ if _HA_AVAILABLE:
                 _LOGGER.debug("Skipping reload for runtime config change")
                 # Update snapshot just in case (though it should be identical)
                 data["config_snapshot"] = new_structural
+
+                display_log: DisplayLogManager | None = data.get("display_log")
+                if display_log:
+                    display_log.update_settings(
+                        enabled=entry.options.get(CONF_LOGGING_ENABLED),
+                        retention_months=entry.options.get(CONF_LOG_RETENTION_MONTHS),
+                        flush_minutes=entry.options.get(CONF_LOG_FLUSH_MINUTES),
+                    )
                 return
 
         _LOGGER.info("Reloading entry due to structural config change")

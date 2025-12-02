@@ -5,6 +5,10 @@
     }
   },
   "options": {
+    "error": {
+      "invalid_retention": "Retention must be between 1 and 12 months.",
+      "invalid_flush": "Flush interval must be between 1 and 60 minutes."
+    },
     "step": {
       "add_tv": {
         "data": {
@@ -44,6 +48,15 @@
           "enable_motion_control": "Enable Auto Motion (TV on/off)",
           "motion_off_delay": "Auto-Motion Off Delay (minutes)",
           "re_pair": "Re-pair TV (force new token exchange)"
+        }
+      },
+      "logging_settings": {
+        "title": "Display Logging",
+        "description": "Configure the shared log that the integration writes for the Frame TV Manager add-on.",
+        "data": {
+          "logging_enabled": "Enable logging",
+          "log_retention_months": "Retention window (months)",
+          "log_flush_interval_minutes": "Flush interval (minutes)"
         }
       },
       "menu": {
