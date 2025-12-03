@@ -123,6 +123,10 @@ def _build_dashboard(
             }],
         })
 
+    # Add Settings tab as the rightmost view
+    settings_view = _build_settings_view(hass, entry)
+    views.append(settings_view)
+
     # Build complete dashboard
     dashboard = {
         "title": "Frame TV Manager",
@@ -130,6 +134,107 @@ def _build_dashboard(
     }
 
     return dashboard
+
+
+def _build_settings_view(hass: Any, entry: Any) -> dict[str, Any]:
+    """Build the settings view (tab) showing logging status and configuration."""
+    from .const import (
+        CONF_LOGGING_ENABLED,
+        CONF_LOG_RETENTION_MONTHS,
+        CONF_LOG_FLUSH_MINUTES,
+        DEFAULT_LOGGING_ENABLED,
+        DEFAULT_LOG_RETENTION_MONTHS,
+        DEFAULT_LOG_FLUSH_MINUTES,
+        LOG_STORAGE_RELATIVE_PATH,
+        LOG_SUMMARY_FILENAME,
+    )
+    
+    # Get current logging settings from entry options
+    options = entry.options or {}
+    logging_enabled = options.get(CONF_LOGGING_ENABLED, DEFAULT_LOGGING_ENABLED)
+    retention_months = options.get(CONF_LOG_RETENTION_MONTHS, DEFAULT_LOG_RETENTION_MONTHS)
+    flush_minutes = options.get(CONF_LOG_FLUSH_MINUTES, DEFAULT_LOG_FLUSH_MINUTES)
+    
+    # Build path to summary file for template
+    summary_path = f"/config/{LOG_STORAGE_RELATIVE_PATH}/{LOG_SUMMARY_FILENAME}"
+    
+    cards = []
+    
+    # Logging Status card
+    status_icon = "✅" if logging_enabled else "❌"
+    status_text = "Enabled" if logging_enabled else "Disabled"
+    
+    logging_status_md = f"""## Display Logging
+
+**Status:** {status_icon} {status_text}
+**Retention:** {retention_months} months
+**Flush Interval:** {flush_minutes} minutes
+
+---
+
+To change these settings, go to:
+**Settings → Devices & Services → Frame Art Shuffler → Configure → Logging settings**
+"""
+    
+    cards.append({
+        "type": "markdown",
+        "content": logging_status_md,
+    })
+    
+    # Summary stats card (reads from summary.json via template)
+    # This uses a template sensor approach - the data comes from the file
+    summary_template = """## Activity Summary
+
+{% set summary_sensor = 'sensor.frame_art_log_summary' %}
+{% if states(summary_sensor) == 'unknown' or states(summary_sensor) == 'unavailable' %}
+_No activity data yet. Summary will appear after the first flush cycle._
+{% else %}
+{% set totals = state_attr(summary_sensor, 'totals') or {} %}
+{% set generated = state_attr(summary_sensor, 'generated_at') or 'Never' %}
+**Total Tracked Time:** {{ (totals.get('tracked_seconds', 0) / 3600) | round(1) }} hours
+**Total Events:** {{ totals.get('event_count', 0) }}
+**Last Updated:** {{ generated }}
+
+---
+
+### By TV
+{% set tvs = state_attr(summary_sensor, 'tvs') or {} %}
+{% if tvs %}
+{% for tv_id, tv_data in tvs.items() %}
+- **{{ tv_data.get('name', tv_id) }}**: {{ (tv_data.get('total_display_seconds', 0) / 3600) | round(1) }}h ({{ tv_data.get('share_of_tracked', 0) }}%)
+{% endfor %}
+{% else %}
+_No TV data yet_
+{% endif %}
+
+---
+
+### Top Tags
+{% set tags = state_attr(summary_sensor, 'tags') or {} %}
+{% if tags %}
+{% for tag, tag_data in (tags.items() | list)[:10] %}
+- **{{ tag }}**: {{ (tag_data.get('total_display_seconds', 0) / 3600) | round(1) }}h
+{% endfor %}
+{% else %}
+_No tag data yet_
+{% endif %}
+{% endif %}
+"""
+    
+    cards.append({
+        "type": "markdown",
+        "content": summary_template,
+    })
+    
+    return {
+        "title": "Settings",
+        "path": "settings",
+        "icon": "mdi:cog",
+        "cards": [{
+            "type": "vertical-stack",
+            "cards": cards,
+        }],
+    }
 
 
 def _build_tv_view(

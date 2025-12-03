@@ -57,6 +57,11 @@
           "logging_enabled": "Enable logging",
           "log_retention_months": "Retention window (months)",
           "log_flush_interval_minutes": "Flush interval (minutes)"
+        },
+        "data_description": {
+          "logging_enabled": "When enabled, the integration records how long each image is displayed.",
+          "log_retention_months": "How many months of display history to keep before old entries are deleted.",
+          "log_flush_interval_minutes": "How often buffered sessions are written to disk. Lower values mean faster updates but slightly more disk activity."
         }
       },
       "menu": {
