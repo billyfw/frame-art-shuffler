@@ -536,6 +536,21 @@ class DisplayLogManager:
         self._active_sessions.clear()
         await self.async_flush(force=True)
 
+    async def async_clear_logs(self) -> None:
+        """Delete all log files and clear in-memory state."""
+        # Clear in-memory state
+        self._queue.clear()
+        self._active_sessions.clear()
+
+        # Delete log files
+        def _delete_files() -> None:
+            for path in [self._events_path, self._summary_path, self._pending_path]:
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(path)
+
+        await self._hass.async_add_executor_job(_delete_files)
+        _LOGGER.info("Display logs cleared for entry %s", self._entry.entry_id)
+
     def _record_completed_session(
         self,
         tv_id: str,

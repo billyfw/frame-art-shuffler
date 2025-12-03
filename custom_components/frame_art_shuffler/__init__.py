@@ -422,6 +422,27 @@ if _HA_AVAILABLE:
             async_handle_flush_display_log,
         )
 
+        async def async_handle_clear_display_log(call: ServiceCall) -> None:
+            """Clear all display log data."""
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                _LOGGER.warning("Integration data not available for clear")
+                return
+
+            display_log = data.get("display_log")
+            if not display_log:
+                _LOGGER.warning("Display log manager not initialized")
+                return
+
+            await display_log.async_clear_logs()
+            _LOGGER.info("Display logs cleared successfully")
+
+        hass.services.async_register(
+            DOMAIN,
+            "clear_display_log",
+            async_handle_clear_display_log,
+        )
+
         # Per-TV auto brightness timer management
         auto_brightness_timers: dict[str, Callable[[], None]] = {}
         # Use the dict already initialized in hass.data so sensors can access it
