@@ -51,6 +51,7 @@ class DisplaySession:
     tags: list[str] = field(default_factory=list)
     source: str = "shuffle"
     shuffle_mode: str | None = None
+    matched_tags: list[str] | None = None  # intersection with TV's configured tags
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-friendly dict."""
@@ -64,6 +65,7 @@ class DisplaySession:
             "tags": self.tags,
             "source": self.source,
             "shuffle_mode": self.shuffle_mode,
+            "matched_tags": self.matched_tags,
         }
 
     @classmethod
@@ -83,6 +85,7 @@ class DisplaySession:
             tags=list(payload.get("tags", [])),
             source=payload.get("source", "shuffle"),
             shuffle_mode=payload.get("shuffle_mode"),
+            matched_tags=payload.get("matched_tags"),
         )
 
 
@@ -96,6 +99,7 @@ class _ActiveDisplay:
     source: str
     shuffle_mode: str | None
     tv_name: str
+    matched_tags: list[str] | None = None  # intersection with TV's configured tags
 
 
 class DisplayLogManager:
@@ -192,8 +196,22 @@ class DisplayLogManager:
         source: str,
         shuffle_mode: str | None = None,
         started_at: datetime | None = None,
+        tv_tags: list[str] | None = None,
     ) -> None:
-        """Update the active display state and capture the previous session."""
+        """Update the active display state and capture the previous session.
+
+        Args:
+            tv_id: The TV's unique identifier.
+            tv_name: Human-readable TV name.
+            filename: The image filename being displayed.
+            tags: All tags on the image.
+            source: How the display was triggered (e.g., "shuffle").
+            shuffle_mode: The shuffle mode used (e.g., "random").
+            started_at: Override timestamp (defaults to now).
+            tv_tags: The TV's configured include_tags. If provided, matched_tags
+                will be computed as the intersection of image tags and TV tags.
+                This allows per-TV statistics to only count tags relevant to that TV.
+        """
         if not self._ready or not self._enabled:
             self._active_sessions.pop(tv_id, None)
             return
@@ -203,6 +221,11 @@ class DisplayLogManager:
         if previous:
             self._record_completed_session(tv_id, previous, now)
 
+        # Compute intersection of image tags and TV's configured tags
+        matched_tags: list[str] | None = None
+        if tv_tags is not None and tags:
+            matched_tags = [t for t in tags if t in tv_tags]
+
         self._active_sessions[tv_id] = _ActiveDisplay(
             filename=filename,
             tags=list(tags or []),
@@ -210,6 +233,7 @@ class DisplayLogManager:
             source=source,
             shuffle_mode=shuffle_mode,
             tv_name=tv_name,
+            matched_tags=matched_tags,
         )
 
     def record_session(self, session: DisplaySession) -> None:
@@ -398,7 +422,16 @@ class DisplayLogManager:
             per_image["seconds"] += duration
             per_image["event_count"] += 1
 
-            for tag in normalized_tags:
+            # For per-TV tag stats, use matched_tags (intersection with TV's
+            # configured tags) if available, otherwise fall back to all tags.
+            # This gives per-TV views only the tags relevant to that TV.
+            tv_tag_list = event.get("matched_tags")
+            if tv_tag_list is None:
+                tv_tag_list = normalized_tags
+            else:
+                tv_tag_list = tv_tag_list or [LOG_TAG_NONE]
+
+            for tag in tv_tag_list:
                 per_tag = tv_entry["per_tag"].setdefault(
                     tag,
                     {"seconds": 0, "event_count": 0},
@@ -571,6 +604,7 @@ class DisplayLogManager:
             tags=active.tags,
             source=active.source,
             shuffle_mode=active.shuffle_mode,
+            matched_tags=active.matched_tags,
         )
         self.record_session(session)
 
