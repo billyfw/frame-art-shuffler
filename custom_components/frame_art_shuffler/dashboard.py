@@ -229,15 +229,10 @@ _No tag data yet_
         "content": summary_template,
     })
 
-    # Danger zone - clear logs button with confirmation
-    cards.append({
-        "type": "markdown",
-        "content": "---\n## ⚠️ Danger Zone",
-    })
-    
+    # Clear logs button with confirmation
     cards.append({
         "type": "button",
-        "name": "🗑️ Clear All Logs",
+        "name": "Clear All Frame Art Shuffler Logs",
         "icon": "mdi:delete-forever",
         "icon_height": "40px",
         "tap_action": {

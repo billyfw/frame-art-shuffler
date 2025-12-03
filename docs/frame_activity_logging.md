@@ -1,109 +1,230 @@
-# Frame Activity Logging Plan
+# Frame Activity Logging
 
-## 1. Goals
-- Provide a durable, shared log the Home Assistant integration maintains and the Frame TV Manager add-on reads.
-- Support aggregated insights by TV, image, and tag while also storing up to six months of raw display events for troubleshooting or recompute needs.
-- Keep writes lightweight and resilient to HA restarts; real-time precision is not required.
+## 1. Overview
+The Frame Art Shuffler integration maintains a shared activity log that tracks how long each image is displayed on each TV. This log is stored in JSON files that the Frame TV Manager add-on can read to display analytics.
+
+**Status:** ✅ Implemented (v0.5+)
 
 ## 2. Storage Layout
-- Root directory: `/config/frame_art/logs` (created on setup if missing).
-- Files:
-  - `summary.json` – current aggregate snapshot (by TV/image/tag, plus metadata).
-  - `events.json` – rolling array of raw session entries covering the configured retention window (default 6 months).
-  - `pending.json` (optional) – transient buffer persisted between flush intervals so short-term data survives restarts.
-- Permissions: integration writes/reads; add-on reads only.
+- **Root directory:** `/config/frame_art/logs/` (created automatically on setup)
+- **Files:**
 
-## 3. Data Capture Workflow
-1. **Event observation**: hook into shuffle/display lifecycle so every time a TV finishes displaying an image (e.g., at the 15-minute shuffle tick) we record: timestamp, TV device name, image filename, duration seconds, list of tags (union of integration and file metadata), and optional additional context (source, shuffle mode).
-2. **In-memory queue**: append new event records to an in-memory list.
-3. **Flush timer**: every 2–5 minutes (configurable), the integration attempts to persist queued events:
-   - Read `events.json` (if present) and append queued events.
-   - Trim array to the retention window (based on timestamps and user-configured months).
-   - Write back using atomic temp-file + rename.
-   - Recompute `summary.json` from the trimmed events (see Section 4).
-   - Clear the in-memory queue and delete `pending.json`.
-4. **Restart behavior**: on HA startup, load `pending.json` (if it exists) into the queue so unsaved events survive unexpected restarts. If `pending.json` becomes corrupted, log an error and discard (user loses those minutes but system continues).
+| File | Purpose |
+|------|---------|
+| `events.json` | Rolling array of raw session entries (trimmed by retention) |
+| `summary.json` | Aggregated stats by TV/image/tag, regenerated on each flush |
+| `pending.json` | Crash-recovery buffer, deleted after successful flush |
 
-## 4. Summary Generation
-- Each flush rebuilds aggregates to keep math simple and robust.
-- Snapshot structure:
-  ```json
+- **Permissions:** Integration writes; add-on reads only.
+
+## 3. Data Flow
+
+### Session Tracking
+1. When a shuffle occurs, `note_display_start()` is called with:
+   - `tv_id`, `tv_name` - which TV
+   - `filename` - image being displayed
+   - `tags` - image tags from metadata
+   - `source` - "shuffle" (future: "manual", "automation")
+   - `shuffle_mode` - reason for shuffle ("auto", "manual", etc.)
+   - `started_at` - timestamp
+
+2. The **previous** image's session is completed and queued for persistence.
+
+3. Sessions are held in memory until the flush timer fires.
+
+### Flush Cycle (default: every 5 minutes)
+1. Read existing `events.json`
+2. Append queued sessions
+3. Trim events older than retention window
+4. Write back atomically (temp file + rename)
+5. Rebuild `summary.json` from trimmed events
+6. Clear queue and delete `pending.json`
+
+### Crash Recovery
+- On each session record, `pending.json` is updated immediately
+- On HA startup, `pending.json` is loaded back into the queue
+- Ensures minimal data loss on unexpected restarts
+
+## 4. Event Schema (`events.json`)
+```json
+[
   {
-    "version": 1,
-    "generated_at": "2025-12-02T09:15:00Z",
-    "retention_months": 6,
-    "logging_enabled": true,
-    "flush_interval_minutes": 5,
-    "tvs": { ... },
-    "images": { ... },
-    "tags": { ... },
-    "totals": {
-      "tracked_seconds": 12345,
-      "event_count": 456
+    "tv_id": "a9eef6ac436f482090e5e66ecbe88641",
+    "tv_name": "Office Frame",
+    "filename": "sunset-beach.jpg",
+    "duration_seconds": 900,
+    "completed_at": "2025-12-03T10:15:00+00:00",
+    "started_at": "2025-12-03T10:00:00+00:00",
+    "tags": ["nature", "landscape"],
+    "source": "shuffle",
+    "shuffle_mode": "auto"
+  }
+]
+```
+
+## 5. Summary Schema (`summary.json`)
+```json
+{
+  "version": 1,
+  "generated_at": "2025-12-03T10:15:00+00:00",
+  "retention_months": 6,
+  "logging_enabled": true,
+  "flush_interval_minutes": 5,
+  "totals": {
+    "tracked_seconds": 12345,
+    "event_count": 456
+  },
+  "tvs": {
+    "tv_id_here": {
+      "name": "Office Frame",
+      "total_display_seconds": 12345,
+      "event_count": 456,
+      "share_of_tracked": 100.0,
+      "per_image": [
+        {"filename": "sunset.jpg", "seconds": 3600, "event_count": 4, "share": 29.17}
+      ],
+      "per_tag": [
+        {"tag": "nature", "seconds": 5000, "event_count": 10, "share": 40.5}
+      ]
+    }
+  },
+  "images": {
+    "sunset.jpg": {
+      "tags": ["nature", "landscape"],
+      "total_display_seconds": 3600,
+      "event_count": 4,
+      "per_tv": [
+        {"tv_id": "abc123", "seconds": 3600, "event_count": 4, "share": 100.0}
+      ]
+    }
+  },
+  "tags": {
+    "nature": {
+      "total_display_seconds": 5000,
+      "event_count": 10,
+      "per_tv": [...],
+      "top_images": [...]
+    },
+    "<none>": {
+      "total_display_seconds": 1000,
+      "event_count": 5,
+      "per_tv": [...],
+      "top_images": [...]
     }
   }
-  ```
-- Aggregations:
-  - **TVs**: keyed by FAS TV device name; each entry stores `total_display_seconds`, `event_count`, `per_image` array, and `per_tag` array.
-  - **Images**: keyed by filename (or hash if duplicates possible); includes `tags`, `total_display_seconds`, `per_tv` array.
-  - **Tags**: keyed by tag slug; includes `total_display_seconds`, `per_tv` array, and optional top images. When an image has zero tags, record an explicit tag value `<none>` so dashboards can surface untagged usage.
-- Percentages are computed relative to each section’s totals (e.g., per TV percentages sum to 100%).
-- Keep numeric precision modest (two decimals) to limit file size.
+}
+```
 
-## 5. Retention & Rotation
-- User-configurable retention between 1 and 12 months, default 6.
-- Implementation trims `events.json` on every flush by discarding entries older than `now - retention_window`.
-- When the user shortens retention via UI, immediately prune events beyond the new window and regenerate summary at the next flush (or trigger an on-demand flush). When the user lengthens retention, only future data is captured; older data is gone.
-- Optional enhancement: when file size exceeds a ceiling (e.g., 20 MB), warn the user that more data is being stored than expected.
+**Note:** Images with no tags are tracked under the special tag `<none>`.
 
-## 6. Error Handling & Observability
-- Wrap every flush in try/except. On failure:
-  - Leave `pending.json` intact so queued events retry on next interval.
-  - Log error to Home Assistant logger with stack trace.
-  - Create/update a persistent notification for the owner ("Frame Art logging failed: <details>").
-  - Expose a binary sensor or diagnostic entity (`sensor.frame_art_log_status`) that flips to `error` until the next successful flush.
-- Include metrics (optional) such as number of events per flush or last flush timestamp for diagnostics.
+## 6. Configuration
 
-## 7. Configuration & Dashboard UI
-- Integration options flow:
-  - Toggle logging on/off.
-  - Retention length (months, default 6).
-  - Flush interval (advanced, default 5 minutes).
-- Dashboard (Frame TV Manager add-on) gear page:
-  - Display the contents of `summary.json` in a collapsible/raw viewer for debugging.
-  - Show metadata (last update timestamp, retention window).
-  - Provide retention selector and toggle; when changed, call `frame_art_shuffler.set_log_options` to update config and trigger a flush.
-  - Clarify that raw event file is not shown due to size but underpins the summary.
+### Integration Options Flow
+Access via: **Settings → Devices & Services → Frame Art Shuffler → Configure → Logging settings**
 
-## 8. Access Path for Add-on
-- Add-on should mount `/config/frame_art/logs` read-only.
-- Expected files:
-  - `summary.json` – parse once per UI refresh.
-  - `events.json` – optional (if add-on needs deeper analytics later).
-- Because this directory is outside `www`, it isn’t web-exposed; only HA core/add-on can access it.
+| Setting | Range | Default | Description |
+|---------|-------|---------|-------------|
+| Enable logging | on/off | on | Master toggle |
+| Retention window | 1-12 months | 6 | How long to keep events |
+| Flush interval | 1-60 minutes | 5 | How often to write to disk |
 
-## 9. Future Enhancements (Nice-to-haves)
-- Switch to per-month event files if `events.json` rewrites become costly.
-- Provide HA service to dump/export logs for manual inspection.
-- Add CLI script in `scripts/` to pretty-print aggregates or validate schema.
-- Consider incremental summary updates instead of full rebuild once data volume grows.
+### Services
 
-## 10. Add-on Integration Touchpoints
-- **Service contract**: invoke `POST /api/services/frame_art_shuffler/set_log_options` (Supervisor token auth) with payload fields `logging_enabled`, `log_retention_months`, and/or `log_flush_interval_minutes`. Omit keys you are not changing. Example:
-  ```bash
-  curl -sS -X POST \
-    -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
-    -H "Content-Type: application/json" \
-    http://supervisor/core/api/services/frame_art_shuffler/set_log_options \
-    -d '{
-      "logging_enabled": true,
-      "log_retention_months": 6,
-      "log_flush_interval_minutes": 5
-    }'
-  ```
-- **Summary fields**: the add-on UI should read `summary.json` and surface `generated_at`, `retention_months`, `logging_enabled`, `flush_interval_minutes`, plus tables for `tvs`, `images`, `tags`, and `totals.tracked_seconds`/`totals.event_count`.
-- **Error handling**: if `summary.json` is missing or malformed, show a warning that the integration needs at least one flush cycle after enabling logging.
-- **Scheduling**: recommend refreshing the summary view every 60–120 seconds; flush interval defaults to 5 minutes, so more frequent polling is unnecessary.
+| Service | Description |
+|---------|-------------|
+| `frame_art_shuffler.set_log_options` | Update logging settings programmatically |
+| `frame_art_shuffler.flush_display_log` | Manually flush pending sessions to disk |
+| `frame_art_shuffler.clear_display_log` | Delete all log data (events, summary, pending) |
+
+#### `set_log_options` Example
+```yaml
+service: frame_art_shuffler.set_log_options
+data:
+  logging_enabled: true
+  log_retention_months: 3
+  log_flush_interval_minutes: 2
+```
+
+## 7. Add-on Integration Guide
+
+### File Access
+Mount `/config/frame_art/logs/` read-only in the add-on.
+
+### Reading Summary
+```python
+import json
+from pathlib import Path
+
+summary_path = Path("/config/frame_art/logs/summary.json")
+if summary_path.exists():
+    with summary_path.open() as f:
+        summary = json.load(f)
+    
+    # Check freshness
+    generated_at = summary.get("generated_at")
+    logging_enabled = summary.get("logging_enabled", False)
+    
+    # Get totals
+    totals = summary.get("totals", {})
+    total_hours = totals.get("tracked_seconds", 0) / 3600
+    event_count = totals.get("event_count", 0)
+    
+    # Iterate TVs
+    for tv_id, tv_data in summary.get("tvs", {}).items():
+        print(f"{tv_data['name']}: {tv_data['total_display_seconds']/3600:.1f}h")
+else:
+    # No data yet - show message to user
+    pass
+```
+
+### Calling Services (from add-on)
+```bash
+# Flush logs
+curl -sS -X POST \
+  -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://supervisor/core/api/services/frame_art_shuffler/flush_display_log
+
+# Clear logs
+curl -sS -X POST \
+  -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://supervisor/core/api/services/frame_art_shuffler/clear_display_log
+
+# Update settings
+curl -sS -X POST \
+  -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  http://supervisor/core/api/services/frame_art_shuffler/set_log_options \
+  -d '{"log_retention_months": 3}'
+```
+
+### UI Recommendations
+- **Refresh interval:** Poll summary every 60-120 seconds (flush is every 5 min by default)
+- **Missing file:** Show "No activity data yet" message
+- **Malformed file:** Show warning, don't crash
+- **Display options:**
+  - Total hours tracked
+  - Event count
+  - Last updated timestamp
+  - Per-TV breakdown with percentages
+  - Top tags
+  - Top images (optional, can get large)
+
+## 8. Dashboard Integration
+The generated Lovelace dashboard includes a **Settings** tab (gear icon) that shows:
+- Current logging status (enabled/disabled)
+- Retention and flush settings
+- Link to configure via integration options
+- Activity summary (requires `sensor.frame_art_log_summary` - not yet implemented)
+- **Clear All Logs** button with confirmation
+
+## 9. Future Enhancements
+- [ ] Add `sensor.frame_art_log_summary` entity to expose summary data to templates
+- [ ] Per-month event files if `events.json` grows too large
+- [ ] Binary sensor for log health/errors
+- [ ] Export/download logs feature
+- [ ] Incremental summary updates instead of full rebuild
 
 ---
-This plan is the foundation for both the integration implementation and the add-on display work. Update this document as schema or workflows evolve.
+*Last updated: December 2025*
