@@ -811,6 +811,10 @@ if _HA_AVAILABLE:
                         "motion_off",
                         "Turned off (no motion)",
                     )
+                    # Close the display log session since screen is turning off
+                    display_log = hass.data[DOMAIN][entry.entry_id].get("display_log")
+                    if display_log:
+                        display_log.note_screen_off(tv_id=tv_id, tv_name=tv_name)
                 except Exception as err:
                     _LOGGER.warning(f"Auto motion: Failed to turn off {tv_name}: {err}")
                     log_activity(
