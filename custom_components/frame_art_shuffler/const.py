@@ -13,6 +13,7 @@ LOG_TAG_NONE = "<none>"
 
 CONF_METADATA_PATH = "metadata_path"
 CONF_TOKEN_DIR = "token_dir"
+CONF_SHORT_NAME = "short_name"
 CONF_TAGS = "tags"
 CONF_EXCLUDE_TAGS = "exclude_tags"
 CONF_SHUFFLE_FREQUENCY = "shuffle_frequency_minutes"
