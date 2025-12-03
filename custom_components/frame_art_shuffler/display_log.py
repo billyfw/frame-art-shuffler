@@ -236,6 +236,105 @@ class DisplayLogManager:
             matched_tags=matched_tags,
         )
 
+    def note_screen_off(
+        self,
+        *,
+        tv_id: str,
+        tv_name: str,
+        ended_at: datetime | None = None,
+    ) -> None:
+        """Record end of display session when screen turns off.
+
+        Completes the current active session (if any) and clears it so no time
+        accumulates while the screen is off. The same image may generate multiple
+        session entries if the screen cycles on/off.
+
+        Args:
+            tv_id: The TV's unique identifier.
+            tv_name: Human-readable TV name (for logging).
+            ended_at: Override timestamp (defaults to now).
+        """
+        if not self._ready or not self._enabled:
+            self._active_sessions.pop(tv_id, None)
+            return
+
+        active = self._active_sessions.pop(tv_id, None)
+        if not active:
+            return
+
+        now = ended_at or datetime.now(timezone.utc)
+        self._record_completed_session(tv_id, active, now)
+        _LOGGER.debug(
+            "Display log: Closed session for %s on %s (screen off)",
+            active.filename,
+            tv_name,
+        )
+
+    def note_screen_on(
+        self,
+        *,
+        tv_id: str,
+        tv_name: str,
+        filename: str | None = None,
+        tags: list[str] | None = None,
+        tv_tags: list[str] | None = None,
+        started_at: datetime | None = None,
+    ) -> None:
+        """Resume display tracking when screen turns on.
+
+        If the same image is still showing (no shuffle), this starts a new session
+        segment for that image. If filename is not provided and there's no active
+        session, this is a no-op.
+
+        Args:
+            tv_id: The TV's unique identifier.
+            tv_name: Human-readable TV name.
+            filename: The image currently displayed (if known).
+            tags: Image tags (if known).
+            tv_tags: TV's configured include_tags for matched_tags computation.
+            started_at: Override timestamp (defaults to now).
+        """
+        if not self._ready or not self._enabled:
+            return
+
+        # If there's already an active session, don't interrupt it
+        if tv_id in self._active_sessions:
+            _LOGGER.debug(
+                "Display log: Screen on for %s but session already active",
+                tv_name,
+            )
+            return
+
+        # If we don't know what image is showing, can't start tracking
+        if not filename:
+            _LOGGER.debug(
+                "Display log: Screen on for %s but no image info, skipping",
+                tv_name,
+            )
+            return
+
+        now = started_at or datetime.now(timezone.utc)
+
+        # Compute intersection of image tags and TV's configured tags
+        matched_tags: list[str] | None = None
+        if tv_tags is not None and tags:
+            matched_tags = [t for t in tags if t in tv_tags]
+
+        self._active_sessions[tv_id] = _ActiveDisplay(
+            filename=filename,
+            tags=list(tags or []),
+            started_at=now,
+            source="screen_on",  # Mark source as screen resumption
+            shuffle_mode=None,
+            tv_name=tv_name,
+            matched_tags=matched_tags,
+        )
+        _LOGGER.debug(
+            "Display log: Started new session for %s on %s (screen on)",
+            filename,
+            tv_name,
+        )
+
     def record_session(self, session: DisplaySession) -> None:
         """Queue a new display session for persistence."""
         if not self._ready or not self._enabled:

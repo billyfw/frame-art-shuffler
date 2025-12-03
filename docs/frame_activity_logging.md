@@ -33,7 +33,24 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
 
 3. The **previous** image's session is completed and queued for persistence.
 
-3. Sessions are held in memory until the flush timer fires.
+4. Sessions are held in memory until the flush timer fires.
+
+### Screen State Tracking
+To accurately track viewing time, display sessions are automatically closed when the screen turns off and resumed when it turns on:
+
+- **Screen Off**: When the screen turns off (motion timeout, remote, app, etc.), `note_screen_off()` is called to complete the current session. No viewing time accumulates while the screen is off.
+
+- **Screen On**: When the screen turns on (motion detected, remote, app, etc.), `note_screen_on()` starts a new session for the same image that was showing.
+
+This means the **same image can have multiple session entries** if the screen cycles on/off:
+```json
+[
+  {"filename": "sunset.jpg", "started_at": "10:00", "completed_at": "10:15", "duration_seconds": 900, "source": "shuffle"},
+  {"filename": "sunset.jpg", "started_at": "14:00", "completed_at": "14:30", "duration_seconds": 1800, "source": "screen_on"}
+]
+```
+
+This design provides accurate viewing time statistics rather than wall-clock time between shuffles.
 
 ### Flush Cycle (default: every 5 minutes)
 1. Read existing `events.json`
@@ -69,6 +86,11 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
 ### Field Notes
 - **`tags`**: All tags assigned to the image in metadata
 - **`matched_tags`**: Intersection of image tags with the TV's configured `include_tags`. May be `null` if the TV has no tag filter configured. Used for per-TV tag statistics.
+- **`source`**: How the session started:
+  - `"shuffle"` - Image was shuffled (auto or manual)
+  - `"screen_on"` - Same image resumed after screen turned back on
+  - `"display_image"` - Service call (future)
+- **`shuffle_mode`**: Reason for shuffle (e.g., `"auto"`, `"manual"`). Only present when `source` is `"shuffle"`.
 
 ## 5. Summary Schema (`summary.json`)
 ```json

@@ -141,6 +141,47 @@ async def async_setup_entry(
                 screen_entity = tracked[tv_id]
                 if new_screen_on != old_screen_on:
                     screen_entity.async_write_ha_state()
+                    
+                    # Update display log when screen state changes
+                    display_log = data.get("display_log")
+                    if display_log and old_screen_on is not None:
+                        if old_screen_on and not new_screen_on:
+                            # Screen turned off - close the current display session
+                            display_log.note_screen_off(tv_id=tv_id, tv_name=tv_name)
+                            _LOGGER.debug(f"Display log: Closed session for {tv_name} (screen off detected by poll)")
+                        elif not old_screen_on and new_screen_on:
+                            # Screen turned on - start a new session if we know the current image
+                            # Get current image from shuffle_cache or config
+                            shuffle_cache = data.get("shuffle_cache", {}).get(tv_id, {})
+                            current_image = shuffle_cache.get("current_image")
+                            if not current_image:
+                                current_image = tv_config.get("current_image")
+                            
+                            if current_image:
+                                # Try to get image tags from metadata
+                                metadata_path = data.get("metadata_path")
+                                image_tags: list[str] = []
+                                if metadata_path:
+                                    try:
+                                        from .metadata import MetadataStore
+                                        store = MetadataStore(metadata_path)
+                                        image_meta = store.get_image(current_image)
+                                        if image_meta:
+                                            image_tags = list(image_meta.get("tags", []))
+                                    except Exception:
+                                        pass
+                                
+                                # Get TV's configured tags for matched_tags computation
+                                tv_tags = tv_config.get("include_tags") if tv_config else None
+                                
+                                display_log.note_screen_on(
+                                    tv_id=tv_id,
+                                    tv_name=tv_name,
+                                    filename=current_image,
+                                    tags=image_tags,
+                                    tv_tags=tv_tags,
+                                )
+                                _LOGGER.debug(f"Display log: Started session for {tv_name} (screen on detected by poll)")
 
     # Start polling
     cancel_poll = async_track_time_interval(
