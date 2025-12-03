@@ -228,7 +228,27 @@ _No tag data yet_
         "type": "markdown",
         "content": summary_template,
     })
+
+    # Danger zone - clear logs button with confirmation
+    cards.append({
+        "type": "markdown",
+        "content": "---\n## ⚠️ Danger Zone",
+    })
     
+    cards.append({
+        "type": "button",
+        "name": "🗑️ Clear All Logs",
+        "icon": "mdi:delete-forever",
+        "icon_height": "40px",
+        "tap_action": {
+            "action": "call-service",
+            "service": "frame_art_shuffler.clear_display_log",
+            "confirmation": {
+                "text": "Are you sure you want to permanently delete all display log data? This cannot be undone.",
+            },
+        },
+    })
+
     return {
         "title": "Settings",
         "path": "settings",

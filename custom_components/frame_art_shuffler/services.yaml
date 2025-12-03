@@ -91,3 +91,7 @@ set_log_options:
 flush_display_log:
   name: Flush Display Log
   description: Manually flush any pending display sessions to disk. Useful for testing or ensuring data is written before a restart.
+
+clear_display_log:
+  name: Clear Display Log
+  description: Permanently delete all display log data including events, summary, and pending sessions. This action cannot be undone.
