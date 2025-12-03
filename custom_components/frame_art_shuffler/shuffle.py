@@ -264,6 +264,7 @@ async def async_shuffle_tv(
                 source="shuffle",
                 shuffle_mode=reason,
                 started_at=now,
+                tv_tags=include_tags if include_tags else None,
             )
 
         _notify("success", f"Shuffled to {image_filename}")

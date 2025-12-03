@@ -27,8 +27,11 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
    - `source` - "shuffle" (future: "manual", "automation")
    - `shuffle_mode` - reason for shuffle ("auto", "manual", etc.)
    - `started_at` - timestamp
+   - `tv_tags` - the TV's configured include_tags (optional)
 
-2. The **previous** image's session is completed and queued for persistence.
+2. If `tv_tags` is provided, `matched_tags` is computed as the intersection of image tags and TV tags. This allows per-TV statistics to only count tags that are relevant to that TV's configuration.
+
+3. The **previous** image's session is completed and queued for persistence.
 
 3. Sessions are held in memory until the flush timer fires.
 
@@ -56,11 +59,16 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
     "completed_at": "2025-12-03T10:15:00+00:00",
     "started_at": "2025-12-03T10:00:00+00:00",
     "tags": ["nature", "landscape"],
+    "matched_tags": ["nature"],
     "source": "shuffle",
     "shuffle_mode": "auto"
   }
 ]
 ```
+
+### Field Notes
+- **`tags`**: All tags assigned to the image in metadata
+- **`matched_tags`**: Intersection of image tags with the TV's configured `include_tags`. May be `null` if the TV has no tag filter configured. Used for per-TV tag statistics.
 
 ## 5. Summary Schema (`summary.json`)
 ```json
@@ -115,7 +123,10 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
 }
 ```
 
-**Note:** Images with no tags are tracked under the special tag `<none>`.
+**Notes:**
+- Images with no tags are tracked under the special tag `<none>`.
+- The global `tags` section uses all image tags for comprehensive statistics.
+- Per-TV `per_tag` arrays use `matched_tags` (intersection with TV's configured tags) when available, giving per-TV views only the tags relevant to that TV's filter configuration.
 
 ## 6. Configuration
 
