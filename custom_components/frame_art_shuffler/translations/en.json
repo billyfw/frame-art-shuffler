@@ -13,6 +13,7 @@
       "add_tv": {
         "data": {
           "name": "TV Name",
+          "short_name": "Short TV Name (for dashboard tab)",
           "host": "TV IP Address",
           "mac": "TV MAC Address",
           "tags": "Image tags to include [spaces ok] (e.g. family, abc,cars ,xyz)",
@@ -33,6 +34,7 @@
       "edit_tv": {
         "data": {
           "name": "TV Name",
+          "short_name": "Short TV Name (for dashboard tab)",
           "host": "TV IP Address",
           "mac": "TV MAC Address",
           "tags": "Image tags to include [spaces ok] (e.g. family, abc,cars ,xyz)",

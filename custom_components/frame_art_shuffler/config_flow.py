@@ -24,6 +24,7 @@ from .const import (
     CONF_LOG_FLUSH_MINUTES,
     CONF_LOG_RETENTION_MONTHS,
     CONF_METADATA_PATH,
+    CONF_SHORT_NAME,
     CONF_SHUFFLE_FREQUENCY,
     CONF_TAGS,
     CONF_TOKEN_DIR,
@@ -395,6 +396,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             host_input = user_input.get(CONF_HOST, "")
             name = (user_input.get(CONF_NAME) or "").strip()
+            short_name = (user_input.get(CONF_SHORT_NAME) or "").strip()
             mac_input = user_input.get(CONF_MAC, "")
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
@@ -442,6 +444,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 # Update TV config
                 update_tv_config(self.hass, self.config_entry, tv_id, {
                     "name": name,
+                    "short_name": short_name,
                     "ip": host,
                     "mac": normalized_mac,
                     "tags": tags,
@@ -485,6 +488,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=current_config.get("name", "")): str,
+                vol.Optional(CONF_SHORT_NAME, default=current_config.get("short_name", "")): str,
                 vol.Required(CONF_HOST, default=current_config.get("ip", "")): str,
                 vol.Required(CONF_MAC, default=current_config.get("mac", "")): str,
                 vol.Optional(CONF_TAGS, default=current_tags): str,
@@ -525,6 +529,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             host_input = user_input.get(CONF_HOST, "")
             name = (user_input.get(CONF_NAME) or "").strip()
+            short_name = (user_input.get(CONF_SHORT_NAME) or "").strip()
             mac_input = user_input.get(CONF_MAC, "")
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
@@ -593,6 +598,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     from .config_entry import add_tv_config
                     add_tv_config(self.hass, self.config_entry, tv_id, {
                         "name": name,
+                        "short_name": short_name,
                         "ip": host,
                         "mac": normalized_mac,
                         "tags": tags,
@@ -620,6 +626,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=preserved_input.get(CONF_NAME, "")): str,
+                vol.Optional(CONF_SHORT_NAME, default=preserved_input.get(CONF_SHORT_NAME, "")): str,
                 vol.Required(CONF_HOST, default=preserved_input.get(CONF_HOST, "")): str,
                 vol.Required(CONF_MAC, default=preserved_input.get(CONF_MAC, "")): str,
                 vol.Optional(CONF_TAGS, default=preserved_input.get(CONF_TAGS, "")): str,

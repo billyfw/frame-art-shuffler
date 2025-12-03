@@ -107,7 +107,10 @@ def _build_dashboard(
     # Build a view (tab) for each TV
     for tv_id, tv_config in tv_configs.items():
         tv_name = tv_config.get("name", tv_id)
-        view = _build_tv_view(hass, entry, tv_id, tv_name, entity_registry)
+        # Use short_name for tab title, or first 3 chars of name if not set
+        short_name = tv_config.get("short_name", "").strip()
+        tab_title = short_name if short_name else tv_name[:3]
+        view = _build_tv_view(hass, entry, tv_id, tv_name, tab_title, entity_registry)
         if view:
             views.append(view)
     
@@ -242,6 +245,7 @@ def _build_tv_view(
     entry: Any,
     tv_id: str,
     tv_name: str,
+    tab_title: str,
     entity_registry: Any,
 ) -> dict[str, Any] | None:
     """Build a view (tab) for a single TV with two-column layout."""
@@ -338,9 +342,8 @@ def _build_tv_view(
     safe_path = tv_id.lower().replace(" ", "-").replace("_", "-")
     
     return {
-        "title": tv_name,
+        "title": tab_title,
         "path": safe_path,
-        "icon": "mdi:television-ambient-light",
         "panel": True,  # Full width layout instead of centered masonry
         "cards": view_cards,
     }

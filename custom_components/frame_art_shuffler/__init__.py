@@ -139,6 +139,8 @@ if _HA_AVAILABLE:
             structural[tv_id] = {
                 "ip": tv_data.get("ip"),
                 "mac": tv_data.get("mac"),
+                "name": tv_data.get("name"),
+                "short_name": tv_data.get("short_name"),
                 "motion_sensor": tv_data.get("motion_sensor"),
                 "light_sensor": tv_data.get("light_sensor"),
             }
@@ -397,6 +399,27 @@ if _HA_AVAILABLE:
             "set_log_options",
             async_handle_set_log_options,
             schema=log_options_schema,
+        )
+
+        async def async_handle_flush_display_log(call: ServiceCall) -> None:
+            """Manually flush pending display log sessions to disk."""
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                _LOGGER.warning("Integration data not available for flush")
+                return
+
+            display_log = data.get("display_log")
+            if not display_log:
+                _LOGGER.warning("Display log manager not initialized")
+                return
+
+            await display_log.async_flush(force=True)
+            _LOGGER.info("Display log flushed successfully")
+
+        hass.services.async_register(
+            DOMAIN,
+            "flush_display_log",
+            async_handle_flush_display_log,
         )
 
         # Per-TV auto brightness timer management
