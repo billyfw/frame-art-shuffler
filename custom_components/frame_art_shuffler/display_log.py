@@ -139,9 +139,7 @@ class DisplayLogManager:
             return
 
         await self._hass.async_add_executor_job(
-            self._base_path.mkdir,
-            parents=True,
-            exist_ok=True,
+            lambda: self._base_path.mkdir(parents=True, exist_ok=True)
         )
         await self._load_pending_buffer()
         self._schedule_flush_timer()
