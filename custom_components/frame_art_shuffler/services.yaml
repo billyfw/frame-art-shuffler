@@ -95,3 +95,53 @@ flush_display_log:
 clear_display_log:
   name: Clear Display Log
   description: Permanently delete all display log data including events, summary, and pending sessions. This action cannot be undone.
+
+turn_on_tv:
+  name: Turn On TV
+  description: Turn on a Frame TV and switch to art mode. Supports an optional reason for activity logging.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device to turn on. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
+    reason:
+      name: Reason
+      description: Optional reason for turning on (e.g., "Billy arrived home"). Appears in activity log.
+      required: false
+      selector:
+        text:
+
+turn_off_tv:
+  name: Turn Off TV
+  description: Turn off a Frame TV screen (stays in art mode). Supports an optional reason for activity logging.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device to turn off. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
+    reason:
+      name: Reason
+      description: Optional reason for turning off (e.g., "Billy left home"). Appears in activity log.
+      required: false
+      selector:
+        text:
