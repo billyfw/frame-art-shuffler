@@ -198,6 +198,13 @@ async def async_shuffle_tv(
         )
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Failed to select image for %s: %s", tv_name, err)
+        log_activity(
+            hass,
+            entry.entry_id,
+            tv_id,
+            "shuffle_failed",
+            f"Failed to select image: {err}",
+        )
         _notify("error", f"Failed to select image: {err}")
         return False
 
@@ -211,6 +218,13 @@ async def async_shuffle_tv(
             "Cannot shuffle %s: image file not found at %s",
             tv_name,
             image_path,
+        )
+        log_activity(
+            hass,
+            entry.entry_id,
+            tv_id,
+            "shuffle_failed",
+            f"Image file missing: {image_filename}",
         )
         _notify("error", "Image file missing")
         return False
@@ -291,6 +305,24 @@ async def async_shuffle_tv(
         )
     except FrameArtError as err:
         _LOGGER.error("Failed to upload %s to %s: %s", image_filename, tv_name, err)
+        log_activity(
+            hass,
+            entry.entry_id,
+            tv_id,
+            "shuffle_failed",
+            f"Shuffle failed for {image_filename}: {err}",
+        )
+        _notify("error", f"Upload failed: {err}")
+        return False
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.error("Unexpected error shuffling %s to %s: %s", image_filename, tv_name, err)
+        log_activity(
+            hass,
+            entry.entry_id,
+            tv_id,
+            "shuffle_failed",
+            f"Shuffle failed for {image_filename}: {err}",
+        )
         _notify("error", f"Upload failed: {err}")
         return False
 
