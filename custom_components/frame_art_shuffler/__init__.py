@@ -77,7 +77,7 @@ if _HA_AVAILABLE:
     from .coordinator import FrameArtCoordinator
     from .config_entry import get_tv_config, list_tv_configs, remove_tv_config
     from . import frame_tv
-    from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory
+    from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory, tv_on, tv_off, set_art_mode, is_screen_on
     from .metadata import MetadataStore
     from .dashboard import async_generate_dashboard
     from .activity import log_activity
@@ -441,6 +441,147 @@ if _HA_AVAILABLE:
             DOMAIN,
             "clear_display_log",
             async_handle_clear_display_log,
+        )
+
+        # --- TV Power Control Services ---
+        async def _resolve_tv_from_call(call: ServiceCall) -> tuple[Any, str, dict[str, Any]]:
+            """Resolve device_id/entity_id to config entry, tv_id, and tv_data."""
+            device_id = call.data.get("device_id")
+            entity_id = call.data.get("entity_id")
+
+            if entity_id and not device_id:
+                ent_reg = er.async_get(hass)
+                entity_entry = ent_reg.async_get(entity_id)
+                if entity_entry:
+                    device_id = entity_entry.device_id
+
+            if not device_id:
+                raise ValueError("Must provide device_id or entity_id")
+
+            device_registry = dr.async_get(hass)
+            device = device_registry.async_get(device_id)
+            if not device:
+                raise ValueError(f"Device {device_id} not found")
+
+            target_entry: Any | None = None
+            for eid in device.config_entries:
+                config_entry = hass.config_entries.async_get_entry(eid)
+                if config_entry and config_entry.domain == DOMAIN:
+                    target_entry = config_entry
+                    break
+
+            if not target_entry:
+                raise ValueError(f"No config entry found for device {device_id}")
+
+            data = hass.data.get(DOMAIN, {}).get(target_entry.entry_id)
+            if not data:
+                raise ValueError(f"Integration data not found for entry {target_entry.entry_id}")
+
+            tv_id = None
+            for identifier in device.identifiers:
+                if identifier[0] == DOMAIN:
+                    tv_id = identifier[1]
+                    break
+
+            if not tv_id:
+                raise ValueError(f"Could not determine TV ID from device {device_id}")
+
+            coordinator = data["coordinator"]
+            tv_data = next((tv for tv in coordinator.data if tv["id"] == tv_id), None)
+            if not tv_data:
+                raise ValueError(f"TV {tv_id} not found in coordinator data")
+
+            return target_entry, tv_id, tv_data
+
+        async def async_handle_turn_on_tv(call: ServiceCall) -> None:
+            """Handle the turn_on_tv service."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            reason = call.data.get("reason")
+
+            ip = tv_data["ip"]
+            mac = tv_data.get("mac")
+            tv_name = tv_data.get("name", tv_id)
+
+            if not mac:
+                raise ValueError(f"Cannot turn on {tv_name}: missing MAC address")
+
+            try:
+                await hass.async_add_executor_job(tv_on, ip, mac)
+                _LOGGER.info(f"Sent Wake-on-LAN to {tv_name}")
+
+                await hass.async_add_executor_job(set_art_mode, ip)
+                _LOGGER.info(f"Switched {tv_name} to art mode")
+
+                # Update status cache
+                data = hass.data.get(DOMAIN, {}).get(target_entry.entry_id, {})
+                status_cache = data.get("tv_status_cache", {})
+                if tv_id in status_cache:
+                    status_cache[tv_id]["screen_on"] = True
+
+                # Log activity with optional reason
+                if reason:
+                    message = f"Screen turned on ({reason})"
+                else:
+                    message = "Screen turned on (turn_on_tv service)"
+                log_activity(hass, target_entry.entry_id, tv_id, "screen_on", message)
+
+                # Start motion off timer if enabled
+                tv_config = get_tv_config(target_entry, tv_id)
+                if tv_config and tv_config.get("enable_motion_control", False):
+                    start_motion_off_timer = data.get("start_motion_off_timer")
+                    if start_motion_off_timer:
+                        start_motion_off_timer(tv_id)
+
+            except Exception as err:
+                _LOGGER.error(f"Failed to turn on {tv_name}: {err}")
+                raise
+
+        async def async_handle_turn_off_tv(call: ServiceCall) -> None:
+            """Handle the turn_off_tv service."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            reason = call.data.get("reason")
+
+            ip = tv_data["ip"]
+            tv_name = tv_data.get("name", tv_id)
+
+            try:
+                await hass.async_add_executor_job(tv_off, ip)
+                _LOGGER.info(f"Turned off {tv_name} screen")
+
+                # Update status cache
+                data = hass.data.get(DOMAIN, {}).get(target_entry.entry_id, {})
+                status_cache = data.get("tv_status_cache", {})
+                if tv_id in status_cache:
+                    status_cache[tv_id]["screen_on"] = False
+
+                # Log activity with optional reason
+                if reason:
+                    message = f"Screen turned off ({reason})"
+                else:
+                    message = "Screen turned off (turn_off_tv service)"
+                log_activity(hass, target_entry.entry_id, tv_id, "screen_off", message)
+
+                # Cancel motion off timer if enabled
+                tv_config = get_tv_config(target_entry, tv_id)
+                if tv_config and tv_config.get("enable_motion_control", False):
+                    cancel_motion_off_timer = data.get("cancel_motion_off_timer")
+                    if cancel_motion_off_timer:
+                        cancel_motion_off_timer(tv_id)
+
+            except Exception as err:
+                _LOGGER.error(f"Failed to turn off {tv_name}: {err}")
+                raise
+
+        hass.services.async_register(
+            DOMAIN,
+            "turn_on_tv",
+            async_handle_turn_on_tv,
+        )
+
+        hass.services.async_register(
+            DOMAIN,
+            "turn_off_tv",
+            async_handle_turn_off_tv,
         )
 
         # Per-TV auto brightness timer management
