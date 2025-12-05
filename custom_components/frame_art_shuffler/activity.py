@@ -4,13 +4,14 @@ This module provides:
 1. ActivityHistorySensor - A sensor entity that displays recent activity
 2. log_activity() - Helper function to record events from throughout the integration
 3. Persistence across HA restarts via RestoreEntity
+4. Automatic retention: keeps events for 7 days
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, asdict, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Callable
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -26,8 +27,8 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Maximum number of events to keep per TV
-MAX_HISTORY_EVENTS = 30
+# Maximum age of events to keep (in days)
+MAX_HISTORY_AGE_DAYS = 7
 
 # Dispatcher signal prefix for activity updates
 ACTIVITY_SIGNAL_PREFIX = f"{DOMAIN}_activity_update"
@@ -91,6 +92,35 @@ ACTIVITY_DESCRIPTION = SensorEntityDescription(
 )
 
 
+def _trim_old_events(tv_history: list[dict[str, str]]) -> None:
+    """Remove events older than MAX_HISTORY_AGE_DAYS.
+    
+    Modifies the list in-place, removing events from the end (oldest).
+    """
+    if not tv_history:
+        return
+    
+    cutoff_time = datetime.now(timezone.utc) - timedelta(days=MAX_HISTORY_AGE_DAYS)
+    
+    # Events are stored most recent first, so iterate from the end
+    while tv_history:
+        try:
+            # Parse timestamp from the last (oldest) event
+            last_event = tv_history[-1]
+            timestamp_str = last_event.get("timestamp", "")
+            event_time = datetime.fromisoformat(timestamp_str)
+            
+            # If event is too old, remove it
+            if event_time < cutoff_time:
+                tv_history.pop()
+            else:
+                # Events are in order, so if this one is recent enough, we're done
+                break
+        except (ValueError, TypeError, KeyError):
+            # If we can't parse the timestamp, keep the event
+            break
+
+
 def log_activity(
     hass: HomeAssistant,
     entry_id: str,
@@ -132,9 +162,8 @@ def log_activity(
     # Prepend new event (most recent first)
     tv_history.insert(0, event.to_dict())
     
-    # Trim to max size
-    while len(tv_history) > MAX_HISTORY_EVENTS:
-        tv_history.pop()
+    # Trim events older than MAX_HISTORY_AGE_DAYS
+    _trim_old_events(tv_history)
     
     # Signal sensors to update
     signal = f"{ACTIVITY_SIGNAL_PREFIX}_{entry_id}_{tv_id}"
@@ -201,7 +230,9 @@ class FrameArtActivitySensor(RestoreEntity, SensorEntity):
             if self._tv_id not in activity_history:
                 restored = last_state.attributes.get("history", [])
                 activity_history[self._tv_id] = restored
-                _LOGGER.debug(f"Restored {len(restored)} activity events for {self._tv_id}")
+                # Trim old events after restore
+                _trim_old_events(activity_history[self._tv_id])
+                _LOGGER.debug(f"Restored {len(activity_history[self._tv_id])} activity events for {self._tv_id}")
         
         # Subscribe to activity updates
         @callback
