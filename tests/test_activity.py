@@ -1,6 +1,6 @@
 """Tests for activity history functionality."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 
@@ -9,8 +9,9 @@ from custom_components.frame_art_shuffler.activity import (
     FrameArtActivitySensor,
     log_activity,
     get_activity_history,
-    MAX_HISTORY_EVENTS,
+    MAX_HISTORY_AGE_DAYS,
     EVENT_TYPES,
+    _trim_old_events,
 )
 from custom_components.frame_art_shuffler.const import DOMAIN
 
@@ -121,21 +122,6 @@ class TestLogActivity:
         assert len(history) == 2
         assert history[0]["message"] == "Second"
         assert history[1]["message"] == "First"
-
-    def test_log_activity_trims_to_max(self):
-        """Test that history is trimmed to MAX_HISTORY_EVENTS."""
-        hass = MagicMock()
-        hass.data = {DOMAIN: {"entry123": {}}}
-        
-        with patch("custom_components.frame_art_shuffler.activity.async_dispatcher_send"):
-            # Add more than max events
-            for i in range(MAX_HISTORY_EVENTS + 5):
-                log_activity(hass, "entry123", "tv123", "motion_detected", f"Event {i}")
-        
-        history = hass.data[DOMAIN]["entry123"]["activity_history"]["tv123"]
-        assert len(history) == MAX_HISTORY_EVENTS
-        # Most recent should be the last one added
-        assert history[0]["message"] == f"Event {MAX_HISTORY_EVENTS + 4}"
 
     def test_log_activity_sends_dispatcher_signal(self):
         """Test that log_activity sends dispatcher signal."""
@@ -310,3 +296,81 @@ class TestEventTypes:
         ]
         for et in expected:
             assert et in EVENT_TYPES, f"Expected event type {et} not found"
+
+
+class TestTimeTrimming:
+    """Tests for time-based event trimming."""
+
+    def test_trim_old_events_removes_old(self):
+        """Test that events older than MAX_HISTORY_AGE_DAYS are removed."""
+        now = datetime.now(timezone.utc)
+        old_time = now - timedelta(days=MAX_HISTORY_AGE_DAYS + 1)
+        recent_time = now - timedelta(days=1)
+        
+        history = [
+            {"timestamp": now.isoformat(), "message": "Most recent"},
+            {"timestamp": recent_time.isoformat(), "message": "Recent"},
+            {"timestamp": old_time.isoformat(), "message": "Old"},
+        ]
+        
+        _trim_old_events(history)
+        
+        assert len(history) == 2
+        assert history[0]["message"] == "Most recent"
+        assert history[1]["message"] == "Recent"
+
+    def test_trim_old_events_keeps_recent(self):
+        """Test that recent events are kept."""
+        now = datetime.now(timezone.utc)
+        recent_time = now - timedelta(days=MAX_HISTORY_AGE_DAYS - 1)
+        
+        history = [
+            {"timestamp": now.isoformat(), "message": "Now"},
+            {"timestamp": recent_time.isoformat(), "message": "Recent"},
+        ]
+        
+        _trim_old_events(history)
+        
+        assert len(history) == 2
+
+    def test_trim_old_events_empty_list(self):
+        """Test that trimming empty list doesn't error."""
+        history = []
+        _trim_old_events(history)
+        assert len(history) == 0
+
+    def test_trim_old_events_invalid_timestamp(self):
+        """Test that invalid timestamps don't cause errors."""
+        history = [
+            {"timestamp": "invalid", "message": "Bad timestamp"},
+            {"timestamp": datetime.now(timezone.utc).isoformat(), "message": "Good"},
+        ]
+        
+        # Should not crash
+        _trim_old_events(history)
+        
+        # Bad timestamp kept (safety), good one definitely kept
+        assert len(history) >= 1
+
+    def test_log_activity_trims_by_age(self):
+        """Test that log_activity trims old events."""
+        hass = MagicMock()
+        hass.data = {DOMAIN: {"entry123": {}}}
+        
+        # Pre-populate with old event
+        old_time = datetime.now(timezone.utc) - timedelta(days=MAX_HISTORY_AGE_DAYS + 1)
+        hass.data[DOMAIN]["entry123"]["activity_history"] = {
+            "tv123": [
+                {"timestamp": old_time.isoformat(), "message": "Old event"}
+            ]
+        }
+        
+        with patch("custom_components.frame_art_shuffler.activity.async_dispatcher_send"):
+            # Add new event (should trigger trim)
+            log_activity(hass, "entry123", "tv123", "motion_detected", "New event")
+        
+        history = hass.data[DOMAIN]["entry123"]["activity_history"]["tv123"]
+        
+        # Should only have the new event
+        assert len(history) == 1
+        assert history[0]["message"] == "New event"
