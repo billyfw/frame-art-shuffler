@@ -8,6 +8,7 @@ run overlapping transfers for the same device.
 """
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -139,26 +140,48 @@ async def async_shuffle_tv(
         if status_callback:
             status_callback(status, message)
 
+    # Get TV name early for error logging (fallback to tv_id if not available)
     tv_config = get_tv_config(entry, tv_id)
-    if not tv_config:
-        _LOGGER.error("Cannot shuffle %s: TV config not found", tv_id)
-        _notify("error", "TV config missing")
+    tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+    try:
+        return await _async_shuffle_tv_inner(
+            hass, entry, tv_id, tv_config, tv_name, reason, skip_if_screen_off, _notify
+        )
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.error("Shuffle failed for %s: %s", tv_name, err)
+        log_activity(
+            hass,
+            entry.entry_id,
+            tv_id,
+            "shuffle_failed",
+            f"Shuffle failed: {err}",
+        )
+        _notify("error", f"Shuffle failed: {err}")
         return False
+
+
+async def _async_shuffle_tv_inner(
+    hass: HomeAssistant,
+    entry: Any,
+    tv_id: str,
+    tv_config: dict[str, Any] | None,
+    tv_name: str,
+    reason: str,
+    skip_if_screen_off: bool,
+    _notify: Callable[[str, str], None],
+) -> bool:
+    """Inner implementation of shuffle - exceptions bubble up to caller."""
+    if not tv_config:
+        raise FrameArtError(f"TV config not found for {tv_id}")
 
     tv_ip = tv_config.get("ip")
     if not tv_ip:
-        _LOGGER.error("Cannot shuffle %s: missing IP address in config", tv_config.get("name", tv_id))
-        _notify("error", "IP address missing")
-        return False
+        raise FrameArtError(f"Missing IP address in config for {tv_name}")
 
     metadata_path = Path(entry.data.get("metadata_path", ""))
     if not metadata_path.exists():
-        _LOGGER.error(
-            "Cannot shuffle %s: metadata file not found at %s",
-            tv_config.get("name", tv_id),
-            metadata_path,
-        )
-        return False
+        raise FrameArtError(f"Metadata file not found at {metadata_path}")
 
     include_tags = tv_config.get("tags", [])
     exclude_tags = tv_config.get("exclude_tags", [])
@@ -187,47 +210,23 @@ async def async_shuffle_tv(
             _notify("skipped", message)
             return False
 
-    try:
-        selected_image, matching_count = await hass.async_add_executor_job(
-            _select_random_image,
-            metadata_path,
-            include_tags,
-            exclude_tags,
-            current_image,
-            tv_config.get("name", tv_id),
-        )
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.error("Failed to select image for %s: %s", tv_name, err)
-        log_activity(
-            hass,
-            entry.entry_id,
-            tv_id,
-            "shuffle_failed",
-            f"Failed to select image: {err}",
-        )
-        _notify("error", f"Failed to select image: {err}")
-        return False
+    selected_image, matching_count = await hass.async_add_executor_job(
+        _select_random_image,
+        metadata_path,
+        include_tags,
+        exclude_tags,
+        current_image,
+        tv_name,
+    )
 
     if not selected_image:
+        # No eligible images - this is not an error, just nothing to do
         return False
 
     image_filename = selected_image["filename"]
     image_path = metadata_path.parent / "library" / image_filename
     if not image_path.exists():
-        _LOGGER.error(
-            "Cannot shuffle %s: image file not found at %s",
-            tv_name,
-            image_path,
-        )
-        log_activity(
-            hass,
-            entry.entry_id,
-            tv_id,
-            "shuffle_failed",
-            f"Image file missing: {image_filename}",
-        )
-        _notify("error", "Image file missing")
-        return False
+        raise FrameArtError(f"Image file missing: {image_filename}")
 
     image_matte = selected_image.get("matte")
     image_filter = selected_image.get("filter")
@@ -294,36 +293,36 @@ async def async_shuffle_tv(
         )
         _notify("skipped", "Another upload already running")
 
-    try:
-        result = await async_guarded_upload(
-            hass,
-            entry,
-            tv_id,
-            "shuffle",
-            _perform_upload,
-            _on_skip,
-        )
-    except FrameArtError as err:
-        _LOGGER.error("Failed to upload %s to %s: %s", image_filename, tv_name, err)
-        log_activity(
-            hass,
-            entry.entry_id,
-            tv_id,
-            "shuffle_failed",
-            f"Shuffle failed for {image_filename}: {err}",
-        )
-        _notify("error", f"Upload failed: {err}")
-        return False
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.error("Unexpected error shuffling %s to %s: %s", image_filename, tv_name, err)
-        log_activity(
-            hass,
-            entry.entry_id,
-            tv_id,
-            "shuffle_failed",
-            f"Shuffle failed for {image_filename}: {err}",
-        )
-        _notify("error", f"Upload failed: {err}")
-        return False
+    max_attempts = 2
+    retry_delay_seconds = 60
 
-    return bool(result)
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await async_guarded_upload(
+                hass,
+                entry,
+                tv_id,
+                "shuffle",
+                _perform_upload,
+                _on_skip,
+            )
+            return bool(result)
+        except (FrameArtError, Exception) as err:  # pylint: disable=broad-except
+            if attempt < max_attempts:
+                _LOGGER.warning(
+                    "Shuffle attempt %d/%d failed for %s to %s: %s. Retrying in %ds...",
+                    attempt,
+                    max_attempts,
+                    image_filename,
+                    tv_name,
+                    err,
+                    retry_delay_seconds,
+                )
+                await asyncio.sleep(retry_delay_seconds)
+            else:
+                # Re-raise so outer handler logs it
+                raise FrameArtError(
+                    f"Upload failed for {image_filename} after {max_attempts} attempts: {err}"
+                ) from err
+
+    return False
