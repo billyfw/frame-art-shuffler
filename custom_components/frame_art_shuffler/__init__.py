@@ -908,20 +908,35 @@ if _HA_AVAILABLE:
                 # Signal sensors to update
                 async_dispatcher_send(hass, f"{DOMAIN}_motion_off_time_updated_{entry.entry_id}_{tv_id}")
 
-        def start_motion_off_timer(tv_id: str) -> None:
+        # Constants for upload-in-progress reschedule behavior
+        UPLOAD_WAIT_RESCHEDULE_SECONDS = 30
+        UPLOAD_WAIT_MAX_RESCHEDULES = 10  # 10 * 30s = 5 minutes max wait
+
+        def start_motion_off_timer(tv_id: str, reschedule_count: int = 0) -> None:
             """Start or restart the motion off timer for a specific TV.
             
             Always starts a fresh timer from now. If auto-motion is enabled
             and the TV is on, we manage its power state.
+            
+            Args:
+                tv_id: The TV identifier
+                reschedule_count: Number of times we've rescheduled due to upload-in-progress.
+                    Used internally for the safety net; callers should not pass this.
             """
             tv_configs = list_tv_configs(entry)
             tv_config = tv_configs.get(tv_id)
             if not tv_config:
                 return
 
-            off_delay_minutes = tv_config.get("motion_off_delay", 15)
+            # If this is a reschedule due to upload-in-progress, use short delay
+            # Otherwise use the configured off_delay_minutes
+            if reschedule_count > 0:
+                off_time = datetime.now(timezone.utc) + timedelta(seconds=UPLOAD_WAIT_RESCHEDULE_SECONDS)
+            else:
+                off_delay_minutes = tv_config.get("motion_off_delay", 15)
+                off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
+            
             tv_name = tv_config.get("name", tv_id)
-            off_time = datetime.now(timezone.utc) + timedelta(minutes=off_delay_minutes)
             
             cancel_motion_off_timer(tv_id)
             motion_off_times[tv_id] = off_time
@@ -942,6 +957,30 @@ if _HA_AVAILABLE:
                 if not ip:
                     _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
                     return
+
+                # Check if an upload is in progress for this TV - if so, delay turn-off
+                # to avoid killing the connection mid-upload and causing spurious errors
+                upload_flags = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("upload_in_progress", set())
+                if tv_id in upload_flags:
+                    # Safety net: limit max reschedules to prevent infinite loop if something
+                    # goes very wrong. In practice this shouldn't be needed because:
+                    # 1. async_guarded_upload uses try/finally to always clear the flag
+                    # 2. Uploads have their own timeouts (websocket, HTTP)
+                    # 3. HA restart would clear in-memory state anyway
+                    # But we add this as defense-in-depth against unforeseen edge cases.
+                    if reschedule_count >= UPLOAD_WAIT_MAX_RESCHEDULES:
+                        _LOGGER.warning(
+                            "Auto motion: Max reschedules (%d) reached for %s while waiting for upload. "
+                            "Proceeding with turn-off anyway.",
+                            UPLOAD_WAIT_MAX_RESCHEDULES, tv_name
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Auto motion: Delaying turn-off for %s - upload in progress (reschedule %d/%d)",
+                            tv_name, reschedule_count + 1, UPLOAD_WAIT_MAX_RESCHEDULES
+                        )
+                        start_motion_off_timer(tv_id, reschedule_count + 1)
+                        return
 
                 try:
                     _LOGGER.info(f"Auto motion: Turning off {tv_name} ({ip}) due to no motion")
