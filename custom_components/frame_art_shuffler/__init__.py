@@ -525,6 +525,40 @@ if _HA_AVAILABLE:
                     message = "Screen turned on (turn_on_tv service)"
                 log_activity(hass, target_entry.entry_id, tv_id, "screen_on", message)
 
+                # Start display log session for the current image
+                display_log = data.get("display_log")
+                if display_log:
+                    # Get current image from shuffle_cache or config
+                    shuffle_cache = data.get("shuffle_cache", {}).get(tv_id, {})
+                    current_image = shuffle_cache.get("current_image")
+                    if not current_image:
+                        current_image = tv_config.get("current_image") if tv_config else None
+                    
+                    if current_image:
+                        # Try to get image tags from metadata
+                        metadata_path = data.get("metadata_path")
+                        image_tags: list[str] = []
+                        if metadata_path:
+                            try:
+                                from .metadata import MetadataStore
+                                store = MetadataStore(metadata_path)
+                                image_meta = store.get_image(current_image)
+                                if image_meta:
+                                    image_tags = list(image_meta.get("tags", []))
+                            except Exception:
+                                pass
+                        
+                        # Get TV's configured tags for matched_tags computation
+                        tv_tags = tv_config.get("include_tags") if tv_config else None
+                        
+                        display_log.note_screen_on(
+                            tv_id=tv_id,
+                            tv_name=tv_name,
+                            filename=current_image,
+                            tags=image_tags,
+                            tv_tags=tv_tags,
+                        )
+
                 # Start motion off timer if enabled
                 tv_config = get_tv_config(target_entry, tv_id)
                 if tv_config and tv_config.get("enable_motion_control", False):
@@ -560,6 +594,11 @@ if _HA_AVAILABLE:
                 else:
                     message = "Screen turned off (turn_off_tv service)"
                 log_activity(hass, target_entry.entry_id, tv_id, "screen_off", message)
+
+                # Close display log session since screen is turning off
+                display_log = data.get("display_log")
+                if display_log:
+                    display_log.note_screen_off(tv_id=tv_id, tv_name=tv_name)
 
                 # Cancel motion off timer if enabled
                 tv_config = get_tv_config(target_entry, tv_id)
@@ -657,7 +696,7 @@ if _HA_AVAILABLE:
                 
             Returns:
                 True if brightness was set successfully, False otherwise
-            "
+            """
             import asyncio
             
             tv_configs = list_tv_configs(entry)
