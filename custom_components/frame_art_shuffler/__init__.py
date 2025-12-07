@@ -635,6 +635,178 @@ if _HA_AVAILABLE:
             # Trigger immediate adjustment so we don't wait 10 minutes
             hass.async_create_task(async_adjust_tv_brightness(tv_id))
 
+        # ===== BRIGHTNESS SETTING WITH RETRY =====
+        async def async_set_brightness_with_retry(
+            tv_id: str,
+            brightness: int,
+            *,
+            reason: str = "manual",
+            max_attempts: int = 2,
+            retry_delay_seconds: int = 5,
+        ) -> bool:
+            """Set TV brightness with retry logic and activity logging on failure.
+            
+            Args:
+                tv_id: The TV identifier
+                brightness: Target brightness (1-10)
+                reason: Description for activity log (e.g., "auto, lux: 150" or "post-shuffle sync")
+                max_attempts: Number of attempts before giving up
+                retry_delay_seconds: Delay between retries
+                
+            Returns:
+                True if brightness was set successfully, False otherwise
+            """
+            import asyncio
+            
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config:
+                _LOGGER.warning(f"Brightness: TV config not found for {tv_id}")
+                return False
+            
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                return False
+            
+            coordinator = data["coordinator"]
+            tv_data = next((tv for tv in coordinator.data if tv["id"] == tv_id), None)
+            if not tv_data:
+                return False
+            
+            ip = tv_data["ip"]
+            tv_name = tv_config.get("name", tv_id)
+            
+            last_error = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    _LOGGER.info(
+                        f"Brightness: Attempting to set {tv_name} ({ip}) to {brightness} "
+                        f"(attempt {attempt}/{max_attempts})"
+                    )
+                    await hass.async_add_executor_job(
+                        functools.partial(
+                            frame_tv.set_tv_brightness,
+                            ip,
+                            brightness,
+                        )
+                    )
+                    
+                    # Success! Store timestamp and brightness
+                    from .config_entry import update_tv_config as update_config
+                    update_config(
+                        hass,
+                        entry,
+                        tv_id,
+                        {
+                            "last_auto_brightness_timestamp": datetime.now(timezone.utc).isoformat(),
+                            "current_brightness": brightness,
+                        },
+                    )
+                    
+                    # Also store in hass.data for lightweight entity sync
+                    brightness_cache = hass.data[DOMAIN][entry.entry_id].setdefault("brightness_cache", {})
+                    brightness_cache[tv_id] = brightness
+                    
+                    # Send brightness signal so sensors update
+                    signal = f"{DOMAIN}_brightness_adjusted_{entry.entry_id}_{tv_id}"
+                    async_dispatcher_send(hass, signal)
+                    
+                    _LOGGER.info(f"Brightness: {tv_name} successfully set to {brightness}")
+                    
+                    # Log activity on success
+                    log_activity(
+                        hass, entry.entry_id, tv_id,
+                        "brightness_adjusted",
+                        f"Brightness → {brightness} ({reason})",
+                    )
+                    
+                    return True
+                    
+                except Exception as err:
+                    last_error = err
+                    if attempt < max_attempts:
+                        _LOGGER.warning(
+                            f"Brightness attempt {attempt}/{max_attempts} failed for {tv_name}: {err}. "
+                            f"Retrying in {retry_delay_seconds}s..."
+                        )
+                        await asyncio.sleep(retry_delay_seconds)
+                    else:
+                        _LOGGER.error(
+                            f"Brightness failed for {tv_name} after {max_attempts} attempts: {err}"
+                        )
+            
+            # All attempts failed - log to activity
+            log_activity(
+                hass, entry.entry_id, tv_id,
+                "brightness_failed",
+                f"Brightness → {brightness} failed: {last_error}",
+            )
+            return False
+
+        async def async_sync_brightness_after_shuffle(tv_id: str) -> bool:
+            """Sync brightness to the TV after a shuffle completes.
+            
+            This ensures the TV has the correct brightness even if the previous
+            set command was lost or the TV reset to a different value.
+            Uses the cached brightness value (from auto-brightness or manual set),
+            or calculates from lux sensor if auto-brightness is enabled.
+            """
+            tv_configs = list_tv_configs(entry)
+            tv_config = tv_configs.get(tv_id)
+            if not tv_config:
+                return False
+            
+            tv_name = tv_config.get("name", tv_id)
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+            
+            # Determine target brightness
+            target_brightness = None
+            reason = "post-shuffle sync"
+            
+            # If auto-brightness is enabled, calculate from lux
+            if tv_config.get("enable_dynamic_brightness", False):
+                lux_entity_id = tv_config.get("light_sensor")
+                if lux_entity_id:
+                    lux_state = hass.states.get(lux_entity_id)
+                    if lux_state and lux_state.state not in ("unavailable", "unknown"):
+                        try:
+                            current_lux = float(lux_state.state)
+                            min_lux = tv_config.get("min_lux", 0)
+                            max_lux = tv_config.get("max_lux", 1000)
+                            min_brightness = tv_config.get("min_brightness", 1)
+                            max_brightness = tv_config.get("max_brightness", 10)
+                            
+                            if max_lux > min_lux:
+                                normalized = (current_lux - min_lux) / (max_lux - min_lux)
+                                normalized = max(0.0, min(1.0, normalized))
+                                target_brightness = int(round(
+                                    min_brightness + normalized * (max_brightness - min_brightness)
+                                ))
+                                target_brightness = max(min_brightness, min(max_brightness, target_brightness))
+                                reason = f"post-shuffle sync, lux: {current_lux:.0f}"
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Fallback to cached brightness if auto-brightness didn't provide a value
+            if target_brightness is None:
+                brightness_cache = data.get("brightness_cache", {})
+                target_brightness = brightness_cache.get(tv_id)
+            
+            # Final fallback to stored config brightness
+            if target_brightness is None:
+                target_brightness = tv_config.get("current_brightness")
+            
+            if target_brightness is None:
+                _LOGGER.debug(f"Post-shuffle brightness sync: No brightness value for {tv_name}, skipping")
+                return True  # Not an error, just nothing to sync
+            
+            _LOGGER.info(f"Post-shuffle brightness sync: Setting {tv_name} to {target_brightness}")
+            return await async_set_brightness_with_retry(
+                tv_id,
+                int(target_brightness),
+                reason=reason,
+            )
+
         # Auto brightness helper for a single TV
         async def async_adjust_tv_brightness(tv_id: str, restart_timer: bool = False) -> bool:
             """Adjust brightness for a single TV. Returns True on success."""
@@ -716,61 +888,23 @@ if _HA_AVAILABLE:
                     start_tv_timer(tv_id)
                 return True
 
-            # Set brightness on TV
-            try:
-                _LOGGER.info(
-                    f"Auto brightness: Attempting to set {tv_name} ({ip}) to brightness {target_brightness}"
-                )
-                await hass.async_add_executor_job(
-                    functools.partial(
-                        frame_tv.set_tv_brightness,
-                        ip,
-                        target_brightness,
-                    )
-                )
-                # Store timestamp and brightness for successful adjustment (persisted for restart)
-                from .config_entry import update_tv_config as update_config
-                update_config(
-                    hass,
-                    entry,
-                    tv_id,
-                    {
-                        "last_auto_brightness_timestamp": datetime.now(timezone.utc).isoformat(),
-                        "current_brightness": target_brightness,
-                    },
-                )
-                # Also store in hass.data for lightweight entity sync
-                brightness_cache = hass.data[DOMAIN][entry.entry_id].setdefault("brightness_cache", {})
-                brightness_cache[tv_id] = target_brightness
-                
-                # Send brightness signal so sensors update
-                from homeassistant.helpers.dispatcher import async_dispatcher_send
-                signal = f"{DOMAIN}_brightness_adjusted_{entry.entry_id}_{tv_id}"
-                async_dispatcher_send(hass, signal)
-                
-                _LOGGER.info(
-                    f"Auto brightness: {tv_name} successfully set to {target_brightness} "
-                    f"(lux={current_lux}, normalized={normalized:.2f})"
-                )
-                
-                # Log activity
-                log_activity(
-                    hass, entry.entry_id, tv_id,
-                    "brightness_adjusted",
-                    f"Brightness → {target_brightness} (auto, lux: {current_lux:.0f})",
-                )
-                
-                # Restart timer if requested (e.g., from Trigger Now button)
-                if restart_timer and tv_config.get("enable_dynamic_brightness", False):
-                    start_tv_timer(tv_id)
-                
-                return True
-            except Exception as err:
-                _LOGGER.warning(f"Failed to set brightness for {tv_name}: {err}")
-                return False
+            # Set brightness on TV with retry logic
+            success = await async_set_brightness_with_retry(
+                tv_id,
+                target_brightness,
+                reason=f"auto, lux: {current_lux:.0f}",
+            )
+            
+            # Restart timer if requested (e.g., from Trigger Now button)
+            if restart_timer and tv_config.get("enable_dynamic_brightness", False):
+                start_tv_timer(tv_id)
+            
+            return success
 
-        # Store helper functions so buttons/switches can use them
+        # Store helper functions so buttons/switches/shuffle can use them
         hass.data[DOMAIN][entry.entry_id]["async_adjust_tv_brightness"] = async_adjust_tv_brightness
+        hass.data[DOMAIN][entry.entry_id]["async_set_brightness_with_retry"] = async_set_brightness_with_retry
+        hass.data[DOMAIN][entry.entry_id]["async_sync_brightness_after_shuffle"] = async_sync_brightness_after_shuffle
         hass.data[DOMAIN][entry.entry_id]["start_tv_timer"] = start_tv_timer
         hass.data[DOMAIN][entry.entry_id]["cancel_tv_timer"] = cancel_tv_timer
 

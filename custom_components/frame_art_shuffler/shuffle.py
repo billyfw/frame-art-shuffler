@@ -281,6 +281,17 @@ async def _async_shuffle_tv_inner(
             )
 
         _notify("success", f"Shuffled to {image_filename}")
+        
+        # Sync brightness after shuffle to ensure TV has correct brightness
+        # This helps recover from cases where brightness was set but TV didn't apply it
+        async_sync_brightness = entry_data.get("async_sync_brightness_after_shuffle")
+        if async_sync_brightness:
+            try:
+                await async_sync_brightness(tv_id)
+            except Exception as err:
+                # Don't fail the shuffle if brightness sync fails - it's logged separately
+                _LOGGER.warning(f"Post-shuffle brightness sync failed for {tv_name}: {err}")
+        
         return True
 
     def _on_skip() -> None:
