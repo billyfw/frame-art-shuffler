@@ -643,6 +643,7 @@ if _HA_AVAILABLE:
             reason: str = "manual",
             max_attempts: int = 2,
             retry_delay_seconds: int = 5,
+            log_success: bool = True,
         ) -> bool:
             """Set TV brightness with retry logic and activity logging on failure.
             
@@ -652,10 +653,11 @@ if _HA_AVAILABLE:
                 reason: Description for activity log (e.g., "auto, lux: 150" or "post-shuffle sync")
                 max_attempts: Number of attempts before giving up
                 retry_delay_seconds: Delay between retries
+                log_success: Whether to log activity entry on success (default True)
                 
             Returns:
                 True if brightness was set successfully, False otherwise
-            """
+            "
             import asyncio
             
             tv_configs = list_tv_configs(entry)
@@ -713,12 +715,13 @@ if _HA_AVAILABLE:
                     
                     _LOGGER.info(f"Brightness: {tv_name} successfully set to {brightness}")
                     
-                    # Log activity on success
-                    log_activity(
-                        hass, entry.entry_id, tv_id,
-                        "brightness_adjusted",
-                        f"Brightness → {brightness} ({reason})",
-                    )
+                    # Log activity on success (can be suppressed for background operations)
+                    if log_success:
+                        log_activity(
+                            hass, entry.entry_id, tv_id,
+                            "brightness_adjusted",
+                            f"Brightness → {brightness} ({reason})",
+                        )
                     
                     return True
                     
@@ -805,6 +808,7 @@ if _HA_AVAILABLE:
                 tv_id,
                 int(target_brightness),
                 reason=reason,
+                log_success=False,  # Don't create noisy activity entries for background sync
             )
 
         # Auto brightness helper for a single TV
