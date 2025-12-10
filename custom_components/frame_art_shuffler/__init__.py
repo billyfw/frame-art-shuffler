@@ -852,12 +852,50 @@ if _HA_AVAILABLE:
                 return True  # Not an error, just nothing to sync
             
             _LOGGER.info(f"Post-shuffle brightness sync: Setting {tv_name} to {target_brightness}")
-            return await async_set_brightness_with_retry(
+            
+            # Get TV IP for verification
+            coordinator = data.get("coordinator")
+            tv_data = next((tv for tv in coordinator.data if tv["id"] == tv_id), None) if coordinator else None
+            ip = tv_data["ip"] if tv_data else None
+            
+            success = await async_set_brightness_with_retry(
                 tv_id,
                 int(target_brightness),
                 reason=reason,
                 log_success=False,  # Don't create noisy activity entries for background sync
             )
+            
+            if success and ip:
+                # Schedule delayed verification and reinforcement to catch brightness drift
+                # See docs/BRIGHTNESS_DRIFT.md for details on this issue
+                async def _delayed_brightness_check() -> None:
+                    await asyncio.sleep(5)  # Wait for TV to settle after image render
+                    try:
+                        actual = await hass.async_add_executor_job(
+                            frame_tv.get_tv_brightness, ip
+                        )
+                        if actual is not None and actual != target_brightness:
+                            _LOGGER.warning(
+                                f"Brightness drift detected for {tv_name}: expected {target_brightness}, "
+                                f"TV reports {actual}. Re-setting brightness."
+                            )
+                            # Re-set brightness to correct the drift
+                            await async_set_brightness_with_retry(
+                                tv_id,
+                                int(target_brightness),
+                                reason="drift correction",
+                                log_success=False,
+                            )
+                        else:
+                            _LOGGER.debug(
+                                f"Post-shuffle brightness verified for {tv_name}: {actual}"
+                            )
+                    except Exception as err:
+                        _LOGGER.debug(f"Post-shuffle brightness verification failed for {tv_name}: {err}")
+                
+                hass.async_create_task(_delayed_brightness_check())
+            
+            return success
 
         # Auto brightness helper for a single TV
         async def async_adjust_tv_brightness(tv_id: str, restart_timer: bool = False) -> bool:

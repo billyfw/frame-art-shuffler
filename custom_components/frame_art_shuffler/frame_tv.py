@@ -449,6 +449,20 @@ def set_tv_brightness(ip: str, brightness: int) -> None:
             _LOGGER.info("Brightness command sent to %s (verification timed out)", ip)
 
 
+def get_tv_brightness(ip: str) -> Optional[int]:
+    """Query the TV's current brightness value.
+    
+    Returns the brightness (1-10) or None if the query fails.
+    This opens a new connection to the TV to get the current value.
+    """
+    try:
+        with _FrameTVSession(ip) as session:
+            return _get_brightness_value(session.art)
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.debug("Failed to get brightness from %s: %s", ip, err)
+        return None
+
+
 def is_art_mode_enabled(ip: str) -> Optional[bool]:
     """Return True when the TV reports art mode is active, False if not, None if unknown.
     
