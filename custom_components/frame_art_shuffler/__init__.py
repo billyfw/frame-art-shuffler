@@ -777,12 +777,21 @@ if _HA_AVAILABLE:
                             f"Brightness failed for {tv_name} after {max_attempts} attempts: {err}"
                         )
             
-            # All attempts failed - log to activity
-            log_activity(
-                hass, entry.entry_id, tv_id,
-                "brightness_failed",
-                f"Brightness → {brightness} failed: {last_error}",
-            )
+            # All attempts failed - only log to activity if screen was on (unexpected failure)
+            # When screen is off, brightness commands are expected to fail
+            status_cache = data.get("tv_status_cache", {})
+            screen_on = status_cache.get(tv_id, {}).get("screen_on", True)  # Default True to be safe
+            
+            if screen_on:
+                log_activity(
+                    hass, entry.entry_id, tv_id,
+                    "brightness_failed",
+                    f"Brightness → {brightness} failed: {last_error}",
+                )
+            else:
+                _LOGGER.debug(
+                    f"Brightness: Skipped failure log for {tv_name} - screen is off (expected)"
+                )
             return False
 
         async def async_sync_brightness_after_shuffle(tv_id: str) -> bool:
