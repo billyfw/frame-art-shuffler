@@ -11,6 +11,7 @@ See README.md for details on standalone vs. hybrid deployment modes.
 """
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import functools
@@ -869,6 +870,7 @@ if _HA_AVAILABLE:
                 # Schedule delayed verification and reinforcement to catch brightness drift
                 # See docs/BRIGHTNESS_DRIFT.md for details on this issue
                 async def _delayed_brightness_check() -> None:
+                    _LOGGER.debug(f"Starting delayed brightness verification for {tv_name}")
                     await asyncio.sleep(5)  # Wait for TV to settle after image render
                     try:
                         actual = await hass.async_add_executor_job(
