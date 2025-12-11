@@ -266,6 +266,9 @@ class FrameArtShuffleButton(ButtonEntity):
         sequence (which updates timers and status). Otherwise we just do a
         simple shuffle.
         """
+        log_activity(self.hass, self._entry.entry_id, self._tv_id, f"Manual shuffle button pressed for {self._tv_name}")
+        _LOGGER.info(f"Manual shuffle button pressed for {self._tv_name}")
+        
         tv_config = get_tv_config(self._entry, self._tv_id)
         auto_shuffle_enabled = tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False) if tv_config else False
         
