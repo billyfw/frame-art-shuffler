@@ -633,7 +633,16 @@ def set_art_mode(ip: str) -> None:
 
 
 def tv_off(ip: str) -> None:
-    """Power off Frame TV screen while staying in art mode (hold KEY_POWER for 3 seconds)."""
+    """Power off Frame TV screen while staying in art mode (hold KEY_POWER for 3 seconds).
+    
+    This operation is idempotent - if the TV screen is already off (or unreachable),
+    the function returns successfully without attempting to send a power command.
+    """
+    # Check if screen is already off before attempting power command
+    # is_screen_on() returns False if screen is off OR if TV is unreachable
+    if not is_screen_on(ip, timeout=_SCREEN_CHECK_TIMEOUT):
+        _LOGGER.info("TV %s screen is already off or unreachable, skipping power command", ip)
+        return
 
     token_path = _token_path(ip)
     last_error: Optional[Exception] = None
