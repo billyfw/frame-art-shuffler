@@ -774,7 +774,7 @@ def _build_activity_section(entities: dict[str, str]) -> dict[str, Any] | None:
 _No activity recorded yet_
 {{% else %}}
 {{% set ns = namespace(last_day=None) %}}
-{{% for event in history[:30] %}}
+{{% for event in history %}}
 {{% if event.day_header != ns.last_day %}}
 **{{{{ event.day_header }}}}**
 {{% set ns.last_day = event.day_header %}}
