@@ -142,7 +142,7 @@ if _HA_AVAILABLE:
                 "mac": tv_data.get("mac"),
                 "name": tv_data.get("name"),
                 "short_name": tv_data.get("short_name"),
-                "motion_sensor": tv_data.get("motion_sensor"),
+                "motion_sensors": tv_data.get("motion_sensors", []),
                 "light_sensor": tv_data.get("light_sensor"),
             }
         return structural
@@ -160,6 +160,9 @@ if _HA_AVAILABLE:
         # Migrate TV data from metadata.json to config entry (one-time)
         if "tvs" not in entry.data or not entry.data["tvs"]:
             await _async_migrate_from_metadata(hass, entry, metadata_path)
+
+        # Migrate motion_sensor (singular) to motion_sensors (list) - v1.1.0
+        await _async_migrate_motion_sensors(hass, entry)
 
         coordinator = FrameArtCoordinator(hass, entry, metadata_path)
         await coordinator.async_config_entry_first_refresh()
@@ -1335,15 +1338,15 @@ if _HA_AVAILABLE:
             if not tv_config:
                 return
 
-            motion_sensor = tv_config.get("motion_sensor")
-            if not motion_sensor:
-                _LOGGER.warning(f"Auto motion: No motion sensor configured for {tv_id}")
+            motion_sensors = tv_config.get("motion_sensors", [])
+            if not motion_sensors:
+                _LOGGER.warning(f"Auto motion: No motion sensors configured for {tv_id}")
                 return
 
             tv_name = tv_config.get("name", tv_id)
             ip = tv_config.get("ip")
 
-            # We don't check hass.states.get(motion_sensor) here because the sensor
+            # We don't check hass.states.get() here because sensors
             # might not be initialized yet (e.g. Z-Wave/Zigbee at startup).
             # async_track_state_change_event handles missing entities gracefully
             # and will trigger once the entity becomes available.
@@ -1356,15 +1359,17 @@ if _HA_AVAILABLE:
                     return
 
                 # Only trigger on motion detected (state = "on")
+                # Any sensor in the list reporting "on" will wake the TV (OR logic)
                 if new_state.state == "on":
-                    _LOGGER.debug(f"Auto motion: Motion detected for {tv_name}")
+                    sensor_id = new_state.entity_id
+                    _LOGGER.debug(f"Auto motion: Motion detected for {tv_name} (sensor: {sensor_id})")
                     hass.async_create_task(async_handle_motion(tv_id, tv_config))
 
-            # Subscribe to state changes
+            # Subscribe to state changes for all configured motion sensors
             from homeassistant.helpers.event import async_track_state_change_event
             unsubscribe = async_track_state_change_event(
                 hass,
-                [motion_sensor],
+                motion_sensors,
                 motion_state_changed,
             )
             motion_listeners[tv_id] = unsubscribe
@@ -1384,7 +1389,8 @@ if _HA_AVAILABLE:
                     _LOGGER.debug(f"Auto motion: Could not check {tv_name} screen state: {err}")
                     # If we can't check, don't start timer - wait for motion
             
-            _LOGGER.info(f"Auto motion: Started listener for {tv_name} (sensor: {motion_sensor})")
+            sensors_str = ", ".join(motion_sensors)
+            _LOGGER.info(f"Auto motion: Started listener for {tv_name} (sensors: {sensors_str})")
 
         def start_motion_listener(tv_id: str) -> None:
             """Sync wrapper to start motion listener."""
@@ -1499,6 +1505,40 @@ if _HA_AVAILABLE:
         if tvs:
             data = {**entry.data, "tvs": tvs}
             hass.config_entries.async_update_entry(entry, data=data)
+
+
+    async def _async_migrate_motion_sensors(hass: Any, entry: Any) -> None:
+        """Migrate motion_sensor (singular string) to motion_sensors (list).
+        
+        This migration converts the old single motion sensor config to the new
+        multi-sensor list format. Added in v1.1.0.
+        """
+        tvs = entry.data.get("tvs", {})
+        if not tvs:
+            return
+
+        # Check if any TV needs migration
+        needs_migration = any(
+            "motion_sensor" in tv_config and "motion_sensors" not in tv_config
+            for tv_config in tvs.values()
+        )
+
+        if not needs_migration:
+            return
+
+        # Perform migration
+        data = {**entry.data}
+        tvs_copy = {tv_id: tv_data.copy() for tv_id, tv_data in tvs.items()}
+
+        for tv_id, tv_config in tvs_copy.items():
+            if "motion_sensor" in tv_config:
+                old_value = tv_config.pop("motion_sensor")
+                # Convert single value to list (or empty list if None/empty)
+                tv_config["motion_sensors"] = [old_value] if old_value else []
+
+        data["tvs"] = tvs_copy
+        hass.config_entries.async_update_entry(entry, data=data)
+        _LOGGER.info("Migrated motion_sensor config to motion_sensors list format")
 
 
     @callback
