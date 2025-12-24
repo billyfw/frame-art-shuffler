@@ -17,7 +17,6 @@ from .config_entry import get_tv_config
 from .const import (
     CONF_ENABLE_AUTO_SHUFFLE,
     CONF_SHUFFLE_FREQUENCY,
-    CONF_MOTION_SENSOR,
     CONF_LIGHT_SENSOR,
     DOMAIN,
     SIGNAL_SHUFFLE,
@@ -326,7 +325,7 @@ class FrameArtTVEntity(SensorEntity):
             "mac": tv_config.get("mac"),
             "tags": tv_config.get("tags", []),
             "exclude_tags": tv_config.get("notTags", []),
-            "motion_sensor": tv_config.get(CONF_MOTION_SENSOR),
+            "motion_sensors": tv_config.get("motion_sensors", []),
             "light_sensor": tv_config.get(CONF_LIGHT_SENSOR),
             "entity_picture": self.entity_picture,
         }
@@ -607,11 +606,11 @@ class FrameArtMACEntity(SensorEntity):
 
 
 class FrameArtMotionSensorEntity(SensorEntity):
-    """Diagnostic sensor for TV motion sensor entity ID."""
+    """Diagnostic sensor for TV motion sensor entity IDs."""
 
     entity_description = MOTION_SENSOR_DESCRIPTION
     _attr_has_entity_name = True
-    _attr_name = "Auto-Motion Sensor"
+    _attr_name = "Auto-Motion Sensors"
 
     def __init__(self, entry: ConfigEntry, tv_id: str) -> None:
         self._tv_id = tv_id
@@ -630,11 +629,12 @@ class FrameArtMotionSensorEntity(SensorEntity):
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
-        """Return the motion sensor entity ID."""
+        """Return the motion sensor entity IDs as comma-separated string."""
         tv_config = get_tv_config(self._entry, self._tv_id)
         if not tv_config:
             return None
-        return tv_config.get("motion_sensor")
+        sensors = tv_config.get("motion_sensors", [])
+        return ", ".join(sensors) if sensors else None
 
 
 class FrameArtLightSensorEntity(SensorEntity):

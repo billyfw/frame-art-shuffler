@@ -29,7 +29,8 @@ from .const import (
     CONF_TAGS,
     CONF_TOKEN_DIR,
     CONF_TV_ID,
-    CONF_MOTION_SENSOR,
+    CONF_MOTION_SENSOR,  # Deprecated: for migration only
+    CONF_MOTION_SENSORS,
     CONF_LIGHT_SENSOR,
     CONF_ENABLE_AUTO_SHUFFLE,
     CONF_MIN_LUX,
@@ -401,7 +402,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
-            motion_sensor = user_input.get(CONF_MOTION_SENSOR)
+            motion_sensors = user_input.get(CONF_MOTION_SENSORS) or []
             light_sensor = user_input.get(CONF_LIGHT_SENSOR)
             min_lux = user_input.get(CONF_MIN_LUX, 0)
             max_lux = user_input.get(CONF_MAX_LUX, 1000)
@@ -451,7 +452,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     "exclude_tags": exclude_tags,
                     "shuffle_frequency_minutes": frequency,
                     "enable_auto_shuffle": enable_auto_shuffle,
-                    "motion_sensor": motion_sensor,
+                    "motion_sensors": motion_sensors,
                     "light_sensor": light_sensor,
                     "min_lux": min_lux,
                     "max_lux": max_lux,
@@ -495,8 +496,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_EXCLUDE_TAGS, default=current_exclude): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=current_config.get("shuffle_frequency_minutes", 30)): vol.Coerce(int),
                 vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=current_config.get("enable_auto_shuffle", False)): bool,
-                vol.Optional(CONF_MOTION_SENSOR, default=current_config.get("motion_sensor")): EntitySelector(
-                    EntitySelectorConfig(domain="binary_sensor")
+                vol.Optional(CONF_MOTION_SENSORS, default=current_config.get("motion_sensors", [])): EntitySelector(
+                    EntitySelectorConfig(domain="binary_sensor", device_class="motion", multiple=True)
                 ),
                 vol.Optional(CONF_LIGHT_SENSOR, default=current_config.get("light_sensor")): EntitySelector(
                     EntitySelectorConfig(domain="sensor")
@@ -534,7 +535,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
-            motion_sensor = user_input.get(CONF_MOTION_SENSOR)
+            motion_sensors = user_input.get(CONF_MOTION_SENSORS) or []
             light_sensor = user_input.get(CONF_LIGHT_SENSOR)
             min_lux = user_input.get(CONF_MIN_LUX, 0)
             max_lux = user_input.get(CONF_MAX_LUX, 1000)
@@ -604,7 +605,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         "tags": tags,
                         "exclude_tags": exclude_tags,
                         "shuffle_frequency_minutes": frequency,
-                        "motion_sensor": motion_sensor,
+                        "motion_sensors": motion_sensors,
                         "light_sensor": light_sensor,
                         "min_lux": min_lux,
                         "max_lux": max_lux,
@@ -633,8 +634,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_EXCLUDE_TAGS, default=preserved_input.get(CONF_EXCLUDE_TAGS, "")): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=preserved_input.get(CONF_SHUFFLE_FREQUENCY, 30)): vol.Coerce(int),
                 vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=preserved_input.get(CONF_ENABLE_AUTO_SHUFFLE, False)): bool,
-                vol.Optional(CONF_MOTION_SENSOR, default=preserved_input.get(CONF_MOTION_SENSOR)): EntitySelector(
-                    EntitySelectorConfig(domain="binary_sensor")
+                vol.Optional(CONF_MOTION_SENSORS, default=preserved_input.get(CONF_MOTION_SENSORS, [])): EntitySelector(
+                    EntitySelectorConfig(domain="binary_sensor", device_class="motion", multiple=True)
                 ),
                 vol.Optional(CONF_LIGHT_SENSOR, default=preserved_input.get(CONF_LIGHT_SENSOR)): EntitySelector(
                     EntitySelectorConfig(domain="sensor")
