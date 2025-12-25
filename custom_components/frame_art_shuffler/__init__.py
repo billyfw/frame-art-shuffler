@@ -1276,9 +1276,14 @@ if _HA_AVAILABLE:
 
         async def async_handle_motion(tv_id: str, tv_config: dict, sensor_id: str | None = None) -> None:
             """Handle motion detection for a TV."""
-            tv_name = tv_config.get("name", tv_id)
-            ip = tv_config.get("ip")
-            mac = tv_config.get("mac")
+            # Re-fetch tv_config to get current settings (e.g., verbose_motion_logging)
+            # The passed tv_config may be stale if settings changed after listener started
+            current_tv_configs = list_tv_configs(entry)
+            current_tv_config = current_tv_configs.get(tv_id, tv_config)
+            
+            tv_name = current_tv_config.get("name", tv_id)
+            ip = current_tv_config.get("ip")
+            mac = current_tv_config.get("mac")
 
             if not ip:
                 _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
@@ -1301,7 +1306,7 @@ if _HA_AVAILABLE:
                     _LOGGER.debug(f"Auto motion: {tv_name} screen already on, resetting timer")
                     start_motion_off_timer(tv_id)
                     # Log if verbose motion logging is enabled
-                    if tv_config.get("verbose_motion_logging", False) and sensor_id:
+                    if current_tv_config.get("verbose_motion_logging", False) and sensor_id:
                         sensor_short = _get_sensor_short_name(sensor_id)
                         log_activity(
                             hass, entry.entry_id, tv_id,
