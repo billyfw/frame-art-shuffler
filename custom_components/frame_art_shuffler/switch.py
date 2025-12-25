@@ -537,6 +537,11 @@ class FrameArtVerboseMotionLoggingSwitch(SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Enabled verbose motion logging for {tv_name}")
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "verbose_motion_enabled",
+            "Verbose motion logging enabled",
+        )
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -550,4 +555,9 @@ class FrameArtVerboseMotionLoggingSwitch(SwitchEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         _LOGGER.info(f"Disabled verbose motion logging for {tv_name}")
+        log_activity(
+            self.hass, self._entry.entry_id, self._tv_id,
+            "verbose_motion_disabled",
+            "Verbose motion logging disabled",
+        )
         self.async_write_ha_state()
