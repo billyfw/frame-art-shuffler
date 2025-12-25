@@ -459,7 +459,7 @@ def _get_platform_for_key(key: str) -> str:
         "shuffle_frequency", "brightness", "min_lux", "max_lux",
         "min_brightness", "max_brightness", "motion_off_delay",
     }
-    switches = {"power", "dynamic_brightness", "motion_control", "auto_shuffle_switch"}
+    switches = {"power", "dynamic_brightness", "motion_control", "verbose_motion_logging", "auto_shuffle_switch"}
     buttons = {
         "tv_on", "tv_off", "art_mode_button", "on_art_mode", "shuffle",
         "clear_token", "calibrate_dark", "calibrate_bright",
