@@ -417,6 +417,7 @@ def _get_tv_entities(
         "power": f"{tv_id}_power",
         "dynamic_brightness": f"{tv_id}_dynamic_brightness",
         "motion_control": f"{tv_id}_motion_control",
+        "verbose_motion_logging": f"{tv_id}_verbose_motion_logging",
         "auto_shuffle_switch": f"{tv_id}_auto_shuffle",
         # Buttons
         "art_mode_button": f"{tv_id}_art_mode",
@@ -716,6 +717,13 @@ def _build_auto_motion_section(entities: dict[str, str]) -> dict[str, Any] | Non
         section_entities.append({
             "entity": entities["motion_control"],
             "name": "Auto-Motion Enable",
+        })
+    
+    # Verbose logging switch (for debugging multi-sensor setups)
+    if "verbose_motion_logging" in entities:
+        section_entities.append({
+            "entity": entities["verbose_motion_logging"],
+            "name": "Verbose Logging",
         })
     
     # Trigger off button
