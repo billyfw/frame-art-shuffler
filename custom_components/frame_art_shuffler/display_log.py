@@ -297,13 +297,19 @@ class DisplayLogManager:
         if not self._ready or not self._enabled:
             return
 
-        # If there's already an active session, don't interrupt it
-        if tv_id in self._active_sessions:
-            _LOGGER.debug(
-                "Display log: Screen on for %s but session already active",
+        # Discard any existing session - if the screen is turning on, any existing
+        # session is orphaned (e.g., created by a shuffle that completed after
+        # screen-off). We intentionally do NOT record it since the duration would
+        # include time when the screen was off.
+        existing = self._active_sessions.pop(tv_id, None)
+        if existing:
+            _LOGGER.warning(
+                "Display log: Discarding orphaned session for %s on %s "
+                "(started %s, not recording)",
+                existing.filename,
                 tv_name,
+                existing.started_at.isoformat(),
             )
-            return
 
         # If we don't know what image is showing, can't start tracking
         if not filename:
