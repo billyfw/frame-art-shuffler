@@ -49,6 +49,7 @@ async def async_setup_entry(
             FrameArtDynamicBrightnessSwitch(hass, entry, tv_id),
             FrameArtMotionControlSwitch(hass, entry, tv_id),
             FrameArtAutoShuffleSwitch(hass, entry, tv_id),
+            FrameArtVerboseMotionLoggingSwitch(hass, entry, tv_id),
         ])
 
     if entities:
@@ -480,4 +481,73 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             "auto_shuffle_disabled",
             "Auto-shuffle disabled",
         )
+        self.async_write_ha_state()
+
+
+class FrameArtVerboseMotionLoggingSwitch(SwitchEntity):
+    """Switch entity to enable/disable verbose motion detection logging.
+    
+    When enabled, logs every motion detection event (including timer resets)
+    to the activity history. Useful for debugging multi-sensor setups.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:motion-sensor"
+    _attr_name = "Verbose Motion Logging"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        tv_id: str,
+    ) -> None:
+        """Initialize the switch entity."""
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_unique_id = f"{tv_id}_verbose_motion_logging"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if verbose motion logging is enabled."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return False
+        return tv_config.get("verbose_motion_logging", False)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable verbose motion logging."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"verbose_motion_logging": True},
+        )
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
+        _LOGGER.info(f"Enabled verbose motion logging for {tv_name}")
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable verbose motion logging."""
+        update_tv_config(
+            self.hass,
+            self._entry,
+            self._tv_id,
+            {"verbose_motion_logging": False},
+        )
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
+        _LOGGER.info(f"Disabled verbose motion logging for {tv_name}")
         self.async_write_ha_state()
