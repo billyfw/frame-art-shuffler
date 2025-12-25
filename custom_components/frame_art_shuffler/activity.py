@@ -73,6 +73,8 @@ EVENT_TYPES = {
     "screen_off": ("mdi:television-off", "Screen turned off"),
     "auto_motion_enabled": ("mdi:motion-sensor", "Auto-motion enabled"),
     "auto_motion_disabled": ("mdi:motion-sensor-off", "Auto-motion disabled"),
+    "verbose_motion_enabled": ("mdi:text-box-search", "Verbose motion logging enabled"),
+    "verbose_motion_disabled": ("mdi:text-box-remove", "Verbose motion logging disabled"),
     "auto_brightness_enabled": ("mdi:brightness-auto", "Auto-brightness enabled"),
     "auto_brightness_disabled": ("mdi:brightness-5", "Auto-brightness disabled"),
     "auto_shuffle_enabled": ("mdi:shuffle-variant", "Auto-shuffle enabled"),
