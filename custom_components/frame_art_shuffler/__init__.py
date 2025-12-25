@@ -1126,6 +1126,13 @@ if _HA_AVAILABLE:
         # Use the dict already initialized in hass.data so sensors can access it
         motion_off_times = hass.data[DOMAIN][entry.entry_id]["motion_off_times"]
 
+        def _get_sensor_short_name(sensor_id: str) -> str:
+            """Extract a friendly short name from a sensor entity ID."""
+            # binary_sensor.kitchen_motion -> kitchen_motion
+            if "." in sensor_id:
+                return sensor_id.split(".", 1)[1]
+            return sensor_id
+
         def cancel_motion_off_timer(tv_id: str) -> None:
             """Cancel the motion off timer for a specific TV."""
             _LOGGER.debug(f"Auto motion: Cancelling off timer for {tv_id}")
@@ -1215,10 +1222,25 @@ if _HA_AVAILABLE:
                     _LOGGER.info(f"Auto motion: Turning off {tv_name} ({ip}) due to no motion")
                     await hass.async_add_executor_job(frame_tv.tv_off, ip)
                     _LOGGER.info(f"Auto motion: {tv_name} turned off successfully")
+                    
+                    # Build message with last sensor info if available
+                    motion_cache = hass.data[DOMAIN][entry.entry_id].get("motion_cache", {})
+                    last_sensor = motion_cache.get(f"{tv_id}_last_sensor")
+                    last_sensor_time_str = motion_cache.get(f"{tv_id}_last_sensor_time")
+                    motion_off_msg = "Turned off (no motion)"
+                    if last_sensor and last_sensor_time_str:
+                        try:
+                            last_sensor_time = datetime.fromisoformat(last_sensor_time_str)
+                            minutes_ago = int((datetime.now(timezone.utc) - last_sensor_time).total_seconds() / 60)
+                            sensor_short = _get_sensor_short_name(last_sensor)
+                            motion_off_msg = f"Turned off - last: {sensor_short} {minutes_ago}m ago"
+                        except (ValueError, TypeError):
+                            pass
+                    
                     log_activity(
                         hass, entry.entry_id, tv_id,
                         "motion_off",
-                        "Turned off (no motion)",
+                        motion_off_msg,
                     )
                     # Close the display log session since screen is turning off
                     display_log = hass.data[DOMAIN][entry.entry_id].get("display_log")
@@ -1252,7 +1274,7 @@ if _HA_AVAILABLE:
             # handles cleanup, and we'd accumulate callbacks on repeated calls
             _LOGGER.debug(f"Auto motion: Off timer set for {tv_name} at {off_time}")
 
-        async def async_handle_motion(tv_id: str, tv_config: dict) -> None:
+        async def async_handle_motion(tv_id: str, tv_config: dict, sensor_id: str | None = None) -> None:
             """Handle motion detection for a TV."""
             tv_name = tv_config.get("name", tv_id)
             ip = tv_config.get("ip")
@@ -1262,19 +1284,30 @@ if _HA_AVAILABLE:
                 _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
                 return
 
-            # Update last motion timestamp in runtime cache (NOT entry.data to avoid reload)
+            # Update last motion timestamp and sensor in runtime cache (NOT entry.data to avoid reload)
             motion_cache = hass.data[DOMAIN][entry.entry_id].setdefault("motion_cache", {})
             motion_cache[tv_id] = datetime.now(timezone.utc).isoformat()
+            if sensor_id:
+                motion_cache[f"{tv_id}_last_sensor"] = sensor_id
+                motion_cache[f"{tv_id}_last_sensor_time"] = datetime.now(timezone.utc).isoformat()
 
             # Signal sensors to update
             async_dispatcher_send(hass, f"{DOMAIN}_motion_detected_{entry.entry_id}_{tv_id}")
 
-            # Check if screen is on - if so, just reset timer (no activity log - too noisy)
+            # Check if screen is on - if so, just reset timer
             try:
                 screen_on = await hass.async_add_executor_job(frame_tv.is_screen_on, ip)
                 if screen_on:
                     _LOGGER.debug(f"Auto motion: {tv_name} screen already on, resetting timer")
                     start_motion_off_timer(tv_id)
+                    # Log if verbose motion logging is enabled
+                    if tv_config.get("verbose_motion_logging", False) and sensor_id:
+                        sensor_short = _get_sensor_short_name(sensor_id)
+                        log_activity(
+                            hass, entry.entry_id, tv_id,
+                            "motion_detected",
+                            f"Motion ({sensor_short}) - timer reset",
+                        )
                     return
             except Exception as err:
                 _LOGGER.debug(f"Auto motion: Could not check screen state for {tv_name}: {err}")
@@ -1297,10 +1330,11 @@ if _HA_AVAILABLE:
                     _LOGGER.info(f"Auto motion: Waking {tv_name} ({ip}) via WOL")
                     await hass.async_add_executor_job(frame_tv.tv_on, ip, mac)
                     _LOGGER.info(f"Auto motion: {tv_name} wake sequence complete")
+                    sensor_short = _get_sensor_short_name(sensor_id) if sensor_id else "motion"
                     log_activity(
                         hass, entry.entry_id, tv_id,
                         "motion_wake",
-                        "Screen on (woken by motion)",
+                        f"Screen on (woken by {sensor_short})",
                     )
                 except Exception as err:
                     _LOGGER.warning(f"Auto motion: Failed to wake {tv_name}: {err}")
@@ -1363,7 +1397,7 @@ if _HA_AVAILABLE:
                 if new_state.state == "on":
                     sensor_id = new_state.entity_id
                     _LOGGER.debug(f"Auto motion: Motion detected for {tv_name} (sensor: {sensor_id})")
-                    hass.async_create_task(async_handle_motion(tv_id, tv_config))
+                    hass.async_create_task(async_handle_motion(tv_id, tv_config, sensor_id))
 
             # Subscribe to state changes for all configured motion sensors
             from homeassistant.helpers.event import async_track_state_change_event
