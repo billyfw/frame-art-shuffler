@@ -664,8 +664,14 @@ def tv_off(ip: str) -> None:
             last_error = err
             _LOGGER.debug("tv_off attempt %s failed: %s", attempt + 1, err)
     
-    # All retries exhausted
-    raise FrameArtConnectionError(f"Failed to turn off TV screen {ip} after {_POWER_COMMAND_RETRIES} attempts: {last_error}") from last_error
+    # All retries exhausted - but don't raise an exception
+    # If we can't reach the TV to turn it off, it's effectively already off or will
+    # turn itself off. Raising here would break automation scripts unnecessarily.
+    _LOGGER.warning(
+        "Could not send power-off command to TV %s after %s attempts (%s), "
+        "treating as already off",
+        ip, _POWER_COMMAND_RETRIES, last_error
+    )
 
 
 def _send_wake_on_lan(mac_address: str) -> None:
