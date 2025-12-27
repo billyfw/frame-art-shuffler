@@ -550,7 +550,8 @@ def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
     
     cards = []
     
-    # Build image template that includes screen off indicator
+    # Build image template that includes screen off indicator and matte info
+    matte_entity = entities.get("current_matte")
     if screen_on_entity:
         image_template = f"""{{% if is_state('{screen_on_entity}', 'on') %}}
 ![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})
@@ -561,12 +562,20 @@ def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
 {{% endif %}}"""
     else:
         image_template = f"![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})"
-    
+
+    # Add matte info below the image, top left
+    if matte_entity:
+        matte_line = f"**Matte:** {{{{ states('{matte_entity}') or 'none' }}}}"
+    else:
+        matte_line = "**Matte:** none"
+
+    image_with_matte = image_template + "\n\n" + matte_line
+
     # Image card with title on top
     cards.append({
         "type": "markdown",
         "title": "Artwork",
-        "content": image_template,
+        "content": image_with_matte,
     })
     
     # Combined controls: shuffle button + details
