@@ -52,6 +52,8 @@ class DisplaySession:
     source: str = "shuffle"
     shuffle_mode: str | None = None
     matched_tags: list[str] | None = None  # intersection with TV's configured tags
+    matte: str | None = None
+    photo_filter: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-friendly dict."""
@@ -66,6 +68,8 @@ class DisplaySession:
             "source": self.source,
             "shuffle_mode": self.shuffle_mode,
             "matched_tags": self.matched_tags,
+            "matte": self.matte,
+            "photo_filter": self.photo_filter,
         }
 
     @classmethod
@@ -86,6 +90,8 @@ class DisplaySession:
             source=payload.get("source", "shuffle"),
             shuffle_mode=payload.get("shuffle_mode"),
             matched_tags=payload.get("matched_tags"),
+            matte=payload.get("matte"),
+            photo_filter=payload.get("photo_filter"),
         )
 
 
@@ -100,6 +106,8 @@ class _ActiveDisplay:
     shuffle_mode: str | None
     tv_name: str
     matched_tags: list[str] | None = None  # intersection with TV's configured tags
+    matte: str | None = None
+    photo_filter: str | None = None
 
 
 class DisplayLogManager:
@@ -197,6 +205,8 @@ class DisplayLogManager:
         shuffle_mode: str | None = None,
         started_at: datetime | None = None,
         tv_tags: list[str] | None = None,
+        matte: str | None = None,
+        photo_filter: str | None = None,
     ) -> None:
         """Update the active display state and capture the previous session.
 
@@ -211,6 +221,8 @@ class DisplayLogManager:
             tv_tags: The TV's configured include_tags. If provided, matched_tags
                 will be computed as the intersection of image tags and TV tags.
                 This allows per-TV statistics to only count tags relevant to that TV.
+            matte: The matte style applied to the image (e.g., "flexible_warm").
+            photo_filter: The photo filter applied to the image.
         """
         if not self._ready or not self._enabled:
             self._active_sessions.pop(tv_id, None)
@@ -234,6 +246,8 @@ class DisplayLogManager:
             shuffle_mode=shuffle_mode,
             tv_name=tv_name,
             matched_tags=matched_tags,
+            matte=matte,
+            photo_filter=photo_filter,
         )
 
     def note_screen_off(
@@ -279,6 +293,8 @@ class DisplayLogManager:
         tags: list[str] | None = None,
         tv_tags: list[str] | None = None,
         started_at: datetime | None = None,
+        matte: str | None = None,
+        photo_filter: str | None = None,
     ) -> None:
         """Resume display tracking when screen turns on.
 
@@ -293,6 +309,8 @@ class DisplayLogManager:
             tags: Image tags (if known).
             tv_tags: TV's configured include_tags for matched_tags computation.
             started_at: Override timestamp (defaults to now).
+            matte: The matte style applied to the image (e.g., "flexible_warm").
+            photo_filter: The photo filter applied to the image.
         """
         if not self._ready or not self._enabled:
             return
@@ -334,6 +352,8 @@ class DisplayLogManager:
             shuffle_mode=None,
             tv_name=tv_name,
             matched_tags=matched_tags,
+            matte=matte,
+            photo_filter=photo_filter,
         )
         _LOGGER.debug(
             "Display log: Started new session for %s on %s (screen on)",
@@ -710,6 +730,8 @@ class DisplayLogManager:
             source=active.source,
             shuffle_mode=active.shuffle_mode,
             matched_tags=active.matched_tags,
+            matte=active.matte,
+            photo_filter=active.photo_filter,
         )
         self.record_session(session)
 

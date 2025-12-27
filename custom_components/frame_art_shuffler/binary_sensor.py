@@ -174,12 +174,18 @@ async def async_setup_entry(
                                 # Get TV's configured tags for matched_tags computation
                                 tv_tags = tv_config.get("include_tags") if tv_config else None
                                 
+                                # Get matte and filter from shuffle_cache (may be None if not available)
+                                current_matte = shuffle_cache.get("current_matte")
+                                current_filter = shuffle_cache.get("current_filter")
+                                
                                 display_log.note_screen_on(
                                     tv_id=tv_id,
                                     tv_name=tv_name,
                                     filename=current_image,
                                     tags=image_tags,
                                     tv_tags=tv_tags,
+                                    matte=current_matte,
+                                    photo_filter=current_filter,
                                 )
                                 _LOGGER.debug(f"Display log: Started session for {tv_name} (screen on detected by poll)")
 
