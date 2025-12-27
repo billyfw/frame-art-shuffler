@@ -48,6 +48,12 @@ _ART_MODE_ON = "on"
 _UPLOAD_RETRIES = 3
 _UPLOAD_RETRY_DELAY = 2
 _INITIAL_UPLOAD_SETTLE = 6
+
+# Placeholder matte used during upload to enable matte support.
+# The actual desired matte is applied via change_matte() after upload.
+# This workaround avoids Samsung firmware bug causing Error 40000.
+# See docs/MATTE_BEHAVIOR.md for details.
+_MATTE_PLACEHOLDER = "flexible_warm"
 _DISPLAY_RETRY_DELAYS = (0, 10, 15)
 _POST_DISPLAY_VERIFY_DELAY = 8
 _DELETE_SETTLE = 4
@@ -278,13 +284,32 @@ def set_art_on_tv_deleteothers(
                     
                     # Use our custom chunked upload instead of the library's default upload
                     # to avoid hangs on large files/slow networks
-                    content_id = _upload_chunked(
-                        art, 
-                        payload, 
-                        file_type=file_type, 
-                        matte=kwargs.get("matte"),
-                        portrait_matte=kwargs.get("portrait_matte")
-                    )
+                    
+                    # Matte workaround: Samsung firmware has a bug where uploading with a matte
+                    # causes Error 40000 when selecting the image. Workaround is to upload with
+                    # a placeholder matte, then use change_matte() to apply the desired matte.
+                    # See docs/MATTE_BEHAVIOR.md for details.
+                    desired_matte = kwargs.get("matte")
+                    if desired_matte and desired_matte != "none":
+                        # Upload with placeholder, then change_matte after
+                        content_id = _upload_chunked(
+                            art, 
+                            payload, 
+                            file_type=file_type, 
+                            matte=_MATTE_PLACEHOLDER,
+                            portrait_matte=_MATTE_PLACEHOLDER
+                        )
+                        _log_progress(f"Applying matte: {desired_matte}")
+                        art.change_matte(content_id, desired_matte)
+                    else:
+                        # No matte requested - upload normally
+                        content_id = _upload_chunked(
+                            art, 
+                            payload, 
+                            file_type=file_type, 
+                            matte="none",
+                            portrait_matte="none"
+                        )
                     
                     _log_progress(f"Upload successful, content_id={content_id}")
                     if debug:
