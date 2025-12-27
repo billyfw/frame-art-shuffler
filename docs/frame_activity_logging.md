@@ -28,6 +28,8 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
    - `shuffle_mode` - reason for shuffle ("auto", "manual", etc.)
    - `started_at` - timestamp
    - `tv_tags` - the TV's configured include_tags (optional)
+   - `matte` - matte style from image metadata (optional)
+   - `photo_filter` - photo filter from image metadata (optional)
 
 2. If `tv_tags` is provided, `matched_tags` is computed as the intersection of image tags and TV tags. This allows per-TV statistics to only count tags that are relevant to that TV's configuration.
 
@@ -78,7 +80,9 @@ This design provides accurate viewing time statistics rather than wall-clock tim
     "tags": ["nature", "landscape"],
     "matched_tags": ["nature"],
     "source": "shuffle",
-    "shuffle_mode": "auto"
+    "shuffle_mode": "auto",
+    "matte": "flexible_warm",
+    "photo_filter": null
   }
 ]
 ```
@@ -91,6 +95,8 @@ This design provides accurate viewing time statistics rather than wall-clock tim
   - `"screen_on"` - Same image resumed after screen turned back on
   - `"display_image"` - Service call (future)
 - **`shuffle_mode`**: Reason for shuffle (e.g., `"auto"`, `"manual"`). Only present when `source` is `"shuffle"`.
+- **`matte`**: The matte style applied when displaying the image (e.g., `"flexible_warm"`, `"none"`). May be `null` if unknown or not applicable.
+- **`photo_filter`**: The photo filter applied when displaying the image. May be `null` if no filter was applied or unknown.
 
 ## 5. Summary Schema (`summary.json`)
 ```json

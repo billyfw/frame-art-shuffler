@@ -278,6 +278,8 @@ async def _async_shuffle_tv_inner(
                 shuffle_mode=reason,
                 started_at=now,
                 tv_tags=include_tags if include_tags else None,
+                matte=image_matte,
+                photo_filter=image_filter,
             )
 
         _notify("success", f"Shuffled to {image_filename}")
