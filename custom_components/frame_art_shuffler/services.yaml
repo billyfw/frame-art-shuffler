@@ -149,26 +149,18 @@ turn_off_tv:
 # Tagset Services
 upsert_tagset:
   name: Create/Update Tagset
-  description: Create a new tagset or update an existing one for a TV.
+  description: Create a new global tagset or update an existing one. Tagsets are shared across all TVs. To rename, provide original_name with the old name.
   fields:
-    device_id:
-      name: Device
-      description: The TV device to manage tagsets for. Required if entity_id is not provided.
-      required: false
-      selector:
-        device:
-          integration: frame_art_shuffler
-    entity_id:
-      name: Entity
-      description: The entity ID of the TV. Required if device_id is not provided.
-      required: false
-      selector:
-        entity:
-          integration: frame_art_shuffler
     name:
       name: Tagset Name
       description: Name for the tagset (e.g., "everyday", "holidays", "billybirthday").
       required: true
+      selector:
+        text:
+    original_name:
+      name: Original Name (for rename)
+      description: If renaming, provide the original tagset name here. TVs using the old name will be updated.
+      required: false
       selector:
         text:
     tags:
@@ -186,22 +178,8 @@ upsert_tagset:
 
 delete_tagset:
   name: Delete Tagset
-  description: Delete a tagset from a TV. Cannot delete the selected or active override tagset.
+  description: Delete a global tagset. Cannot delete a tagset that is selected or has an active override on any TV.
   fields:
-    device_id:
-      name: Device
-      description: The TV device to delete the tagset from. Required if entity_id is not provided.
-      required: false
-      selector:
-        device:
-          integration: frame_art_shuffler
-    entity_id:
-      name: Entity
-      description: The entity ID of the TV. Required if device_id is not provided.
-      required: false
-      selector:
-        entity:
-          integration: frame_art_shuffler
     name:
       name: Tagset Name
       description: Name of the tagset to delete.

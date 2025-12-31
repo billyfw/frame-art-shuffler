@@ -183,8 +183,8 @@ async def _async_shuffle_tv_inner(
     if not metadata_path.exists():
         raise FrameArtError(f"Metadata file not found at {metadata_path}")
 
-    # Use effective tags (resolves tagsets if configured, else legacy fields)
-    include_tags, exclude_tags = get_effective_tags(tv_config)
+    # Use effective tags (resolves tagsets from global tagsets)
+    include_tags, exclude_tags = get_effective_tags(entry, tv_id)
 
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     shuffle_cache = entry_data.setdefault("shuffle_cache", {})

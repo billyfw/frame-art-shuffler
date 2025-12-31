@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .config_entry import get_active_tagset_name, get_effective_tags, get_tv_config
+from .config_entry import get_active_tagset_name, get_effective_tags, get_global_tagsets, get_tv_config
 from .const import (
     CONF_ENABLE_AUTO_SHUFFLE,
     CONF_OVERRIDE_EXPIRY_TIME,
@@ -348,8 +348,8 @@ class FrameArtTVEntity(SensorEntity):
         if not tv_config:
             return None
         
-        # Get effective tags (resolves tagsets if configured)
-        include_tags, exclude_tags = get_effective_tags(tv_config)
+        # Get effective tags (resolves tagsets from global tagsets)
+        include_tags, exclude_tags = get_effective_tags(self._entry, self._tv_id)
         
         data = {
             "ip": tv_config.get("ip"),
@@ -361,14 +361,16 @@ class FrameArtTVEntity(SensorEntity):
             "entity_picture": self.entity_picture,
         }
         
-        # Add tagset information if tagsets are configured
-        tagsets = tv_config.get(CONF_TAGSETS, {})
+        # Add tagset information from GLOBAL tagsets
+        # Expose full tagset definitions so add-on can display/edit them
+        tagsets = get_global_tagsets(self._entry)
         if tagsets:
-            data["tagsets"] = list(tagsets.keys())
+            # Full definitions for the UI
+            data["tagsets"] = tagsets
             data["selected_tagset"] = tv_config.get(CONF_SELECTED_TAGSET)
             data["override_tagset"] = tv_config.get(CONF_OVERRIDE_TAGSET)
             data["override_expiry_time"] = tv_config.get(CONF_OVERRIDE_EXPIRY_TIME)
-            data["active_tagset"] = get_active_tagset_name(tv_config)
+            data["active_tagset"] = get_active_tagset_name(self._entry, self._tv_id)
         
         shuffle = tv_config.get("shuffle") or {}
         if isinstance(shuffle, dict):

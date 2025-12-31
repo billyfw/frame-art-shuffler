@@ -8,21 +8,22 @@ Tagsets allow users to define named collections of include/exclude tags and assi
 - **Integration** = database + engine (stores tagsets, manages timers, runs shuffle)
 - **Add-on** = UI (displays/edits tagsets, calls integration services)
 
+**Key Design Decision: GLOBAL tagsets**
+- Tagsets are defined **once** at the integration level (not per-TV)
+- Any tagset can be assigned to any TV
+- Example: Create "everyday" tagset once, assign it to all 4 TVs
+- TVs only store `selected_tagset` and `override_tagset` (names that reference global tagsets)
+
 ---
 
 ## Data Model
 
-### TV Config Entry Structure
+### Config Entry Structure (GLOBAL Tagsets)
 
 ```python
-tvs[tv_id] = {
-    # ...existing fields (name, ip, mac, etc.)...
-    
-    # Legacy fields (kept for backward compat, used if no tagsets defined)
-    "tags": ["landscape", "nature"],
-    "exclude_tags": [],
-    
-    # NEW: Tagsets
+# Integration config entry data:
+{
+    # Global tagset definitions (shared by all TVs)
     "tagsets": {
         "everyday": {
             "tags": ["landscape", "nature", "family"],
@@ -37,25 +38,45 @@ tvs[tv_id] = {
             "exclude_tags": ["summer"]
         }
     },
-    "selected_tagset": "everyday",      # permanent choice (nullable if no tagsets)
-    "override_tagset": null,            # temporary override (null when inactive)
-    "override_expiry_time": null,       # ISO timestamp when override expires
+    
+    # Per-TV configurations
+    "tvs": {
+        "tv_id_1": {
+            "name": "Living Room Frame",
+            "ip": "192.168.1.100",
+            # ...other TV fields...
+            
+            # Tagset selection (references global tagsets by name)
+            "selected_tagset": "everyday",      # permanent choice
+            "override_tagset": null,            # temporary override
+            "override_expiry_time": null,       # ISO timestamp when override expires
+        },
+        "tv_id_2": {
+            "name": "Bedroom Frame",
+            # ...
+            "selected_tagset": "everyday",      # same tagset, different TV
+            "override_tagset": "billybirthday", # can override independently
+            "override_expiry_time": "2025-12-31T22:00:00Z",
+        }
+    }
 }
 ```
 
 ### Effective Tags Resolution
 
 ```python
-def get_effective_tags(tv_config: dict) -> tuple[list[str], list[str]]:
+def get_effective_tags(entry: ConfigEntry, tv_id: str) -> tuple[list[str], list[str]]:
     """Return (include_tags, exclude_tags) for shuffle."""
-    tagsets = tv_config.get("tagsets", {})
+    # Get global tagsets
+    tagsets = entry.data.get("tagsets", {})
     
-    # No tagsets = no tags (requires migration for existing installs)
     if not tagsets:
         return ([], [])
     
-    # Use override if active, else selected
+    # Get TV's selected/override tagset name
+    tv_config = entry.data.get("tvs", {}).get(tv_id, {})
     active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
+    
     if not active_name or active_name not in tagsets:
         # Fallback: use first tagset or empty
         active_name = next(iter(tagsets), None)
@@ -75,73 +96,67 @@ def get_effective_tags(tv_config: dict) -> tuple[list[str], list[str]]:
 
 ### 1. `frame_art_shuffler.upsert_tagset`
 
-Create or update a tagset definition.
+Create or update a GLOBAL tagset definition. **No device_id needed.**
 
 **Schema:**
 ```yaml
-device_id: string      # required
 name: string           # required, tagset name
 tags: list[string]     # required, include tags
 exclude_tags: list[string]  # optional, default []
 ```
 
 **Logic:**
-1. Validate device_id → resolve to tv_id
-2. Get current tagsets from config entry
-3. Add/update the named tagset
-4. If this is the first tagset, set `selected_tagset` to this name
-5. Call `update_tv_config()` to persist
+1. Get current global tagsets from config entry
+2. Add/update the named tagset
+3. If this is the first tagset, auto-select it for all TVs that have no selection
+4. Persist to config entry
+5. Signal all TVs using this tagset to update sensors
 
 **Errors:**
-- Invalid device_id
 - Empty name
-- Empty tags list (must have at least one tag?)
+- Empty tags list
 
 ---
 
 ### 2. `frame_art_shuffler.delete_tagset`
 
-Remove a tagset definition.
+Remove a GLOBAL tagset definition. **No device_id needed.**
 
 **Schema:**
 ```yaml
-device_id: string      # required
 name: string           # required, tagset name to delete
 ```
 
 **Logic:**
-1. Validate device_id → resolve to tv_id
-2. Check deletion rules:
+1. Check deletion rules:
    - Cannot delete if it's the only tagset
-   - Cannot delete if it's the `selected_tagset`
-   - Cannot delete if it's the `override_tagset`
-3. Remove from tagsets dict
-4. Call `update_tv_config()` to persist
+   - Cannot delete if ANY TV has it as `selected_tagset`
+   - Cannot delete if ANY TV has it as `override_tagset`
+2. Remove from global tagsets dict
+3. Persist to config entry
 
 **Errors:**
 - `cannot_delete_only_tagset`
-- `cannot_delete_selected_tagset`
-- `cannot_delete_active_override`
+- `tagset_in_use_by_tv` (list which TVs are using it)
 - `tagset_not_found`
 
 ---
 
 ### 3. `frame_art_shuffler.select_tagset`
 
-Permanently switch which tagset a TV uses.
+Assign a tagset to a specific TV (permanent selection). **Needs device_id.**
 
 **Schema:**
 ```yaml
-device_id: string      # required
-name: string           # required, tagset name to select
+device_id: string      # required - which TV
+name: string           # required, tagset name to select (or null to clear)
 ```
 
 **Logic:**
 1. Validate device_id → resolve to tv_id
-2. Verify tagset exists
-3. Update `selected_tagset` in config entry
-4. Log activity: "Tagset changed to 'holidays'"
-5. Optionally trigger a shuffle? (or let next scheduled shuffle use it)
+2. Verify tagset exists in global tagsets (unless name is null)
+3. Update TV's `selected_tagset` in config entry
+4. Log activity
 
 **Errors:**
 - `tagset_not_found`
@@ -150,52 +165,41 @@ name: string           # required, tagset name to select
 
 ### 4. `frame_art_shuffler.override_tagset`
 
-Apply a temporary tagset override with required expiry.
+Apply a temporary tagset override to a specific TV. **Needs device_id.**
 
 **Schema:**
 ```yaml
-device_id: string         # required
+device_id: string         # required - which TV
 name: string              # required, tagset name
 duration_minutes: int     # required, must be > 0
 ```
 
 **Logic:**
 1. Validate device_id → resolve to tv_id
-2. Verify tagset exists
-3. Set `override_tagset = name`
-4. Calculate expiry: `now + duration_minutes`
-5. Set `override_expiry_time`
-6. Start/restart expiry timer (one-shot, like motion_off pattern)
-7. Persist to config entry (so it survives restart)
-8. Log activity: "Tagset override 'billybirthday' applied for 4h"
-9. Signal sensors to update
+2. Verify tagset exists in global tagsets
+3. Set TV's `override_tagset = name`
+4. Calculate expiry and start timer
+5. Persist to config entry
 
 **Errors:**
 - `tagset_not_found`
-- `invalid_duration` (must be > 0)
+- `invalid_duration`
 
 ---
 
 ### 5. `frame_art_shuffler.clear_tagset_override`
 
-Clear an active override early, reverting to selected tagset.
+Clear an active override for a specific TV. **Needs device_id.**
 
 **Schema:**
 ```yaml
-device_id: string      # required
+device_id: string      # required - which TV
 ```
 
 **Logic:**
 1. Validate device_id → resolve to tv_id
-2. Cancel any pending expiry timer
-3. Set `override_tagset = null`
-4. Set `override_expiry_time = null`
-5. Persist to config entry
-6. Log activity: "Tagset override cleared"
-7. Signal sensors to update
-
-**Errors:**
-- (none, clearing when no override is a no-op)
+2. Cancel timer, clear TV's `override_tagset` and `override_expiry_time`
+3. Persist to config entry
 
 ---
 
@@ -283,54 +287,54 @@ This simplifies the architecture and ensures tagset management is centralized.
 
 ### New Installs
 
-New TV additions automatically create a "primary" tagset with the user-provided tags during config flow. No migration needed.
+New installs start with empty global tagsets. User creates tagsets via add-on, then assigns to TVs.
 
-### Existing Installs
+### Existing Installs (Per-TV → Global Migration)
 
-**Existing installs require manual migration.** The integration no longer uses legacy `tags`/`exclude_tags` fields - it only reads from the `tagsets` structure.
+**Phase 3 will migrate existing per-TV tagsets to global tagsets.**
 
-#### Manual Migration Steps
+#### Automatic Migration Logic (in integration `__init__.py`)
 
-1. **Stop Home Assistant:**
-   ```bash
-   ssh ha 'ha core stop'
-   ```
+```python
+async def migrate_to_global_tagsets(hass, entry):
+    """Migrate per-TV tagsets to global tagsets."""
+    data = dict(entry.data)
+    tvs = data.get("tvs", {})
+    
+    # Already migrated?
+    if "tagsets" in data:
+        return
+    
+    # Collect all unique tagsets from all TVs
+    global_tagsets = {}
+    for tv_id, tv_config in tvs.items():
+        tv_tagsets = tv_config.get("tagsets", {})
+        for name, tagset in tv_tagsets.items():
+            if name not in global_tagsets:
+                global_tagsets[name] = tagset
+            # Note: if same name exists with different tags, first one wins
+            # User can manually fix via add-on after migration
+    
+    # Move tagsets to global level
+    data["tagsets"] = global_tagsets
+    
+    # Clean up per-TV tagset defs (keep only selection fields)
+    for tv_id, tv_config in tvs.items():
+        if "tagsets" in tv_config:
+            del tvs[tv_id]["tagsets"]
+        # Keep selected_tagset, override_tagset, override_expiry_time
+    
+    # Persist
+    hass.config_entries.async_update_entry(entry, data=data)
+    _LOGGER.info(f"Migrated {len(global_tagsets)} tagsets to global level")
+```
 
-2. **Edit `.storage/core.config_entries`:**
-   - Find the `frame_art_shuffler` entry
-   - For each TV in `data.tvs`, convert:
-     ```json
-     {
-       "tags": ["landscape", "nature"],
-       "exclude_tags": ["winter"]
-     }
-     ```
-     To:
-     ```json
-     {
-       "tagsets": {
-         "primary": {
-           "tags": ["landscape", "nature"],
-           "exclude_tags": ["winter"]
-         }
-       },
-       "selected_tagset": "primary"
-     }
-     ```
+#### Manual Migration (Alternative)
 
-3. **Start Home Assistant:**
-   ```bash
-   ssh ha 'ha core start'
-   ```
-
-**Important:** Do NOT modify the config file while HA is running - it will be overwritten on the next write cycle.
-
-### First Tagset Creation via Add-on
-
-When user creates their first tagset via add-on after migration:
-1. Add-on calls `upsert_tagset`
-2. Integration creates/updates the tagset
-3. User can then select which tagset to use
+1. Stop Home Assistant
+2. Edit `.storage/core.config_entries`
+3. Move `tagsets` dict from inside each TV to the root `data` level
+4. Start Home Assistant
 
 ---
 
@@ -338,48 +342,46 @@ When user creates their first tagset via add-on after migration:
 
 ### API Layer (`routes/ha.js`)
 
-#### New Endpoints (convenience wrappers)
+#### Endpoints for GLOBAL Tagsets
 
 ```javascript
-// Get tagsets for a TV (reads from sensor attributes via template)
-GET /api/ha/tagsets?device_id=xxx
+// Get all global tagsets (no device_id needed)
+GET /api/ha/tagsets
 
 // Response:
 {
   "tagsets": {
     "everyday": {"tags": [...], "exclude_tags": [...]},
+    "billybirthday": {"tags": [...], "exclude_tags": [...]},
     ...
-  },
-  "selected_tagset": "everyday",
-  "override_tagset": null,
-  "override_expiry_time": null
+  }
 }
-```
 
-#### Service Calls
-
-```javascript
-// Upsert tagset
+// Create/update a global tagset (no device_id)
 POST /api/ha/tagsets/upsert
-{ device_id, name, tags, exclude_tags }
+{ name, tags, exclude_tags }
 → calls frame_art_shuffler.upsert_tagset
 
-// Delete tagset  
+// Delete a global tagset (no device_id)
 POST /api/ha/tagsets/delete
-{ device_id, name }
+{ name }
 → calls frame_art_shuffler.delete_tagset
+```
 
-// Select tagset
+#### Endpoints for TV Tagset Assignments
+
+```javascript
+// Select tagset for a TV (needs device_id)
 POST /api/ha/tagsets/select
 { device_id, name }
 → calls frame_art_shuffler.select_tagset
 
-// Override tagset
+// Override tagset for a TV (needs device_id)
 POST /api/ha/tagsets/override
 { device_id, name, duration_minutes }
 → calls frame_art_shuffler.override_tagset
 
-// Clear override
+// Clear override for a TV (needs device_id)
 POST /api/ha/tagsets/clear-override
 { device_id }
 → calls frame_art_shuffler.clear_tagset_override
@@ -389,69 +391,65 @@ POST /api/ha/tagsets/clear-override
 
 ### UI Components
 
-#### 1. Tags Tab (Advanced → Tags)
+#### 1. Tagsets Tab (Advanced → Tagsets)
 
-**Location:** New tab in Advanced section, before Settings
+**Location:** First tab in Advanced section
 
 **Sections:**
-1. **Manage Tagsets** - CRUD for tagset definitions
-2. **TV Tagset Assignments** - Per-TV selected/override status
-3. **Manage Tags** - Existing tag management (moved from Settings)
+
+1. **Manage Tagsets** (GLOBAL - not per-TV)
+   - Dropdown to select tagset to view/edit
+   - Shows include/exclude tags for selected tagset
+   - Edit button (opens modal)
+   - Delete button (subtle text style)
+   - New button (creates new global tagset)
+
+2. **TV Tagset Assignments** (per-TV)
+   - Card for each TV showing:
+     - Selected tagset dropdown
+     - Override status/expiry
+     - Override button / Clear button
 
 **Mockup:**
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  MANAGE TAGSETS                                    [+ New]  │
+│  MANAGE TAGSETS                                             │
 ├─────────────────────────────────────────────────────────────┤
-│  everyday         landscape, nature, family         [Edit]  │
-│  billybirthday    birthday, billy, cake            [Edit]  │
-│  holidays         christmas, winter                [Edit]  │
+│  Tagset: [everyday ▼]                           [+ New]     │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  everyday                                           │   │
+│  │  Include: landscape, nature, family                 │   │
+│  │  Exclude: (none)                                    │   │
+│  │                                                     │   │
+│  │  [Edit Tagset]                          Delete      │   │
+│  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │  TV TAGSET ASSIGNMENTS                                      │
 ├─────────────────────────────────────────────────────────────┤
-│  Living Room Frame                                          │
-│    Selected: [everyday ▼]                                   │
-│    Override: —                          [Apply Override]    │
-│                                                             │
-│  Bedroom Frame                                              │
-│    Selected: [everyday ▼]                                   │
-│    Override: billybirthday (2h 15m left)      [Clear]      │
-└─────────────────────────────────────────────────────────────┘
-
-───────────────────────────────────────────────────────────────
-
-┌─────────────────────────────────────────────────────────────┐
-│  MANAGE TAGS                                                │
-│  (existing tag rename/delete/merge UI)                      │
+│  ┌──────────────────────────────┐ ┌──────────────────────┐  │
+│  │ Living Room Frame            │ │ Bedroom Frame        │  │
+│  │ Selected: [everyday ▼]       │ │ Selected: [everyday ▼│  │
+│  │ Override: —                  │ │ Override: billybirthd│  │
+│  │        [Apply Override]      │ │   (2h left)  [Clear] │  │
+│  └──────────────────────────────┘ └──────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-**Modals:**
-- **Edit/New Tagset:** Name field, tags multi-select, exclude tags multi-select, Save/Delete buttons
-- **Apply Override:** Tagset dropdown, duration picker (30m, 1h, 2h, 4h, 8h, custom), Apply button
 
 ---
 
 #### 2. Gallery Tags Dropdown
 
-**Current:**
-```
-Tags ▼
-├── TVs
-│   └── ...
-├── All Tags
-└── tags...
-```
-
-**New:**
+**Add "Tagsets" section at top:**
 ```
 Tags ▼
 ├── Tagsets
 │   ├── everyday
 │   ├── billybirthday
 │   └── holidays
+├── ──────────────
 ├── TVs
 │   └── ...
 ├── All Tags
@@ -464,14 +462,7 @@ Tags ▼
 
 #### 3. Stats Page Tags Dropdown
 
-**Current:**
-```
-Filter ▼
-├── All
-└── tags...
-```
-
-**New:**
+**Add "Tagsets" section:**
 ```
 Filter ▼
 ├── Tagsets
@@ -483,91 +474,108 @@ Filter ▼
 └── tags...
 ```
 
-**Behavior:** Filters stats to images with tags in the selected tagset.
+**Behavior:** Filters stats to images matching the selected tagset.
 
 ---
 
 ## Implementation Order
 
-### Phase 1: Integration (frame-art-shuffler) ✅ COMPLETED
+### Phase 1: Integration (frame-art-shuffler) ✅ COMPLETED (Per-TV)
 
-All Phase 1 items have been implemented and tested:
+Initial implementation with per-TV tagsets. All Phase 1 items completed:
 
-1. ✅ Add constants to `const.py` - `CONF_TAGSETS`, `CONF_SELECTED_TAGSET`, `CONF_OVERRIDE_TAGSET`, `CONF_OVERRIDE_EXPIRY_TIME`
-2. ✅ Add `get_effective_tags()` and `get_active_tagset_name()` helpers to `config_entry.py`
+1. ✅ Add constants to `const.py`
+2. ✅ Add `get_effective_tags()` and `get_active_tagset_name()` helpers
 3. ✅ Update `shuffle.py` to use `get_effective_tags()`
-4. ✅ Add services in `__init__.py`:
-   - `upsert_tagset`
-   - `delete_tagset`
-   - `select_tagset`
-   - `override_tagset`
-   - `clear_tagset_override`
+4. ✅ Add services: upsert, delete, select, override, clear_override
 5. ✅ Add override expiry timer management
-6. ✅ Add startup restoration for pending overrides
-7. ✅ Add dedicated tagset sensors:
-   - `sensor.<tv>_selected_tagset` - Shows permanent tagset name
-   - `sensor.<tv>_override_tagset` - Shows "none" or override name
-   - `sensor.<tv>_override_expiry` - Timestamp when override expires
-8. ✅ Update `tags_combined` sensor to use `get_effective_tags()`
-9. ✅ Add `services.yaml` entries for all 5 tagset services
-10. ✅ Remove text entities (tags now managed via services only)
-11. ✅ Update config flow:
-    - Add TV: Creates initial "primary" tagset with user-provided tags
-    - Edit TV: No tag fields (tags managed via add-on/services)
-12. ✅ Update dashboard to show tagset sensors
-13. ✅ Update README with tagsets documentation
+6. ✅ Add dedicated tagset sensors
+7. ✅ Update config flow
+8. ✅ Update dashboard and README
 
-**Data Migration:** Existing installs must manually migrate via SSH (stop HA → edit config → start HA) to convert legacy `tags`/`exclude_tags` to tagsets structure.
+### Phase 2: Add-on UI (ha-frame-art-manager) ✅ COMPLETED (Per-TV)
 
-### Phase 2: Add-on (ha-frame-art-manager) - TODO
+Initial add-on implementation with per-TV tagsets:
 
-#### API Layer (`routes/ha.js`)
+1. ✅ API endpoints in `routes/ha.js` 
+2. ✅ Tagsets tab with dropdown-based management
+3. ✅ TV tagset assignment controls
+4. 🔲 Gallery dropdown tagsets section (DEFERRED to Phase 4)
+5. 🔲 Stats dropdown tagsets section (DEFERRED to Phase 4)
 
-1. **GET endpoint** - Fetch tagsets for a TV:
-   ```javascript
-   GET /api/ha/tagsets?device_id=xxx
-   // Read from sensor state_attr(sensor.<tv>_current_artwork, 'tagsets')
+### Phase 3: Migrate to GLOBAL Tagsets - TODO
+
+Refactor both integration and add-on to use global tagsets:
+
+#### Integration Changes (`frame-art-shuffler`)
+
+1. **`const.py`** - No changes needed
+
+2. **`config_entry.py`** - Update helpers:
+   ```python
+   # Change signature to accept entry + tv_id instead of tv_config
+   def get_effective_tags(entry: ConfigEntry, tv_id: str) -> tuple[list[str], list[str]]:
+       tagsets = entry.data.get("tagsets", {})  # Read from root
+       tv_config = entry.data.get("tvs", {}).get(tv_id, {})
+       active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
+       ...
    ```
 
-2. **Service wrapper endpoints:**
-   - `POST /api/ha/tagsets/upsert` → calls `frame_art_shuffler.upsert_tagset`
-   - `POST /api/ha/tagsets/delete` → calls `frame_art_shuffler.delete_tagset`
-   - `POST /api/ha/tagsets/select` → calls `frame_art_shuffler.select_tagset`
-   - `POST /api/ha/tagsets/override` → calls `frame_art_shuffler.override_tagset`
-   - `POST /api/ha/tagsets/clear-override` → calls `frame_art_shuffler.clear_tagset_override`
+3. **`__init__.py`** - Update services:
+   - `upsert_tagset`: Remove device_id requirement, write to `entry.data["tagsets"]`
+   - `delete_tagset`: Remove device_id, check ALL TVs before allowing delete
+   - `select_tagset`, `override_tagset`, `clear_tagset_override`: Keep device_id (per-TV)
 
-#### UI Components
+4. **`shuffle.py`** - Update call to `get_effective_tags(entry, tv_id)`
 
-1. **Tags Tab** (new tab in Advanced section):
-   - Manage Tagsets section: CRUD for tagset definitions
-   - TV Tagset Assignments section: Per-TV selected/override status with dropdowns
-   - Move existing tag management (rename/delete/merge) into this tab
+5. **`sensor.py`** - Update current_artwork sensor to expose global tagsets:
+   ```python
+   # Attribute: tagsets from entry.data["tagsets"] not tv_config
+   ```
 
-2. **Gallery Dropdown** - Add "Tagsets" section at top:
-   - Selecting a tagset filters to images matching that tagset's tags
+6. **`services.yaml`** - Update schemas:
+   - Remove `device_id` from `upsert_tagset` and `delete_tagset`
 
-3. **Stats Dropdown** - Add "Tagsets" section:
-   - Filter stats by tagset
+7. **Migration logic** - Add auto-migration in `async_setup_entry()`:
+   - Detect per-TV tagsets, merge to global, update config
 
-#### Implementation Steps
+#### Add-on Changes (`ha-frame-art-manager`)
 
-1. [ ] Add API endpoints in `routes/ha.js`
-2. [ ] Create Tags tab component with tagset CRUD
-3. [ ] Add TV tagset assignment controls (select/override)
-4. [ ] Update Gallery dropdown with tagset filter option
-5. [ ] Update Stats dropdown with tagset filter option
-6. [ ] End-to-end testing
+1. **`routes/ha.js`**:
+   - Update `/tvs` template to read global tagsets from entry data (not per-TV)
+   - Update `POST /tagsets/upsert` and `POST /tagsets/delete` to NOT send device_id
+
+2. **`public/js/app.js`**:
+   - Update `populateTagsetDropdowns()` - No TV dropdown for tagset management
+   - Single global tagset list, not grouped by TV
+   - TV Assignments section remains per-TV
+
+3. **`public/index.html`**:
+   - Update Tagsets tab: Remove TV selector from "Manage Tagsets" section
+   - Keep TV selector in "TV Assignments" section
+
+### Phase 4: Dropdown Enhancements - TODO
+
+Add tagsets to gallery and stats dropdowns:
+
+1. **Gallery dropdown** (`app.js`):
+   - Add "Tagsets" section above "TVs" section
+   - Each tagset filters images by its include/exclude tags
+   - Need to fetch global tagsets and apply filter logic
+
+2. **Stats dropdown** (`app.js`):
+   - Add "Tagsets" section above individual tags
+   - Filter stats by tagset's tag criteria
 
 ---
 
 ## Open Questions
 
-1. **Should creating a tagset trigger a shuffle?** Probably not, let next scheduled shuffle use it.
+1. ~~**Global tagsets vs per-TV tagsets?**~~ **DECIDED: GLOBAL** - Tagsets are defined once, assigned to TVs.
 
-2. **Should selecting a different tagset trigger a shuffle?** Maybe optional parameter?
+2. **What if two TVs had different tagsets with same name during migration?** First one wins, log a warning. User can fix via add-on.
 
-3. **What happens if user edits `selected_tagset` tags while override is active?** Works fine, changes take effect when override expires.
+3. **Should there be a "default" tagset for new TVs?** Maybe auto-assign first tagset when TV is added?
 
-4. **Global tagsets vs per-TV tagsets?** Current design is per-TV. Global would add complexity but allow "apply billybirthday to all TVs." Could add later.
+4. **Tagset name validation?** Non-empty, alphanumeric + underscore + hyphen, max length 50.
 
-5. **Tagset name validation?** Probably: non-empty, alphanumeric + underscore + hyphen, max length 50.
