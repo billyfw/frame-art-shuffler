@@ -24,9 +24,11 @@ from .const import (
     CONF_LOG_FLUSH_MINUTES,
     CONF_LOG_RETENTION_MONTHS,
     CONF_METADATA_PATH,
+    CONF_SELECTED_TAGSET,
     CONF_SHORT_NAME,
     CONF_SHUFFLE_FREQUENCY,
     CONF_TAGS,
+    CONF_TAGSETS,
     CONF_TOKEN_DIR,
     CONF_TV_ID,
     CONF_MOTION_SENSOR,  # Deprecated: for migration only
@@ -400,8 +402,6 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             short_name = (user_input.get(CONF_SHORT_NAME) or "").strip()
             mac_input = user_input.get(CONF_MAC, "")
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
-            tags_input = user_input.get(CONF_TAGS, "")
-            exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
             motion_sensors = user_input.get(CONF_MOTION_SENSORS) or []
             light_sensor = user_input.get(CONF_LIGHT_SENSOR)
             min_lux = user_input.get(CONF_MIN_LUX, 0)
@@ -434,22 +434,17 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 errors[CONF_SHUFFLE_FREQUENCY] = "invalid_frequency"
                 frequency = 0
 
-            tags = parse_tag_string(tags_input)
-            exclude_tags = parse_tag_string(exclude_input)
-
             if not errors:
                 # Check if IP changed
                 old_ip = current_config.get("ip")
                 ip_changed = old_ip != host
 
-                # Update TV config
+                # Update TV config (tags managed via services/add-on, not config flow)
                 update_tv_config(self.hass, self.config_entry, tv_id, {
                     "name": name,
                     "short_name": short_name,
                     "ip": host,
                     "mac": normalized_mac,
-                    "tags": tags,
-                    "exclude_tags": exclude_tags,
                     "shuffle_frequency_minutes": frequency,
                     "enable_auto_shuffle": enable_auto_shuffle,
                     "motion_sensors": motion_sensors,
@@ -482,18 +477,12 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     self._async_schedule_refresh()
                     return self.async_create_entry(title="", data={})
 
-        # Prepare default values from current config
-        current_tags = ", ".join(current_config.get("tags", []))
-        current_exclude = ", ".join(current_config.get("exclude_tags", []))
-        
         schema = vol.Schema(
             {
                 vol.Required(CONF_NAME, default=current_config.get("name", "")): str,
                 vol.Optional(CONF_SHORT_NAME, default=current_config.get("short_name", "")): str,
                 vol.Required(CONF_HOST, default=current_config.get("ip", "")): str,
                 vol.Required(CONF_MAC, default=current_config.get("mac", "")): str,
-                vol.Optional(CONF_TAGS, default=current_tags): str,
-                vol.Optional(CONF_EXCLUDE_TAGS, default=current_exclude): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=current_config.get("shuffle_frequency_minutes", 30)): vol.Coerce(int),
                 vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=current_config.get("enable_auto_shuffle", False)): bool,
                 vol.Optional(CONF_MOTION_SENSORS, default=current_config.get("motion_sensors", [])): EntitySelector(
@@ -595,6 +584,15 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     from uuid import uuid4
                     tv_id = uuid4().hex
                     
+                    # Create tagset structure for new TV
+                    # Store tags/exclude_tags in a "primary" tagset
+                    tagsets = {
+                        "primary": {
+                            "tags": tags,
+                            "exclude_tags": exclude_tags,
+                        }
+                    }
+                    
                     # Add TV to config entry (not metadata.json)
                     from .config_entry import add_tv_config
                     add_tv_config(self.hass, self.config_entry, tv_id, {
@@ -602,8 +600,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         "short_name": short_name,
                         "ip": host,
                         "mac": normalized_mac,
-                        "tags": tags,
-                        "exclude_tags": exclude_tags,
+                        "tagsets": tagsets,
+                        "selected_tagset": "primary",
                         "shuffle_frequency_minutes": frequency,
                         "motion_sensors": motion_sensors,
                         "light_sensor": light_sensor,

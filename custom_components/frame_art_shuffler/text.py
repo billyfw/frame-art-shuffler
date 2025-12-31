@@ -13,8 +13,8 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .config_entry import get_tv_config, update_tv_config
-from .const import DOMAIN
+from .config_entry import get_effective_tags, get_tv_config, update_tv_config
+from .const import CONF_TAGSETS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,47 +85,33 @@ class FrameArtTextEntityBase(TextEntity):
 
     @property
     def native_value(self) -> str | None:
-        """Return the current value from config entry."""
+        """Return the effective tags from the active tagset."""
         tv_config = get_tv_config(self._entry, self._tv_id)
         if not tv_config:
             return None
         
-        value = tv_config.get(self._key)
-        if isinstance(value, list):
-            return ",".join(value)
-        return str(value) if value else None
+        include_tags, exclude_tags = get_effective_tags(tv_config)
+        if self._key == "tags":
+            return ",".join(include_tags) if include_tags else None
+        elif self._key == "exclude_tags":
+            return ",".join(exclude_tags) if exclude_tags else None
+        return None
 
     async def async_set_value(self, value: str) -> None:
-        """Update the value in config entry (no add-on sync for most fields)."""
-        _LOGGER.info("Setting %s for TV %s to: %s", self._key, self._tv_id, value)
+        """Update tags - redirects to tagset modification.
         
-        # Parse value based on entity type
-        if self._key in ("tags", "exclude_tags"):
-            parsed_value = [tag.strip() for tag in value.split(",") if tag.strip()]
-        else:
-            parsed_value = value.strip()
-
-        # Update HA storage
-        update_tv_config(
-            self.hass,
-            self._entry,
-            self._tv_id,
-            {self._key: parsed_value},
-        )
-        
-        # Get TV config for logging
+        Tags are now managed via tagsets. This logs a warning directing users
+        to use the tagset services instead.
+        """
         tv_config = get_tv_config(self._entry, self._tv_id)
         tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
         
-        _LOGGER.info(
-            "%s changed to '%s' for %s",
-            self._attr_name,
-            value,
+        _LOGGER.warning(
+            "Cannot set %s directly for %s. "
+            "Use the tagset services (upsert_tagset, select_tagset, etc.) or the add-on UI instead.",
+            self._key,
             tv_name,
         )
-        
-        # Update UI to reflect new value
-        self.async_write_ha_state()
 
 
 class FrameArtTagsEntity(FrameArtTextEntityBase):

@@ -404,6 +404,9 @@ def _get_tv_entities(
         "current_filter": f"{entry_id}_{tv_id}_current_filter",
         "matte_filter": f"{entry_id}_{tv_id}_matte_filter",
         "tags_combined": f"{entry_id}_{tv_id}_tags_combined",
+        "selected_tagset": f"{entry_id}_{tv_id}_selected_tagset",
+        "override_tagset": f"{entry_id}_{tv_id}_override_tagset",
+        "override_expiry": f"{entry_id}_{tv_id}_override_expiry",
         "matching_image_count": f"{entry_id}_{tv_id}_matching_image_count",
         # Numbers
         "shuffle_frequency": f"{tv_id}_shuffle_frequency",
@@ -453,7 +456,8 @@ def _get_platform_for_key(key: str) -> str:
         "auto_bright_last", "auto_bright_next", "auto_bright_target",
         "auto_bright_sensor_lux", "auto_motion_last", "auto_motion_off_at",
         "recent_activity", "current_matte", "current_filter",
-        "matte_filter", "tags_combined", "matching_image_count",
+        "matte_filter", "tags_combined", "selected_tagset", "override_tagset",
+        "override_expiry", "matching_image_count",
     }
     numbers = {
         "shuffle_frequency", "brightness", "min_lux", "max_lux",
@@ -517,6 +521,23 @@ def _build_power_controls_section(entities: dict[str, str]) -> dict[str, Any] | 
         button_entities.append({
             "entity": entities["matte_filter"],
             "name": "Matte / Filter",
+        })
+
+    # Tagset info (above tags display)
+    if "selected_tagset" in entities:
+        button_entities.append({
+            "entity": entities["selected_tagset"],
+            "name": "Selected Tagset",
+        })
+    if "override_tagset" in entities:
+        button_entities.append({
+            "entity": entities["override_tagset"],
+            "name": "Override Tagset",
+        })
+    if "override_expiry" in entities:
+        button_entities.append({
+            "entity": entities["override_expiry"],
+            "name": "Override Expiry",
         })
 
     if "tags_combined" in entities:

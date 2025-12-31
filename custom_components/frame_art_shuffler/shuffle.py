@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .activity import log_activity
-from .config_entry import get_tv_config
+from .config_entry import get_effective_tags, get_tv_config
 from .const import DOMAIN
 from .frame_tv import FrameArtError, set_art_on_tv_deleteothers
 
@@ -183,8 +183,8 @@ async def _async_shuffle_tv_inner(
     if not metadata_path.exists():
         raise FrameArtError(f"Metadata file not found at {metadata_path}")
 
-    include_tags = tv_config.get("tags", [])
-    exclude_tags = tv_config.get("exclude_tags", [])
+    # Use effective tags (resolves tagsets if configured, else legacy fields)
+    include_tags, exclude_tags = get_effective_tags(tv_config)
 
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     shuffle_cache = entry_data.setdefault("shuffle_cache", {})
