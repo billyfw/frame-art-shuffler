@@ -145,3 +145,145 @@ turn_off_tv:
       required: false
       selector:
         text:
+
+# Tagset Services
+upsert_tagset:
+  name: Create/Update Tagset
+  description: Create a new tagset or update an existing one for a TV.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device to manage tagsets for. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
+    name:
+      name: Tagset Name
+      description: Name for the tagset (e.g., "everyday", "holidays", "billybirthday").
+      required: true
+      selector:
+        text:
+    tags:
+      name: Include Tags
+      description: List of tags to include when this tagset is active.
+      required: true
+      selector:
+        object:
+    exclude_tags:
+      name: Exclude Tags
+      description: List of tags to exclude when this tagset is active.
+      required: false
+      selector:
+        object:
+
+delete_tagset:
+  name: Delete Tagset
+  description: Delete a tagset from a TV. Cannot delete the selected or active override tagset.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device to delete the tagset from. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
+    name:
+      name: Tagset Name
+      description: Name of the tagset to delete.
+      required: true
+      selector:
+        text:
+
+select_tagset:
+  name: Select Tagset
+  description: Permanently switch which tagset a TV uses for shuffling.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
+    name:
+      name: Tagset Name
+      description: Name of the tagset to select.
+      required: true
+      selector:
+        text:
+
+override_tagset:
+  name: Override Tagset
+  description: Temporarily override the selected tagset for a specified duration.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler
+    name:
+      name: Tagset Name
+      description: Name of the tagset to temporarily activate.
+      required: true
+      selector:
+        text:
+    duration_minutes:
+      name: Duration (minutes)
+      description: How long the override should last before reverting to the selected tagset.
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 10080
+          unit_of_measurement: minutes
+          mode: box
+
+clear_tagset_override:
+  name: Clear Tagset Override
+  description: Clear an active tagset override, reverting to the selected tagset immediately.
+  fields:
+    device_id:
+      name: Device
+      description: The TV device. Required if entity_id is not provided.
+      required: false
+      selector:
+        device:
+          integration: frame_art_shuffler
+    entity_id:
+      name: Entity
+      description: The entity ID of the TV. Required if device_id is not provided.
+      required: false
+      selector:
+        entity:
+          integration: frame_art_shuffler

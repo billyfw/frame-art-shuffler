@@ -115,3 +115,56 @@ def list_tv_configs(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
         Dict mapping TV IDs to TV config dicts
     """
     return entry.data.get("tvs", {})
+
+
+def get_effective_tags(tv_config: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Get the effective include/exclude tags for a TV.
+    
+    Resolves tagsets: uses override_tagset if active, else selected_tagset.
+    Returns empty lists if no tagsets are configured.
+    
+    Args:
+        tv_config: TV configuration dict
+        
+    Returns:
+        Tuple of (include_tags, exclude_tags)
+    """
+    tagsets = tv_config.get("tagsets", {})
+    
+    if not tagsets:
+        return ([], [])
+    
+    # Use override if active, else selected
+    active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
+    if not active_name or active_name not in tagsets:
+        # Fallback: use first tagset
+        active_name = next(iter(tagsets), None)
+        if not active_name:
+            return ([], [])
+    
+    tagset = tagsets[active_name]
+    return (
+        tagset.get("tags", []),
+        tagset.get("exclude_tags", [])
+    )
+
+
+def get_active_tagset_name(tv_config: dict[str, Any]) -> str | None:
+    """Get the name of the currently active tagset.
+    
+    Args:
+        tv_config: TV configuration dict
+        
+    Returns:
+        Name of active tagset, or None if no tagsets configured
+    """
+    tagsets = tv_config.get("tagsets", {})
+    if not tagsets:
+        return None
+    
+    active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
+    if active_name and active_name in tagsets:
+        return active_name
+    
+    # Fallback to first tagset
+    return next(iter(tagsets), None)

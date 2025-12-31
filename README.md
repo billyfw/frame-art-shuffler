@@ -258,6 +258,46 @@ After creating the integration entry, Home Assistant registers a dedicated devic
 
 Open **Configure** on the integration card to manage TVs:
 
+### Tagsets
+
+Tagsets allow you to define named collections of include/exclude tags and assign them to TVs. Each TV has:
+
+- **Selected tagset**: The permanent tagset used for shuffle (e.g., "everyday")
+- **Override tagset**: A temporary override with expiry (e.g., "billybirthday" for 4 hours)
+
+When a TV shuffles, it uses the override tagset if active, otherwise the selected tagset. Override tagsets automatically clear when their duration expires.
+
+#### Managing Tagsets via Services
+
+Tags are managed via services (typically called from the Frame Art Manager add-on):
+
+- `frame_art_shuffler.upsert_tagset` - Create or update a tagset
+- `frame_art_shuffler.delete_tagset` - Remove a tagset
+- `frame_art_shuffler.select_tagset` - Set the permanent tagset
+- `frame_art_shuffler.override_tagset` - Apply a temporary tagset with duration
+- `frame_art_shuffler.clear_tagset_override` - Clear an active override early
+
+Example service call:
+```yaml
+service: frame_art_shuffler.override_tagset
+target:
+  device_id: abc123def456
+data:
+  name: billybirthday
+  duration_minutes: 240  # 4 hours
+```
+
+#### Tagset Sensors
+
+Each TV exposes these sensors for tagset status:
+
+- `sensor.<tv>_selected_tagset` - Name of the permanent tagset
+- `sensor.<tv>_override_tagset` - Name of active override (or "none")
+- `sensor.<tv>_override_expiry` - When the override will expire
+- `sensor.<tv>_tags_combined` - Effective include/exclude tags (resolved from active tagset)
+
+Open **Configure** on the integration card to manage TVs:
+
 - **Add TV**: Provide name, IP/hostname, MAC address, and shuffle frequency. The flow automatically pairs the TV to create a token file in the configured token directory. Disable pairing only if you already copied tokens manually.
 - **Edit TV**: Update settings; future automation can react.
 - **Delete TV**: Removes the TV from the integration.

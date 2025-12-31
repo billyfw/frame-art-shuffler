@@ -69,14 +69,18 @@ if _HA_AVAILABLE:
         CONF_LOG_FLUSH_MINUTES,
         CONF_LOG_RETENTION_MONTHS,
         CONF_METADATA_PATH,
+        CONF_OVERRIDE_EXPIRY_TIME,
+        CONF_OVERRIDE_TAGSET,
+        CONF_SELECTED_TAGSET,
         CONF_SHUFFLE_FREQUENCY,
+        CONF_TAGSETS,
         CONF_TOKEN_DIR,
         DOMAIN,
         SIGNAL_AUTO_SHUFFLE_NEXT,
     )
     from .display_log import DisplayLogManager
     from .coordinator import FrameArtCoordinator
-    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config
+    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config, update_tv_config
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory, tv_on, tv_off, set_art_mode, is_screen_on
     from .metadata import MetadataStore
@@ -84,7 +88,7 @@ if _HA_AVAILABLE:
     from .activity import log_activity
     from .shuffle import async_guarded_upload, async_shuffle_tv
 
-    PLATFORMS = [Platform.TEXT, Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
+    PLATFORMS = [Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
 else:
     DEFAULT_TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
     PLATFORMS: list[Any] = []
@@ -625,6 +629,275 @@ if _HA_AVAILABLE:
             DOMAIN,
             "turn_off_tv",
             async_handle_turn_off_tv,
+        )
+
+        # ===== TAGSET SERVICES =====
+        # Timer management for tagset override expiry
+        tagset_override_timers: dict[str, Callable[[], None]] = {}
+
+        def cancel_tagset_override_timer(tv_id: str) -> None:
+            """Cancel the tagset override expiry timer for a TV."""
+            if tv_id in tagset_override_timers:
+                tagset_override_timers[tv_id]()
+                del tagset_override_timers[tv_id]
+
+        def start_tagset_override_timer(tv_id: str, expiry_time: datetime) -> None:
+            """Start the tagset override expiry timer for a TV."""
+            from homeassistant.helpers.event import async_track_point_in_time
+            
+            cancel_tagset_override_timer(tv_id)
+
+            async def async_override_expiry_callback(_now: Any) -> None:
+                """Timer callback to clear tagset override."""
+                tv_config = get_tv_config(entry, tv_id)
+                if not tv_config:
+                    return
+
+                tv_name = tv_config.get("name", tv_id)
+                override_name = tv_config.get(CONF_OVERRIDE_TAGSET)
+                
+                # Clear the override
+                update_tv_config(hass, entry, tv_id, {
+                    CONF_OVERRIDE_TAGSET: None,
+                    CONF_OVERRIDE_EXPIRY_TIME: None,
+                })
+                
+                _LOGGER.info(f"Tagset override '{override_name}' expired for {tv_name}")
+                log_activity(
+                    hass, entry.entry_id, tv_id,
+                    "tagset_override_expired",
+                    f"Override '{override_name}' expired, reverted to selected tagset",
+                )
+                
+                # Signal sensors to update
+                async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{entry.entry_id}_{tv_id}")
+                
+                # Clean up timer reference
+                if tv_id in tagset_override_timers:
+                    del tagset_override_timers[tv_id]
+
+            unsubscribe = async_track_point_in_time(
+                hass,
+                async_override_expiry_callback,
+                expiry_time,
+            )
+            tagset_override_timers[tv_id] = unsubscribe
+            _LOGGER.debug(f"Tagset override timer set for {tv_id} at {expiry_time}")
+
+        # Store timer functions for access elsewhere
+        hass.data[DOMAIN][entry.entry_id]["cancel_tagset_override_timer"] = cancel_tagset_override_timer
+        hass.data[DOMAIN][entry.entry_id]["start_tagset_override_timer"] = start_tagset_override_timer
+
+        # Restore any pending override timers on startup
+        for tv_id, tv_config in list_tv_configs(entry).items():
+            expiry_str = tv_config.get(CONF_OVERRIDE_EXPIRY_TIME)
+            if expiry_str:
+                try:
+                    expiry_time = datetime.fromisoformat(expiry_str)
+                    if expiry_time > datetime.now(timezone.utc):
+                        start_tagset_override_timer(tv_id, expiry_time)
+                        _LOGGER.info(f"Restored tagset override timer for {tv_config.get('name', tv_id)}")
+                    else:
+                        # Expired while HA was down - clear it
+                        update_tv_config(hass, entry, tv_id, {
+                            CONF_OVERRIDE_TAGSET: None,
+                            CONF_OVERRIDE_EXPIRY_TIME: None,
+                        })
+                        _LOGGER.info(f"Cleared expired tagset override for {tv_config.get('name', tv_id)}")
+                except (ValueError, TypeError) as e:
+                    _LOGGER.warning(f"Invalid override expiry time for {tv_id}: {e}")
+
+        async def async_handle_upsert_tagset(call: ServiceCall) -> None:
+            """Create or update a tagset definition."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            
+            name = call.data.get("name", "").strip()
+            tags = call.data.get("tags", [])
+            exclude_tags = call.data.get("exclude_tags", [])
+            
+            if not name:
+                raise ValueError("Tagset name is required")
+            if not tags:
+                raise ValueError("Tagset must have at least one tag")
+            
+            tv_config = get_tv_config(target_entry, tv_id)
+            tv_name = tv_data.get("name", tv_id)
+            tagsets = tv_config.get(CONF_TAGSETS, {}).copy() if tv_config else {}
+            
+            is_new = name not in tagsets
+            tagsets[name] = {
+                "tags": tags,
+                "exclude_tags": exclude_tags,
+            }
+            
+            updates = {CONF_TAGSETS: tagsets}
+            
+            # If this is the first tagset, auto-select it
+            if len(tagsets) == 1:
+                updates[CONF_SELECTED_TAGSET] = name
+            
+            update_tv_config(hass, target_entry, tv_id, updates)
+            
+            action = "created" if is_new else "updated"
+            _LOGGER.info(f"Tagset '{name}' {action} for {tv_name}")
+            log_activity(
+                hass, target_entry.entry_id, tv_id,
+                f"tagset_{action}",
+                f"Tagset '{name}' {action}",
+            )
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+
+        async def async_handle_delete_tagset(call: ServiceCall) -> None:
+            """Delete a tagset definition."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            
+            name = call.data.get("name", "").strip()
+            if not name:
+                raise ValueError("Tagset name is required")
+            
+            tv_config = get_tv_config(target_entry, tv_id)
+            tv_name = tv_data.get("name", tv_id)
+            tagsets = tv_config.get(CONF_TAGSETS, {}).copy() if tv_config else {}
+            
+            if name not in tagsets:
+                raise ValueError(f"Tagset '{name}' not found")
+            
+            if len(tagsets) <= 1:
+                raise ValueError("Cannot delete the only tagset")
+            
+            selected = tv_config.get(CONF_SELECTED_TAGSET)
+            if name == selected:
+                raise ValueError(f"Cannot delete selected tagset '{name}'. Select a different tagset first.")
+            
+            override = tv_config.get(CONF_OVERRIDE_TAGSET)
+            if name == override:
+                raise ValueError(f"Cannot delete active override tagset '{name}'. Clear the override first.")
+            
+            del tagsets[name]
+            update_tv_config(hass, target_entry, tv_id, {CONF_TAGSETS: tagsets})
+            
+            _LOGGER.info(f"Tagset '{name}' deleted from {tv_name}")
+            log_activity(
+                hass, target_entry.entry_id, tv_id,
+                "tagset_deleted",
+                f"Tagset '{name}' deleted",
+            )
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+
+        async def async_handle_select_tagset(call: ServiceCall) -> None:
+            """Permanently switch which tagset a TV uses."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            
+            name = call.data.get("name", "").strip()
+            if not name:
+                raise ValueError("Tagset name is required")
+            
+            tv_config = get_tv_config(target_entry, tv_id)
+            tv_name = tv_data.get("name", tv_id)
+            tagsets = tv_config.get(CONF_TAGSETS, {}) if tv_config else {}
+            
+            if name not in tagsets:
+                raise ValueError(f"Tagset '{name}' not found")
+            
+            update_tv_config(hass, target_entry, tv_id, {CONF_SELECTED_TAGSET: name})
+            
+            _LOGGER.info(f"Selected tagset '{name}' for {tv_name}")
+            log_activity(
+                hass, target_entry.entry_id, tv_id,
+                "tagset_selected",
+                f"Selected tagset '{name}'",
+            )
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+
+        async def async_handle_override_tagset(call: ServiceCall) -> None:
+            """Apply a temporary tagset override with required expiry."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            
+            name = call.data.get("name", "").strip()
+            duration_minutes = call.data.get("duration_minutes")
+            
+            if not name:
+                raise ValueError("Tagset name is required")
+            if not duration_minutes or duration_minutes <= 0:
+                raise ValueError("duration_minutes is required and must be > 0")
+            
+            tv_config = get_tv_config(target_entry, tv_id)
+            tv_name = tv_data.get("name", tv_id)
+            tagsets = tv_config.get(CONF_TAGSETS, {}) if tv_config else {}
+            
+            if name not in tagsets:
+                raise ValueError(f"Tagset '{name}' not found")
+            
+            expiry_time = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
+            
+            update_tv_config(hass, target_entry, tv_id, {
+                CONF_OVERRIDE_TAGSET: name,
+                CONF_OVERRIDE_EXPIRY_TIME: expiry_time.isoformat(),
+            })
+            
+            start_tagset_override_timer(tv_id, expiry_time)
+            
+            _LOGGER.info(f"Tagset override '{name}' applied for {tv_name} ({duration_minutes}m)")
+            log_activity(
+                hass, target_entry.entry_id, tv_id,
+                "tagset_override_applied",
+                f"Override '{name}' applied for {duration_minutes}m",
+            )
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+
+        async def async_handle_clear_tagset_override(call: ServiceCall) -> None:
+            """Clear an active tagset override early."""
+            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            
+            tv_config = get_tv_config(target_entry, tv_id)
+            tv_name = tv_data.get("name", tv_id)
+            override_name = tv_config.get(CONF_OVERRIDE_TAGSET) if tv_config else None
+            
+            cancel_tagset_override_timer(tv_id)
+            
+            update_tv_config(hass, target_entry, tv_id, {
+                CONF_OVERRIDE_TAGSET: None,
+                CONF_OVERRIDE_EXPIRY_TIME: None,
+            })
+            
+            if override_name:
+                _LOGGER.info(f"Tagset override '{override_name}' cleared for {tv_name}")
+                log_activity(
+                    hass, target_entry.entry_id, tv_id,
+                    "tagset_override_cleared",
+                    f"Override '{override_name}' cleared",
+                )
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+
+        # Register tagset services
+        hass.services.async_register(
+            DOMAIN,
+            "upsert_tagset",
+            async_handle_upsert_tagset,
+        )
+
+        hass.services.async_register(
+            DOMAIN,
+            "delete_tagset",
+            async_handle_delete_tagset,
+        )
+
+        hass.services.async_register(
+            DOMAIN,
+            "select_tagset",
+            async_handle_select_tagset,
+        )
+
+        hass.services.async_register(
+            DOMAIN,
+            "override_tagset",
+            async_handle_override_tagset,
+        )
+
+        hass.services.async_register(
+            DOMAIN,
+            "clear_tagset_override",
+            async_handle_clear_tagset_override,
         )
 
         # Per-TV auto brightness timer management

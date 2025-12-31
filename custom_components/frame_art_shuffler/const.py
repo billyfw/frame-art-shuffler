@@ -34,6 +34,12 @@ CONF_LOGGING_ENABLED = "logging_enabled"
 CONF_LOG_RETENTION_MONTHS = "log_retention_months"
 CONF_LOG_FLUSH_MINUTES = "log_flush_interval_minutes"
 
+# Tagsets
+CONF_TAGSETS = "tagsets"
+CONF_SELECTED_TAGSET = "selected_tagset"
+CONF_OVERRIDE_TAGSET = "override_tagset"
+CONF_OVERRIDE_EXPIRY_TIME = "override_expiry_time"
+
 DEFAULT_LOGGING_ENABLED = True
 DEFAULT_LOG_RETENTION_MONTHS = 6
 DEFAULT_LOG_FLUSH_MINUTES = 5

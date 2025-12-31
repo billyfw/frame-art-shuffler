@@ -13,11 +13,15 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .config_entry import get_tv_config
+from .config_entry import get_active_tagset_name, get_effective_tags, get_tv_config
 from .const import (
     CONF_ENABLE_AUTO_SHUFFLE,
+    CONF_OVERRIDE_EXPIRY_TIME,
+    CONF_OVERRIDE_TAGSET,
+    CONF_SELECTED_TAGSET,
     CONF_SHUFFLE_FREQUENCY,
     CONF_LIGHT_SENSOR,
+    CONF_TAGSETS,
     DOMAIN,
     SIGNAL_SHUFFLE,
     SIGNAL_AUTO_SHUFFLE_NEXT,
@@ -161,6 +165,25 @@ TAGS_COMBINED_DESCRIPTION = SensorEntityDescription(
     translation_key="tags_combined",
 )
 
+SELECTED_TAGSET_DESCRIPTION = SensorEntityDescription(
+    key="selected_tagset",
+    icon="mdi:tag-check",
+    translation_key="selected_tagset",
+)
+
+OVERRIDE_TAGSET_DESCRIPTION = SensorEntityDescription(
+    key="override_tagset",
+    icon="mdi:tag-arrow-right",
+    translation_key="override_tagset",
+)
+
+OVERRIDE_EXPIRY_DESCRIPTION = SensorEntityDescription(
+    key="override_expiry",
+    icon="mdi:clock-end",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    translation_key="override_expiry",
+)
+
 MATCHING_IMAGE_COUNT_DESCRIPTION = SensorEntityDescription(
     key="matching_image_count",
     icon="mdi:image-multiple-outline",
@@ -211,13 +234,17 @@ async def async_setup_entry(
             # Combined display sensors for dashboard
             matte_filter_entity = FrameArtMatteFilterEntity(hass, entry, tv_id)
             tags_combined_entity = FrameArtTagsCombinedEntity(hass, entry, tv_id)
-            # Matching count sensor (tags are text entities, not sensors)
+            # Tagset sensors
+            selected_tagset_entity = FrameArtSelectedTagsetEntity(hass, entry, tv_id)
+            override_tagset_entity = FrameArtOverrideTagsetEntity(hass, entry, tv_id)
+            override_expiry_entity = FrameArtOverrideExpiryEntity(hass, entry, tv_id)
+            # Matching count sensor
             matching_count_entity = FrameArtMatchingImageCountEntity(hass, entry, tv_id)
             # Activity history sensor
             activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, matching_count_entity, activity_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, selected_tagset_entity, override_tagset_entity, override_expiry_entity, matching_count_entity, activity_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, selected_tagset_entity, override_tagset_entity, override_expiry_entity, matching_count_entity, activity_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -320,15 +347,29 @@ class FrameArtTVEntity(SensorEntity):
         tv_config = get_tv_config(self._entry, self._tv_id)
         if not tv_config:
             return None
+        
+        # Get effective tags (resolves tagsets if configured)
+        include_tags, exclude_tags = get_effective_tags(tv_config)
+        
         data = {
             "ip": tv_config.get("ip"),
             "mac": tv_config.get("mac"),
-            "tags": tv_config.get("tags", []),
-            "exclude_tags": tv_config.get("notTags", []),
+            "tags": include_tags,
+            "exclude_tags": exclude_tags,
             "motion_sensors": tv_config.get("motion_sensors", []),
             "light_sensor": tv_config.get(CONF_LIGHT_SENSOR),
             "entity_picture": self.entity_picture,
         }
+        
+        # Add tagset information if tagsets are configured
+        tagsets = tv_config.get(CONF_TAGSETS, {})
+        if tagsets:
+            data["tagsets"] = list(tagsets.keys())
+            data["selected_tagset"] = tv_config.get(CONF_SELECTED_TAGSET)
+            data["override_tagset"] = tv_config.get(CONF_OVERRIDE_TAGSET)
+            data["override_expiry_time"] = tv_config.get(CONF_OVERRIDE_EXPIRY_TIME)
+            data["active_tagset"] = get_active_tagset_name(tv_config)
+        
         shuffle = tv_config.get("shuffle") or {}
         if isinstance(shuffle, dict):
             data["shuffle_frequency"] = shuffle.get(CONF_SHUFFLE_FREQUENCY)
@@ -1316,21 +1357,138 @@ class FrameArtTagsCombinedEntity(SensorEntity):
         if not tv_config:
             return None
         
-        include_tags = tv_config.get("tags", [])
-        exclude_tags = tv_config.get("exclude_tags", [])
+        # Use effective tags (resolves tagsets)
+        include_tags, exclude_tags = get_effective_tags(tv_config)
         
         parts = []
         if include_tags:
-            include_str = ", ".join(include_tags) if isinstance(include_tags, list) else str(include_tags)
+            include_str = ", ".join(include_tags)
             parts.append(f"[+] {include_str}")
         if exclude_tags:
-            exclude_str = ", ".join(exclude_tags) if isinstance(exclude_tags, list) else str(exclude_tags)
+            exclude_str = ", ".join(exclude_tags)
             parts.append(f"[-] {exclude_str}")
         
         if not parts:
             return "none"
         
         return " / ".join(parts)
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtSelectedTagsetEntity(SensorEntity):
+    """Sensor entity for the selected (permanent) tagset name."""
+
+    entity_description = SELECTED_TAGSET_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Selected Tagset"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_selected_tagset"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the selected tagset name."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        return tv_config.get(CONF_SELECTED_TAGSET)
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtOverrideTagsetEntity(SensorEntity):
+    """Sensor entity for the override (temporary) tagset name."""
+
+    entity_description = OVERRIDE_TAGSET_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Override Tagset"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_override_tagset"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the override tagset name, or 'none' if no override active."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return "none"
+        return tv_config.get(CONF_OVERRIDE_TAGSET) or "none"
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtOverrideExpiryEntity(SensorEntity):
+    """Sensor entity for when the override tagset expires."""
+
+    entity_description = OVERRIDE_EXPIRY_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Override Expiry"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_override_expiry"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> datetime | None:  # type: ignore[override]
+        """Return the override expiry time as datetime."""
+        tv_config = get_tv_config(self._entry, self._tv_id)
+        if not tv_config:
+            return None
+        expiry_str = tv_config.get(CONF_OVERRIDE_EXPIRY_TIME)
+        if not expiry_str:
+            return None
+        try:
+            return datetime.fromisoformat(expiry_str)
+        except (ValueError, TypeError):
+            return None
 
     @property
     def available(self) -> bool:  # type: ignore[override]
