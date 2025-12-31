@@ -584,24 +584,30 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     from uuid import uuid4
                     tv_id = uuid4().hex
                     
-                    # Create tagset structure for new TV
-                    # Store tags/exclude_tags in a "primary" tagset
-                    tagsets = {
-                        "primary": {
+                    # Create a GLOBAL tagset for this new TV
+                    # Name it after the TV's short_name (or name) + "_primary"
+                    from .config_entry import add_tv_config, generate_unique_tagset_name, get_global_tagsets, update_global_tagsets
+                    
+                    # Generate tagset name based on TV's short_name or name
+                    base_tagset_name = f"{short_name or name}_primary".lower().replace(" ", "_")
+                    tagset_name = generate_unique_tagset_name(self.config_entry, base_tagset_name)
+                    
+                    # Create the global tagset if tags provided
+                    if tags:
+                        global_tagsets = get_global_tagsets(self.config_entry).copy()
+                        global_tagsets[tagset_name] = {
                             "tags": tags,
                             "exclude_tags": exclude_tags,
                         }
-                    }
+                        update_global_tagsets(self.hass, self.config_entry, global_tagsets)
                     
-                    # Add TV to config entry (not metadata.json)
-                    from .config_entry import add_tv_config
+                    # Add TV to config entry (no per-TV tagsets, only selected_tagset reference)
                     add_tv_config(self.hass, self.config_entry, tv_id, {
                         "name": name,
                         "short_name": short_name,
                         "ip": host,
                         "mac": normalized_mac,
-                        "tagsets": tagsets,
-                        "selected_tagset": "primary",
+                        "selected_tagset": tagset_name if tags else None,
                         "shuffle_frequency_minutes": frequency,
                         "motion_sensors": motion_sensors,
                         "light_sensor": light_sensor,

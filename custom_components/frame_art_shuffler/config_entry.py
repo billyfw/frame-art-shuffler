@@ -117,21 +117,40 @@ def list_tv_configs(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
     return entry.data.get("tvs", {})
 
 
-def get_effective_tags(tv_config: dict[str, Any]) -> tuple[list[str], list[str]]:
+def get_global_tagsets(entry: ConfigEntry) -> dict[str, Any]:
+    """Get the global tagsets from config entry.
+    
+    Args:
+        entry: Config entry
+        
+    Returns:
+        Dict of tagset name -> tagset config
+    """
+    return entry.data.get("tagsets", {})
+
+
+def get_effective_tags(entry: ConfigEntry, tv_id: str) -> tuple[list[str], list[str]]:
     """Get the effective include/exclude tags for a TV.
     
-    Resolves tagsets: uses override_tagset if active, else selected_tagset.
+    Resolves tagsets from GLOBAL tagsets using TV's selected/override tagset name.
     Returns empty lists if no tagsets are configured.
     
     Args:
-        tv_config: TV configuration dict
+        entry: Config entry (contains global tagsets)
+        tv_id: TV identifier
         
     Returns:
         Tuple of (include_tags, exclude_tags)
     """
-    tagsets = tv_config.get("tagsets", {})
+    # Read global tagsets from root of config entry data
+    tagsets = entry.data.get("tagsets", {})
     
     if not tagsets:
+        return ([], [])
+    
+    # Get TV's tagset assignment
+    tv_config = get_tv_config(entry, tv_id)
+    if not tv_config:
         return ([], [])
     
     # Use override if active, else selected
@@ -149,17 +168,22 @@ def get_effective_tags(tv_config: dict[str, Any]) -> tuple[list[str], list[str]]
     )
 
 
-def get_active_tagset_name(tv_config: dict[str, Any]) -> str | None:
-    """Get the name of the currently active tagset.
+def get_active_tagset_name(entry: ConfigEntry, tv_id: str) -> str | None:
+    """Get the name of the currently active tagset for a TV.
     
     Args:
-        tv_config: TV configuration dict
+        entry: Config entry (contains global tagsets)
+        tv_id: TV identifier
         
     Returns:
         Name of active tagset, or None if no tagsets configured
     """
-    tagsets = tv_config.get("tagsets", {})
+    tagsets = entry.data.get("tagsets", {})
     if not tagsets:
+        return None
+    
+    tv_config = get_tv_config(entry, tv_id)
+    if not tv_config:
         return None
     
     active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
@@ -168,3 +192,45 @@ def get_active_tagset_name(tv_config: dict[str, Any]) -> str | None:
     
     # Fallback to first tagset
     return next(iter(tagsets), None)
+
+
+def update_global_tagsets(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    tagsets: dict[str, Any],
+) -> None:
+    """Update global tagsets in config entry.
+    
+    Args:
+        hass: Home Assistant instance
+        entry: Config entry
+        tagsets: New tagsets dict
+    """
+    data = {**entry.data}
+    data["tagsets"] = tagsets
+    hass.config_entries.async_update_entry(entry, data=data)
+
+
+def generate_unique_tagset_name(entry: ConfigEntry, base_name: str) -> str:
+    """Generate a unique tagset name based on base_name.
+    
+    If base_name already exists, appends _2, _3, etc.
+    
+    Args:
+        entry: Config entry
+        base_name: Desired base name (e.g., "living_room_primary")
+        
+    Returns:
+        Unique tagset name
+    """
+    tagsets = entry.data.get("tagsets", {})
+    
+    if base_name not in tagsets:
+        return base_name
+    
+    # Find next available suffix
+    suffix = 2
+    while f"{base_name}_{suffix}" in tagsets:
+        suffix += 1
+    
+    return f"{base_name}_{suffix}"

@@ -80,7 +80,7 @@ if _HA_AVAILABLE:
     )
     from .display_log import DisplayLogManager
     from .coordinator import FrameArtCoordinator
-    from .config_entry import get_tv_config, list_tv_configs, remove_tv_config, update_tv_config
+    from .config_entry import get_tv_config, get_global_tagsets, list_tv_configs, remove_tv_config, update_tv_config, update_global_tagsets
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory, tv_on, tv_off, set_art_mode, is_screen_on
     from .metadata import MetadataStore
@@ -167,6 +167,11 @@ if _HA_AVAILABLE:
 
         # Migrate motion_sensor (singular) to motion_sensors (list) - v1.1.0
         await _async_migrate_motion_sensors(hass, entry)
+
+        # Initialize global tagsets if not present (empty dict)
+        if "tagsets" not in entry.data:
+            data = {**entry.data, "tagsets": {}}
+            hass.config_entries.async_update_entry(entry, data=data)
 
         coordinator = FrameArtCoordinator(hass, entry, metadata_path)
         await coordinator.async_config_entry_first_refresh()
@@ -708,10 +713,16 @@ if _HA_AVAILABLE:
                     _LOGGER.warning(f"Invalid override expiry time for {tv_id}: {e}")
 
         async def async_handle_upsert_tagset(call: ServiceCall) -> None:
-            """Create or update a tagset definition."""
-            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            """Create or update a global tagset definition.
             
+            Tagsets are global (not per-TV). Any TV can be assigned to use any tagset.
+            No device_id is required for this service.
+            
+            If original_name is provided and differs from name, the tagset is renamed.
+            Any TVs referencing the old name will be updated to the new name.
+            """
             name = call.data.get("name", "").strip()
+            original_name = call.data.get("original_name", "").strip()
             tags = call.data.get("tags", [])
             exclude_tags = call.data.get("exclude_tags", [])
             
@@ -720,44 +731,69 @@ if _HA_AVAILABLE:
             if not tags:
                 raise ValueError("Tagset must have at least one tag")
             
-            tv_config = get_tv_config(target_entry, tv_id)
-            tv_name = tv_data.get("name", tv_id)
-            tagsets = tv_config.get(CONF_TAGSETS, {}).copy() if tv_config else {}
+            # Get global tagsets from config entry root
+            tagsets = get_global_tagsets(entry).copy()
             
-            is_new = name not in tagsets
+            # Handle rename case
+            is_rename = original_name and original_name != name and original_name in tagsets
+            if is_rename:
+                # Check if new name already exists
+                if name in tagsets:
+                    raise ValueError(f"Cannot rename: tagset '{name}' already exists")
+                
+                # Remove old tagset
+                del tagsets[original_name]
+                
+                # Update any TVs that reference the old name
+                tvs = list_tv_configs(entry)
+                for tv_id, tv_config in tvs.items():
+                    updates = {}
+                    if tv_config.get(CONF_SELECTED_TAGSET) == original_name:
+                        updates[CONF_SELECTED_TAGSET] = name
+                    if tv_config.get(CONF_OVERRIDE_TAGSET) == original_name:
+                        updates[CONF_OVERRIDE_TAGSET] = name
+                    if updates:
+                        update_tv_config(hass, entry, tv_id, updates)
+                
+                _LOGGER.info(f"Renamed tagset '{original_name}' to '{name}'")
+            
+            is_new = name not in tagsets and not is_rename
             tagsets[name] = {
                 "tags": tags,
                 "exclude_tags": exclude_tags,
             }
             
-            updates = {CONF_TAGSETS: tagsets}
+            update_global_tagsets(hass, entry, tagsets)
             
-            # If this is the first tagset, auto-select it
-            if len(tagsets) == 1:
-                updates[CONF_SELECTED_TAGSET] = name
+            if is_rename:
+                action = "renamed"
+                msg = f"Global tagset '{original_name}' renamed to '{name}'"
+            elif is_new:
+                action = "created"
+                msg = f"Global tagset '{name}' created"
+            else:
+                action = "updated"
+                msg = f"Global tagset '{name}' updated"
             
-            update_tv_config(hass, target_entry, tv_id, updates)
-            
-            action = "created" if is_new else "updated"
-            _LOGGER.info(f"Tagset '{name}' {action} for {tv_name}")
+            _LOGGER.info(msg)
             log_activity(
-                hass, target_entry.entry_id, tv_id,
+                hass, entry.entry_id, None,
                 f"tagset_{action}",
-                f"Tagset '{name}' {action}",
+                msg,
             )
-            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+            # Signal all TVs to refresh since tagset content may have changed
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{entry.entry_id}")
 
         async def async_handle_delete_tagset(call: ServiceCall) -> None:
-            """Delete a tagset definition."""
-            target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
+            """Delete a global tagset definition.
             
+            Cannot delete a tagset that is currently selected or overridden by any TV.
+            """
             name = call.data.get("name", "").strip()
             if not name:
                 raise ValueError("Tagset name is required")
             
-            tv_config = get_tv_config(target_entry, tv_id)
-            tv_name = tv_data.get("name", tv_id)
-            tagsets = tv_config.get(CONF_TAGSETS, {}).copy() if tv_config else {}
+            tagsets = get_global_tagsets(entry).copy()
             
             if name not in tagsets:
                 raise ValueError(f"Tagset '{name}' not found")
@@ -765,37 +801,49 @@ if _HA_AVAILABLE:
             if len(tagsets) <= 1:
                 raise ValueError("Cannot delete the only tagset")
             
-            selected = tv_config.get(CONF_SELECTED_TAGSET)
-            if name == selected:
-                raise ValueError(f"Cannot delete selected tagset '{name}'. Select a different tagset first.")
-            
-            override = tv_config.get(CONF_OVERRIDE_TAGSET)
-            if name == override:
-                raise ValueError(f"Cannot delete active override tagset '{name}'. Clear the override first.")
+            # Check if any TV is using this tagset
+            for tv_id, tv_config in list_tv_configs(entry).items():
+                tv_name = tv_config.get("name", tv_id)
+                selected = tv_config.get(CONF_SELECTED_TAGSET)
+                if name == selected:
+                    raise ValueError(
+                        f"Cannot delete tagset '{name}': selected by {tv_name}. "
+                        "Select a different tagset for that TV first."
+                    )
+                
+                override = tv_config.get(CONF_OVERRIDE_TAGSET)
+                if name == override:
+                    raise ValueError(
+                        f"Cannot delete tagset '{name}': active override on {tv_name}. "
+                        "Clear the override first."
+                    )
             
             del tagsets[name]
-            update_tv_config(hass, target_entry, tv_id, {CONF_TAGSETS: tagsets})
+            update_global_tagsets(hass, entry, tagsets)
             
-            _LOGGER.info(f"Tagset '{name}' deleted from {tv_name}")
+            _LOGGER.info(f"Global tagset '{name}' deleted")
             log_activity(
-                hass, target_entry.entry_id, tv_id,
+                hass, entry.entry_id, None,
                 "tagset_deleted",
-                f"Tagset '{name}' deleted",
+                f"Global tagset '{name}' deleted",
             )
-            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+            async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{entry.entry_id}")
 
         async def async_handle_select_tagset(call: ServiceCall) -> None:
-            """Permanently switch which tagset a TV uses."""
+            """Permanently switch which tagset a TV uses.
+            
+            Requires device_id - this is a per-TV assignment.
+            """
             target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
             
             name = call.data.get("name", "").strip()
             if not name:
                 raise ValueError("Tagset name is required")
             
-            tv_config = get_tv_config(target_entry, tv_id)
             tv_name = tv_data.get("name", tv_id)
-            tagsets = tv_config.get(CONF_TAGSETS, {}) if tv_config else {}
             
+            # Check global tagsets
+            tagsets = get_global_tagsets(target_entry)
             if name not in tagsets:
                 raise ValueError(f"Tagset '{name}' not found")
             
@@ -810,7 +858,10 @@ if _HA_AVAILABLE:
             async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
 
         async def async_handle_override_tagset(call: ServiceCall) -> None:
-            """Apply a temporary tagset override with required expiry."""
+            """Apply a temporary tagset override with required expiry.
+            
+            Requires device_id - this is a per-TV operation.
+            """
             target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
             
             name = call.data.get("name", "").strip()
@@ -821,10 +872,10 @@ if _HA_AVAILABLE:
             if not duration_minutes or duration_minutes <= 0:
                 raise ValueError("duration_minutes is required and must be > 0")
             
-            tv_config = get_tv_config(target_entry, tv_id)
             tv_name = tv_data.get("name", tv_id)
-            tagsets = tv_config.get(CONF_TAGSETS, {}) if tv_config else {}
             
+            # Check global tagsets
+            tagsets = get_global_tagsets(target_entry)
             if name not in tagsets:
                 raise ValueError(f"Tagset '{name}' not found")
             
