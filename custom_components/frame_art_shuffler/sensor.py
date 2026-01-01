@@ -274,6 +274,8 @@ class FrameArtTVEntity(SensorEntity):
         self._tv_id = tv_id
         self._attr_unique_id = f"{entry.entry_id}_{tv_id}"
         self._unsubscribe_shuffle: Callable[[], None] | None = None
+        self._unsubscribe_tagset_global: Callable[[], None] | None = None
+        self._unsubscribe_tagset_tv: Callable[[], None] | None = None
 
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
@@ -286,24 +288,52 @@ class FrameArtTVEntity(SensorEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to shuffle signal for updates."""
+        """Subscribe to shuffle and tagset signals for updates."""
         @callback
         def _shuffle_updated() -> None:
             """Handle shuffle signal."""
             self.async_write_ha_state()
         
+        @callback
+        def _tagset_updated() -> None:
+            """Handle tagset update signal."""
+            self.async_write_ha_state()
+        
+        # Subscribe to shuffle signal
         signal = f"{SIGNAL_SHUFFLE}_{self._entry.entry_id}_{self._tv_id}"
         self._unsubscribe_shuffle = async_dispatcher_connect(
             self._hass,
             signal,
             _shuffle_updated,
         )
+        
+        # Subscribe to global tagset changes (definitions changed)
+        global_signal = f"{DOMAIN}_tagset_updated_{self._entry.entry_id}"
+        self._unsubscribe_tagset_global = async_dispatcher_connect(
+            self._hass,
+            global_signal,
+            _tagset_updated,
+        )
+        
+        # Subscribe to TV-specific tagset changes (selected/override changed)
+        tv_signal = f"{DOMAIN}_tagset_updated_{self._entry.entry_id}_{self._tv_id}"
+        self._unsubscribe_tagset_tv = async_dispatcher_connect(
+            self._hass,
+            tv_signal,
+            _tagset_updated,
+        )
 
     async def async_will_remove_from_hass(self) -> None:
-        """Unsubscribe from shuffle signal."""
+        """Unsubscribe from signals."""
         if self._unsubscribe_shuffle:
             self._unsubscribe_shuffle()
             self._unsubscribe_shuffle = None
+        if self._unsubscribe_tagset_global:
+            self._unsubscribe_tagset_global()
+            self._unsubscribe_tagset_global = None
+        if self._unsubscribe_tagset_tv:
+            self._unsubscribe_tagset_tv()
+            self._unsubscribe_tagset_tv = None
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -1359,8 +1389,8 @@ class FrameArtTagsCombinedEntity(SensorEntity):
         if not tv_config:
             return None
         
-        # Use effective tags (resolves tagsets)
-        include_tags, exclude_tags = get_effective_tags(tv_config)
+        # Use effective tags (resolves tagsets from global tagsets)
+        include_tags, exclude_tags = get_effective_tags(self._entry, self._tv_id)
         
         parts = []
         if include_tags:

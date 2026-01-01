@@ -49,12 +49,14 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         _helpers_dr = importlib.import_module("homeassistant.helpers.device_registry")
         _helpers_er = importlib.import_module("homeassistant.helpers.entity_registry")
         _helpers_event = importlib.import_module("homeassistant.helpers.event")
+        _exceptions = importlib.import_module("homeassistant.exceptions")
 
         ConfigEntry = getattr(_config_entries, "ConfigEntry")
         Platform = getattr(_const, "Platform")
         HomeAssistant = getattr(_core, "HomeAssistant")
         callback = getattr(_core, "callback")
         ServiceCall = getattr(_core, "ServiceCall")
+        ServiceValidationError = getattr(_exceptions, "ServiceValidationError")
         dr = _helpers_dr
         er = _helpers_er
         async_track_time_interval = getattr(_helpers_event, "async_track_time_interval")
@@ -167,6 +169,9 @@ if _HA_AVAILABLE:
 
         # Migrate motion_sensor (singular) to motion_sensors (list) - v1.1.0
         await _async_migrate_motion_sensors(hass, entry)
+
+        # Migrate per-TV tagsets to global tagsets - v1.2.0
+        await _async_migrate_tagsets_to_global(hass, entry)
 
         # Initialize global tagsets if not present (empty dict)
         if "tagsets" not in entry.data:
@@ -727,9 +732,9 @@ if _HA_AVAILABLE:
             exclude_tags = call.data.get("exclude_tags", [])
             
             if not name:
-                raise ValueError("Tagset name is required")
+                raise ServiceValidationError("Tagset name is required")
             if not tags:
-                raise ValueError("Tagset must have at least one tag")
+                raise ServiceValidationError("Tagset must have at least one tag")
             
             # Get global tagsets from config entry root
             tagsets = get_global_tagsets(entry).copy()
@@ -739,7 +744,7 @@ if _HA_AVAILABLE:
             if is_rename:
                 # Check if new name already exists
                 if name in tagsets:
-                    raise ValueError(f"Cannot rename: tagset '{name}' already exists")
+                    raise ServiceValidationError(f"Cannot rename: tagset '{name}' already exists")
                 
                 # Remove old tagset
                 del tagsets[original_name]
@@ -791,29 +796,29 @@ if _HA_AVAILABLE:
             """
             name = call.data.get("name", "").strip()
             if not name:
-                raise ValueError("Tagset name is required")
+                raise ServiceValidationError("Tagset name is required")
             
             tagsets = get_global_tagsets(entry).copy()
             
             if name not in tagsets:
-                raise ValueError(f"Tagset '{name}' not found")
+                raise ServiceValidationError(f"Tagset '{name}' not found")
             
             if len(tagsets) <= 1:
-                raise ValueError("Cannot delete the only tagset")
+                raise ServiceValidationError("Cannot delete the only tagset")
             
             # Check if any TV is using this tagset
             for tv_id, tv_config in list_tv_configs(entry).items():
                 tv_name = tv_config.get("name", tv_id)
                 selected = tv_config.get(CONF_SELECTED_TAGSET)
                 if name == selected:
-                    raise ValueError(
+                    raise ServiceValidationError(
                         f"Cannot delete tagset '{name}': selected by {tv_name}. "
                         "Select a different tagset for that TV first."
                     )
                 
                 override = tv_config.get(CONF_OVERRIDE_TAGSET)
                 if name == override:
-                    raise ValueError(
+                    raise ServiceValidationError(
                         f"Cannot delete tagset '{name}': active override on {tv_name}. "
                         "Clear the override first."
                     )
@@ -838,14 +843,14 @@ if _HA_AVAILABLE:
             
             name = call.data.get("name", "").strip()
             if not name:
-                raise ValueError("Tagset name is required")
+                raise ServiceValidationError("Tagset name is required")
             
             tv_name = tv_data.get("name", tv_id)
             
             # Check global tagsets
             tagsets = get_global_tagsets(target_entry)
             if name not in tagsets:
-                raise ValueError(f"Tagset '{name}' not found")
+                raise ServiceValidationError(f"Tagset '{name}' not found")
             
             update_tv_config(hass, target_entry, tv_id, {CONF_SELECTED_TAGSET: name})
             
@@ -868,16 +873,16 @@ if _HA_AVAILABLE:
             duration_minutes = call.data.get("duration_minutes")
             
             if not name:
-                raise ValueError("Tagset name is required")
+                raise ServiceValidationError("Tagset name is required")
             if not duration_minutes or duration_minutes <= 0:
-                raise ValueError("duration_minutes is required and must be > 0")
+                raise ServiceValidationError("duration_minutes is required and must be > 0")
             
             tv_name = tv_data.get("name", tv_id)
             
             # Check global tagsets
             tagsets = get_global_tagsets(target_entry)
             if name not in tagsets:
-                raise ValueError(f"Tagset '{name}' not found")
+                raise ServiceValidationError(f"Tagset '{name}' not found")
             
             expiry_time = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
             
@@ -1902,6 +1907,86 @@ if _HA_AVAILABLE:
         data["tvs"] = tvs_copy
         hass.config_entries.async_update_entry(entry, data=data)
         _LOGGER.info("Migrated motion_sensor config to motion_sensors list format")
+
+
+    async def _async_migrate_tagsets_to_global(hass: Any, entry: Any) -> None:
+        """Migrate per-TV tagsets to global tagsets.
+        
+        Old structure (v1.1.x): Each TV had its own tagsets dict
+            tv_config["tagsets"] = {"everyday": {...}, "holiday": {...}}
+        
+        New structure (v1.2.0): Global tagsets at integration level
+            entry.data["tagsets"] = {"everyday": {...}, "holiday": {...}}
+            TVs reference global tagsets by name via selected_tagset/override_tagset
+        
+        Migration merges all per-TV tagsets into global, handling name conflicts
+        by appending _tvname suffix.
+        """
+        # Skip if already migrated (global tagsets exist)
+        if entry.data.get("tagsets"):
+            return
+
+        tvs = entry.data.get("tvs", {})
+        if not tvs:
+            return
+
+        # Check if any TV has the old per-TV tagsets
+        has_per_tv_tagsets = any(
+            tv_config.get("tagsets")
+            for tv_config in tvs.values()
+        )
+
+        if not has_per_tv_tagsets:
+            return
+
+        # Collect all tagsets from all TVs
+        global_tagsets: dict[str, Any] = {}
+        data = {**entry.data}
+        tvs_copy = {tv_id: tv_data.copy() for tv_id, tv_data in tvs.items()}
+
+        for tv_id, tv_config in tvs_copy.items():
+            per_tv_tagsets = tv_config.get("tagsets", {})
+            if not per_tv_tagsets:
+                continue
+
+            tv_name = tv_config.get("name", tv_id)
+            
+            for tagset_name, tagset_data in per_tv_tagsets.items():
+                # If name already exists in global, append TV name suffix
+                final_name = tagset_name
+                if tagset_name in global_tagsets:
+                    # Check if it's identical (same tags)
+                    existing = global_tagsets[tagset_name]
+                    if (existing.get("tags") == tagset_data.get("tags") and
+                        existing.get("exclude_tags") == tagset_data.get("exclude_tags")):
+                        # Identical, no need to create duplicate
+                        pass
+                    else:
+                        # Different content, add with suffix
+                        suffix = tv_name.lower().replace(" ", "_")
+                        final_name = f"{tagset_name}_{suffix}"
+                        while final_name in global_tagsets:
+                            final_name = f"{final_name}_2"
+                        global_tagsets[final_name] = tagset_data.copy()
+                        # Update TV's selected/override if it was using this tagset
+                        if tv_config.get("selected_tagset") == tagset_name:
+                            tv_config["selected_tagset"] = final_name
+                        if tv_config.get("override_tagset") == tagset_name:
+                            tv_config["override_tagset"] = final_name
+                else:
+                    global_tagsets[final_name] = tagset_data.copy()
+
+            # Remove per-TV tagsets after migration
+            if "tagsets" in tv_config:
+                del tv_config["tagsets"]
+
+        data["tvs"] = tvs_copy
+        data["tagsets"] = global_tagsets
+        hass.config_entries.async_update_entry(entry, data=data)
+        _LOGGER.info(
+            "Migrated per-TV tagsets to global tagsets: %d tagsets created",
+            len(global_tagsets)
+        )
 
 
     @callback
