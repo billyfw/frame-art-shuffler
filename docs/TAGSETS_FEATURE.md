@@ -503,79 +503,120 @@ Initial add-on implementation with per-TV tagsets:
 4. 🔲 Gallery dropdown tagsets section (DEFERRED to Phase 4)
 5. 🔲 Stats dropdown tagsets section (DEFERRED to Phase 4)
 
-### Phase 3: Migrate to GLOBAL Tagsets - TODO
+### Phase 3: Migrate to GLOBAL Tagsets ✅ COMPLETED
 
-Refactor both integration and add-on to use global tagsets:
+Successfully refactored both integration and add-on to use global tagsets:
 
-#### Integration Changes (`frame-art-shuffler`)
+#### Integration Changes (`frame-art-shuffler`) ✅
 
-1. **`const.py`** - No changes needed
-
-2. **`config_entry.py`** - Update helpers:
-   ```python
-   # Change signature to accept entry + tv_id instead of tv_config
-   def get_effective_tags(entry: ConfigEntry, tv_id: str) -> tuple[list[str], list[str]]:
-       tagsets = entry.data.get("tagsets", {})  # Read from root
-       tv_config = entry.data.get("tvs", {}).get(tv_id, {})
-       active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
-       ...
-   ```
-
-3. **`__init__.py`** - Update services:
-   - `upsert_tagset`: Remove device_id requirement, write to `entry.data["tagsets"]`
-   - `delete_tagset`: Remove device_id, check ALL TVs before allowing delete
+1. ✅ **`const.py`** - Added `CONF_TAGSETS` constant
+2. ✅ **`config_entry.py`** - Updated helpers:
+   - `get_global_tagsets(entry)` - Returns tagsets from entry root
+   - `update_global_tagsets(hass, entry, tagsets)` - Persists global tagsets
+   - `get_effective_tags(entry, tv_id)` - Resolves active tagset's tags for a TV
+3. ✅ **`__init__.py`** - Updated services:
+   - `upsert_tagset`: No device_id, writes to `entry.data["tagsets"]`
+   - `delete_tagset`: No device_id, checks ALL TVs before allowing delete
    - `select_tagset`, `override_tagset`, `clear_tagset_override`: Keep device_id (per-TV)
+   - Added `_async_migrate_tagsets_to_global()` for auto-migration
+4. ✅ **`shuffle.py`** - Updated to use `get_effective_tags(entry, tv_id)`
+5. ✅ **`sensor.py`** - Updated to:
+   - Expose global tagsets in current_artwork attributes
+   - Subscribe to dispatcher signals for real-time updates
+6. ✅ **`services.yaml`** - Updated schemas (removed device_id from global operations)
+7. ✅ **Migration logic** - Auto-migration runs in `async_setup_entry()`
 
-4. **`shuffle.py`** - Update call to `get_effective_tags(entry, tv_id)`
+#### Add-on Changes (`ha-frame-art-manager`) ✅
 
-5. **`sensor.py`** - Update current_artwork sensor to expose global tagsets:
-   ```python
-   # Attribute: tagsets from entry.data["tagsets"] not tv_config
-   ```
-
-6. **`services.yaml`** - Update schemas:
-   - Remove `device_id` from `upsert_tagset` and `delete_tagset`
-
-7. **Migration logic** - Add auto-migration in `async_setup_entry()`:
-   - Detect per-TV tagsets, merge to global, update config
-
-#### Add-on Changes (`ha-frame-art-manager`)
-
-1. **`routes/ha.js`**:
-   - Update `/tvs` template to read global tagsets from entry data (not per-TV)
-   - Update `POST /tagsets/upsert` and `POST /tagsets/delete` to NOT send device_id
-
-2. **`public/js/app.js`**:
-   - Update `populateTagsetDropdowns()` - No TV dropdown for tagset management
-   - Single global tagset list, not grouped by TV
+1. ✅ **`routes/ha.js`**:
+   - Updated `/tvs` Jinja template to read global tagsets
+   - Global CRUD endpoints don't require device_id
+   - Pre-validation added for delete (see Lessons Learned)
+2. ✅ **`public/js/app.js`**:
+   - `populateTagsetDropdowns()` - No TV dropdown for tagset management
+   - Single global tagset list stored in `allGlobalTagsets`
    - TV Assignments section remains per-TV
+   - Immediate UI updates after CRUD operations
 
-3. **`public/index.html`**:
-   - Update Tagsets tab: Remove TV selector from "Manage Tagsets" section
-   - Keep TV selector in "TV Assignments" section
+---
 
-### Phase 4: Dropdown Enhancements - TODO
+## Lessons Learned
 
-Add tagsets to gallery and stats dropdowns:
+### HA Supervisor API Strips Error Messages
 
-1. **Gallery dropdown** (`app.js`):
-   - Add "Tagsets" section above "TVs" section
-   - Each tagset filters images by its include/exclude tags
-   - Need to fetch global tagsets and apply filter logic
+**Problem:** When a service raises `ServiceValidationError`, Home Assistant Core properly returns the error message. However, the Supervisor API (which add-ons use to communicate with Core) **strips the message** and returns a generic `500 Internal Server Error - Server got itself in trouble`.
 
-2. **Stats dropdown** (`app.js`):
-   - Add "Tagsets" section above individual tags
-   - Filter stats by tagset's tag criteria
+**Solution:** Pre-validate in the add-on backend before calling HA services. The add-on already has all the data needed (tagsets, TVs, assignments), so validation can happen in Node.js:
+
+```javascript
+// routes/ha.js - DELETE endpoint
+router.post('/tagsets/delete', requireHA, async (req, res) => {
+  const { name, tagsets, tvs } = req.body;  // Client sends current state
+  
+  // Pre-validation (since HA strips error messages)
+  if (tagsets && tvs) {
+    for (const tv of tvs) {
+      if (tv.selected_tagset === name) {
+        return res.status(400).json({ 
+          error: 'Failed to delete tagset',
+          details: `Cannot delete tagset '${name}': selected by ${tv.name}. Select a different tagset for that TV first.`
+        });
+      }
+    }
+  }
+  
+  // Then call HA service (will succeed since we pre-validated)
+  await haRequest('POST', '/services/frame_art_shuffler/delete_tagset', { name });
+});
+```
+
+The integration still has `ServiceValidationError` as a safety net, but the add-on provides the user-friendly error messages.
+
+### Dispatcher Signals for Real-Time Updates
+
+**Problem:** Sensor values weren't updating immediately after tagset changes. Users had to wait 60+ seconds for the next coordinator refresh.
+
+**Solution:** Use HA's dispatcher system to signal sensors when tagsets change:
+
+```python
+# In service handler after updating tagsets:
+async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{entry.entry_id}")       # Global
+async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{entry.entry_id}_{tv_id}")  # Per-TV
+
+# In sensor entity:
+async def async_added_to_hass(self) -> None:
+    # Subscribe to both global and TV-specific signals
+    self._unsubscribe_global = async_dispatcher_connect(
+        self.hass,
+        f"{DOMAIN}_tagset_updated_{self._entry.entry_id}",
+        self._handle_tagset_update
+    )
+    self._unsubscribe_tv = async_dispatcher_connect(
+        self.hass,
+        f"{DOMAIN}_tagset_updated_{self._entry.entry_id}_{self._tv_id}",
+        self._handle_tagset_update
+    )
+
+@callback
+def _handle_tagset_update(self) -> None:
+    self.async_write_ha_state()
+```
+
+### CSS Class Collisions
+
+**Problem:** The tagset modal used `.tag-checkbox` class, which collided with the existing filter dropdown's `.tag-checkbox` class. This caused JavaScript errors when the wrong checkboxes were selected.
+
+**Solution:** Use unique class names: `.tagset-tag-checkbox` for the modal.
 
 ---
 
 ## Open Questions
 
-1. ~~**Global tagsets vs per-TV tagsets?**~~ **DECIDED: GLOBAL** - Tagsets are defined once, assigned to TVs.
+1. ~~**Global tagsets vs per-TV tagsets?**~~ ✅ **DECIDED: GLOBAL** - Tagsets are defined once, assigned to TVs.
 
-2. **What if two TVs had different tagsets with same name during migration?** First one wins, log a warning. User can fix via add-on.
+2. ~~**What if two TVs had different tagsets with same name during migration?**~~ ✅ **RESOLVED:** First one wins, log a warning. User can fix via add-on.
 
-3. **Should there be a "default" tagset for new TVs?** Maybe auto-assign first tagset when TV is added?
+3. ~~**Should there be a "default" tagset for new TVs?**~~ ✅ **RESOLVED:** First tagset is auto-selected when TV has no selection and tagsets exist.
 
-4. **Tagset name validation?** Non-empty, alphanumeric + underscore + hyphen, max length 50.
+4. ~~**Tagset name validation?**~~ ✅ **IMPLEMENTED:** Non-empty, trimmed. No additional restrictions currently.
 

@@ -90,7 +90,7 @@ class FrameArtTextEntityBase(TextEntity):
         if not tv_config:
             return None
         
-        include_tags, exclude_tags = get_effective_tags(tv_config)
+        include_tags, exclude_tags = get_effective_tags(self._entry, self._tv_id)
         if self._key == "tags":
             return ",".join(include_tags) if include_tags else None
         elif self._key == "exclude_tags":
