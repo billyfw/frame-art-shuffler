@@ -19,6 +19,7 @@ from .config_entry import (
     get_global_tagsets,
     get_tag_weights,
     get_tv_config,
+    get_weighting_type,
     calculate_tag_percentages,
 )
 from .const import (
@@ -178,6 +179,12 @@ SELECTED_TAGSET_DESCRIPTION = SensorEntityDescription(
     translation_key="selected_tagset",
 )
 
+SELECTED_TAGSET_WEIGHTING_DESCRIPTION = SensorEntityDescription(
+    key="selected_tagset_weighting",
+    icon="mdi:scale-balance",
+    translation_key="selected_tagset_weighting",
+)
+
 OVERRIDE_TAGSET_DESCRIPTION = SensorEntityDescription(
     key="override_tagset",
     icon="mdi:tag-arrow-right",
@@ -243,6 +250,7 @@ async def async_setup_entry(
             tags_combined_entity = FrameArtTagsCombinedEntity(hass, entry, tv_id)
             # Tagset sensors
             selected_tagset_entity = FrameArtSelectedTagsetEntity(hass, entry, tv_id)
+            selected_tagset_weighting_entity = FrameArtSelectedTagsetWeightingEntity(hass, entry, tv_id)
             override_tagset_entity = FrameArtOverrideTagsetEntity(hass, entry, tv_id)
             override_expiry_entity = FrameArtOverrideExpiryEntity(hass, entry, tv_id)
             # Matching count sensor
@@ -250,8 +258,8 @@ async def async_setup_entry(
             # Activity history sensor
             activity_entity = FrameArtActivitySensor(hass, entry, tv_id)
             
-            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, selected_tagset_entity, override_tagset_entity, override_expiry_entity, matching_count_entity, activity_entity)
-            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, selected_tagset_entity, override_tagset_entity, override_expiry_entity, matching_count_entity, activity_entity])
+            tracked[tv_id] = (current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, selected_tagset_entity, selected_tagset_weighting_entity, override_tagset_entity, override_expiry_entity, matching_count_entity, activity_entity)
+            new_entities.extend([current_artwork_entity, last_image_entity, last_timestamp_entity, auto_shuffle_next_entity, ip_entity, mac_entity, motion_entity, light_entity, auto_bright_last_entity, auto_bright_next_entity, auto_bright_target_entity, auto_bright_lux_entity, auto_motion_last_entity, auto_motion_off_at_entity, current_matte_entity, current_filter_entity, matte_filter_entity, tags_combined_entity, selected_tagset_entity, selected_tagset_weighting_entity, override_tagset_entity, override_expiry_entity, matching_count_entity, activity_entity])
             
         if new_entities:
             async_add_entities(new_entities)
@@ -409,7 +417,10 @@ class FrameArtTVEntity(SensorEntity):
             data["override_expiry_time"] = tv_config.get(CONF_OVERRIDE_EXPIRY_TIME)
             data["active_tagset"] = get_active_tagset_name(self._entry, self._tv_id)
             
-            # Add tag weights and percentages for active tagset
+            # Add weighting type for active tagset
+            data["weighting_type"] = get_weighting_type(self._entry, self._tv_id)
+            
+            # Add tag weights and percentages for active tagset (only relevant for tag-weighted mode)
             tag_weights = get_tag_weights(self._entry, self._tv_id)
             if tag_weights:
                 data["tagset_weights"] = tag_weights
@@ -1471,6 +1482,40 @@ class FrameArtSelectedTagsetEntity(SensorEntity):
         if not tv_config:
             return None
         return tv_config.get(CONF_SELECTED_TAGSET)
+
+    @property
+    def available(self) -> bool:  # type: ignore[override]
+        """Return if entity is available."""
+        return get_tv_config(self._entry, self._tv_id) is not None
+
+
+class FrameArtSelectedTagsetWeightingEntity(SensorEntity):
+    """Sensor entity for the selected tagset's weighting type (image or tag)."""
+
+    entity_description = SELECTED_TAGSET_WEIGHTING_DESCRIPTION
+    _attr_has_entity_name = True
+    _attr_name = "Selected Tagset Weighting"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, tv_id: str) -> None:
+        self._hass = hass
+        self._tv_id = tv_id
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_{tv_id}_selected_tagset_weighting"
+
+        tv_config = get_tv_config(entry, tv_id)
+        tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, tv_id)},
+            name=tv_name,
+            manufacturer="Samsung",
+            model="Frame TV",
+        )
+
+    @property
+    def native_value(self) -> str | None:  # type: ignore[override]
+        """Return the weighting type of the selected tagset (image or tag)."""
+        return get_weighting_type(self._entry, self._tv_id)
 
     @property
     def available(self) -> bool:  # type: ignore[override]

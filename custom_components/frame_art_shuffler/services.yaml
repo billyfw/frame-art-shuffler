@@ -175,6 +175,22 @@ upsert_tagset:
       required: false
       selector:
         object:
+    weighting_type:
+      name: Weighting Type
+      description: "How images are weighted during shuffle. 'image' = all images equally likely (default). 'tag' = tags weighted equally (or by tag_weights), then random image from selected tag."
+      required: false
+      default: "image"
+      selector:
+        select:
+          options:
+            - "image"
+            - "tag"
+    tag_weights:
+      name: Tag Weights
+      description: "Optional weights for tags (only used when weighting_type is 'tag'). Object mapping tag names to weights (0.1-10). Missing tags default to 1."
+      required: false
+      selector:
+        object:
 
 delete_tagset:
   name: Delete Tagset

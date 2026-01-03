@@ -346,3 +346,50 @@ def format_weight_display(weight: float) -> str:
     if weight == int(weight):
         return str(int(weight))
     return f"{weight:.1f}"
+
+
+def get_weighting_type(entry: ConfigEntry, tv_id: str) -> str:
+    """Get the weighting type for the active tagset.
+    
+    Args:
+        entry: Config entry (contains global tagsets)
+        tv_id: TV identifier
+        
+    Returns:
+        "image" or "tag". Defaults to "image" if not set.
+    """
+    tagsets = entry.data.get("tagsets", {})
+    if not tagsets:
+        return "image"
+    
+    tv_config = get_tv_config(entry, tv_id)
+    if not tv_config:
+        return "image"
+    
+    active_name = tv_config.get("override_tagset") or tv_config.get("selected_tagset")
+    if not active_name or active_name not in tagsets:
+        active_name = next(iter(tagsets), None)
+    
+    if not active_name:
+        return "image"
+    
+    tagset = tagsets[active_name]
+    return tagset.get("weighting_type", "image")
+
+
+def get_tagset_weighting_type(entry: ConfigEntry, tagset_name: str) -> str:
+    """Get weighting type for a specific tagset by name.
+    
+    Args:
+        entry: Config entry
+        tagset_name: Name of the tagset
+        
+    Returns:
+        "image" or "tag". Defaults to "image" if not set.
+    """
+    tagsets = entry.data.get("tagsets", {})
+    if not tagsets or tagset_name not in tagsets:
+        return "image"
+    
+    tagset = tagsets[tagset_name]
+    return tagset.get("weighting_type", "image")

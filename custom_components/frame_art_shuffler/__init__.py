@@ -767,13 +767,16 @@ if _HA_AVAILABLE:
             tags = call.data.get("tags", [])
             exclude_tags = call.data.get("exclude_tags", [])
             tag_weights = call.data.get("tag_weights", {})
+            weighting_type = call.data.get("weighting_type", "image")
             
             if not name:
                 raise ServiceValidationError("Tagset name is required")
             if not tags:
                 raise ServiceValidationError("Tagset must have at least one tag")
+            if weighting_type not in ("image", "tag"):
+                raise ServiceValidationError("weighting_type must be 'image' or 'tag'")
             
-            # Validate and clamp weights
+            # Validate and clamp weights (only relevant if weighting_type is "tag")
             validated_weights = {}
             for tag, weight in tag_weights.items():
                 try:
@@ -832,8 +835,10 @@ if _HA_AVAILABLE:
             tagset_data = {
                 "tags": tags,
                 "exclude_tags": exclude_tags,
+                "weighting_type": weighting_type,
             }
             # Only store tag_weights if there are any non-default weights
+            # (tag_weights are only used when weighting_type is "tag")
             if validated_weights:
                 tagset_data["tag_weights"] = validated_weights
             
