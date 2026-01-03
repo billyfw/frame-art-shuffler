@@ -377,6 +377,9 @@ if _HA_AVAILABLE:
                     tv_name,
                     tv_id,
                 )
+                raise ServiceValidationError(
+                    f"Upload skipped for {tv_name}: another upload is already in progress. Please wait a moment and try again."
+                )
 
             await async_guarded_upload(
                 hass,
