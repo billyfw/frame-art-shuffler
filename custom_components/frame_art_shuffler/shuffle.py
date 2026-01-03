@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .activity import log_activity
-from .config_entry import get_active_tagset_name, get_effective_tags, get_tag_weights, get_tv_config
+from .config_entry import get_active_tagset_name, get_effective_tags, get_tag_weights, get_tv_config, get_weighting_type
 from .const import DOMAIN
 from .frame_tv import FrameArtError, set_art_on_tv_deleteothers
 
@@ -110,28 +110,29 @@ def _select_random_image(
     include_tags: list[str],
     exclude_tags: list[str],
     tag_weights: dict[str, float],
+    weighting_type: str,
     current_image: str | None,
     tv_name: str,
 ) -> tuple[dict[str, Any] | None, int, str | None]:
-    """Select a random eligible image using weighted tag selection.
+    """Select a random eligible image.
     
-    Algorithm (Option A - category weighting):
-    1. Build per-tag image pools (multi-tag images → highest-weight tag)
-    2. Weighted random to select a tag
-    3. If selected tag has 0 images, log and re-roll
-    4. Random image from selected tag's pool
+    Two modes based on weighting_type:
+    - "image": All eligible images weighted equally (original behavior)
+    - "tag": Tags weighted (equal by default), then random image from selected tag
     
     Args:
         metadata_path: Path to metadata.json
         include_tags: Tags to include (from tagset)
         exclude_tags: Tags to exclude (from tagset)
-        tag_weights: Dict of tag -> weight (missing = 1.0)
+        tag_weights: Dict of tag -> weight (only used when weighting_type="tag")
+        weighting_type: "image" or "tag"
         current_image: Currently displayed image filename (to exclude)
         tv_name: TV name for logging
         
     Returns:
         Tuple of (selected_image_dict, eligible_count, selected_tag_name)
         Returns (None, count, None) if no eligible images
+        selected_tag_name is only populated in "tag" weighting mode
     """
     with open(metadata_path, "r", encoding="utf-8") as file:
         metadata = json.load(file)
@@ -141,7 +142,7 @@ def _select_random_image(
         _LOGGER.warning("No images found in metadata for %s", tv_name)
         return None, 0, None
 
-    # Handle case where no include tags means "all images"
+    # Handle case where no include tags means "all images" (image-weighted flat selection)
     if not include_tags:
         eligible_images: list[dict[str, Any]] = []
         for filename, image_data in images.items():
@@ -183,6 +184,56 @@ def _select_random_image(
         )
         return selected, eligible_count, None
 
+    # IMAGE-WEIGHTED MODE: All eligible images have equal probability
+    if weighting_type == "image":
+        eligible_images = []
+        for filename, image_data in images.items():
+            image_tags = set(image_data.get("tags", []))
+            
+            # Must have at least one include tag
+            if not any(tag in image_tags for tag in include_tags):
+                continue
+            
+            # Must not have any exclude tag
+            if exclude_tags and any(tag in image_tags for tag in exclude_tags):
+                continue
+            
+            image_data_with_name = {**image_data, "filename": filename}
+            eligible_images.append(image_data_with_name)
+        
+        eligible_count = len(eligible_images)
+        if not eligible_images:
+            _LOGGER.warning(
+                "No images matching tag criteria for %s (include: %s, exclude: %s)",
+                tv_name,
+                include_tags,
+                exclude_tags,
+            )
+            return None, 0, None
+        
+        candidates = [img for img in eligible_images if img["filename"] != current_image]
+        if not candidates:
+            if eligible_count == 1:
+                _LOGGER.info(
+                    "Only one image (%s) matches criteria for %s and it's already displayed."
+                    " No shuffle performed.",
+                    eligible_images[0]["filename"],
+                    tv_name,
+                )
+                return None, eligible_count, None
+            _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
+            return None, eligible_count, None
+        
+        selected = random.choice(candidates)
+        _LOGGER.info(
+            "%s selected for TV %s from %d eligible images (image-weighted)",
+            selected["filename"],
+            tv_name,
+            eligible_count,
+        )
+        return selected, eligible_count, None
+
+    # TAG-WEIGHTED MODE: Select tag first (by weight), then random image from that tag
     # Build per-tag pools
     tag_pools = _build_tag_pools(images, include_tags, exclude_tags, tag_weights)
     
@@ -336,6 +387,7 @@ async def _async_shuffle_tv_inner(
     # Use effective tags (resolves tagsets from global tagsets)
     include_tags, exclude_tags = get_effective_tags(entry, tv_id)
     tag_weights = get_tag_weights(entry, tv_id)
+    weighting_type = get_weighting_type(entry, tv_id)
 
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     shuffle_cache = entry_data.setdefault("shuffle_cache", {})
@@ -367,6 +419,7 @@ async def _async_shuffle_tv_inner(
         include_tags,
         exclude_tags,
         tag_weights,
+        weighting_type,
         current_image,
         tv_name,
     )
