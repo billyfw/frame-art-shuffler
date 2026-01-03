@@ -13,7 +13,14 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .config_entry import get_active_tagset_name, get_effective_tags, get_global_tagsets, get_tv_config
+from .config_entry import (
+    get_active_tagset_name,
+    get_effective_tags,
+    get_global_tagsets,
+    get_tag_weights,
+    get_tv_config,
+    calculate_tag_percentages,
+)
 from .const import (
     CONF_ENABLE_AUTO_SHUFFLE,
     CONF_OVERRIDE_EXPIRY_TIME,
@@ -401,6 +408,13 @@ class FrameArtTVEntity(SensorEntity):
             data["override_tagset"] = tv_config.get(CONF_OVERRIDE_TAGSET)
             data["override_expiry_time"] = tv_config.get(CONF_OVERRIDE_EXPIRY_TIME)
             data["active_tagset"] = get_active_tagset_name(self._entry, self._tv_id)
+            
+            # Add tag weights and percentages for active tagset
+            tag_weights = get_tag_weights(self._entry, self._tv_id)
+            if tag_weights:
+                data["tagset_weights"] = tag_weights
+            if include_tags:
+                data["tagset_percentages"] = calculate_tag_percentages(include_tags, tag_weights)
         
         shuffle = tv_config.get("shuffle") or {}
         if isinstance(shuffle, dict):
@@ -1384,17 +1398,33 @@ class FrameArtTagsCombinedEntity(SensorEntity):
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
-        """Return combined tags display: [+] include / [-] exclude."""
+        """Return combined tags display: [+] include / [-] exclude.
+        
+        If any tag has a non-default weight, shows percentages:
+        [+] zebra(57%), lion(29%), monkey(14%) / [-] blurry
+        """
         tv_config = get_tv_config(self._entry, self._tv_id)
         if not tv_config:
             return None
         
         # Use effective tags (resolves tagsets from global tagsets)
         include_tags, exclude_tags = get_effective_tags(self._entry, self._tv_id)
+        tag_weights = get_tag_weights(self._entry, self._tv_id)
+        
+        # Check if any weight is non-default (not 1.0)
+        has_custom_weights = any(
+            tag_weights.get(tag, 1.0) != 1.0 for tag in include_tags
+        )
         
         parts = []
         if include_tags:
-            include_str = ", ".join(include_tags)
+            if has_custom_weights:
+                # Show percentages
+                percentages = calculate_tag_percentages(include_tags, tag_weights)
+                tag_strs = [f"{tag}({percentages.get(tag, 0)}%)" for tag in include_tags]
+                include_str = ", ".join(tag_strs)
+            else:
+                include_str = ", ".join(include_tags)
             parts.append(f"[+] {include_str}")
         if exclude_tags:
             exclude_str = ", ".join(exclude_tags)
