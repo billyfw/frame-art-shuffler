@@ -971,6 +971,9 @@ if _HA_AVAILABLE:
                 f"Override '{name}' applied for {duration_minutes}m",
             )
             async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
+            
+            # Trigger immediate shuffle to apply the override tagset
+            await async_shuffle_tv(hass, target_entry, tv_id, reason="override")
 
         async def async_handle_clear_tagset_override(call: ServiceCall) -> None:
             """Clear an active tagset override early."""
