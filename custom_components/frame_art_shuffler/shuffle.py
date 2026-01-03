@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .activity import log_activity
-from .config_entry import get_effective_tags, get_tv_config
+from .config_entry import get_active_tagset_name, get_effective_tags, get_tv_config
 from .const import DOMAIN
 from .frame_tv import FrameArtError, set_art_on_tv_deleteothers
 
@@ -269,6 +269,7 @@ async def _async_shuffle_tv_inner(
 
         display_log = entry_data.get("display_log")
         if display_log:
+            tagset_name = get_active_tagset_name(entry, tv_id)
             display_log.note_display_start(
                 tv_id=tv_id,
                 tv_name=tv_name,
@@ -280,6 +281,7 @@ async def _async_shuffle_tv_inner(
                 tv_tags=include_tags if include_tags else None,
                 matte=image_matte,
                 photo_filter=image_filter,
+                tagset_name=tagset_name,
             )
 
         _notify("success", f"Shuffled to {image_filename}")

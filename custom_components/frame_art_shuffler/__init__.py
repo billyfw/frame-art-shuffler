@@ -303,6 +303,8 @@ if _HA_AVAILABLE:
                 display_filename = "unknown"
 
             async def _perform_upload() -> bool:
+                from datetime import datetime, timezone as dt_timezone
+
                 log_activity(
                     hass,
                     target_entry.entry_id,
@@ -323,9 +325,13 @@ if _HA_AVAILABLE:
                     )
                 )
 
-                # Set matching_image_count to 0 since this is not a shuffle
+                # Update shuffle_cache with all current state (like shuffle does)
+                # This ensures the dashboard sensors show the correct image/matte/filter
                 shuffle_cache = data.setdefault("shuffle_cache", {}).setdefault(tv_id, {})
-                shuffle_cache["matching_image_count"] = 0
+                shuffle_cache["current_image"] = display_filename
+                shuffle_cache["current_matte"] = matte
+                shuffle_cache["current_filter"] = filter_id
+                shuffle_cache["matching_image_count"] = 0  # Not a shuffle
 
                 # Send signal to update sensors
                 signal = f"{DOMAIN}_shuffle_{target_entry.entry_id}_{tv_id}"
@@ -334,6 +340,33 @@ if _HA_AVAILABLE:
                 if filename:
                     await coordinator.async_set_active_image(
                         tv_id, filename, is_shuffle=False
+                    )
+
+                # Update display log so this manual display is tracked
+                display_log = data.get("display_log")
+                if display_log and filename:
+                    # Try to get image tags from metadata store
+                    image_tags: list[str] = []
+                    try:
+                        from .metadata import MetadataStore
+                        metadata_path = data.get("metadata_path")
+                        if metadata_path:
+                            store = MetadataStore(metadata_path)
+                            image_meta = store.get_image(filename)
+                            if image_meta:
+                                image_tags = list(image_meta.get("tags", []))
+                    except Exception:
+                        pass  # If we can't get tags, just log without them
+
+                    display_log.note_display_start(
+                        tv_id=tv_id,
+                        tv_name=tv_name,
+                        filename=filename,
+                        tags=image_tags,
+                        source="manual",
+                        shuffle_mode=None,
+                        started_at=datetime.now(dt_timezone.utc),
+                        matte=matte,
                     )
 
                 return True
