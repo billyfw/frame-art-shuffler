@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .activity import log_activity
-from .config_entry import get_active_tagset_name, get_effective_tags, get_tv_config
+from .config_entry import get_active_tagset_name, get_effective_tags, get_tag_weights, get_tv_config
 from .const import DOMAIN
 from .frame_tv import FrameArtError, set_art_on_tv_deleteothers
 
@@ -64,66 +64,216 @@ async def async_guarded_upload(
         upload_flags.discard(tv_id)
 
 
+def _build_tag_pools(
+    images: dict[str, dict[str, Any]],
+    include_tags: list[str],
+    exclude_tags: list[str],
+    tag_weights: dict[str, float],
+) -> dict[str, list[dict[str, Any]]]:
+    """Build per-tag image pools, assigning multi-tag images to highest-weight tag.
+    
+    Args:
+        images: Dict of filename -> image data from metadata
+        include_tags: Tags to include (from tagset)
+        exclude_tags: Tags to exclude (from tagset)
+        tag_weights: Dict of tag -> weight (missing = 1.0)
+        
+    Returns:
+        Dict of tag -> list of eligible images for that tag
+    """
+    tag_pools: dict[str, list[dict[str, Any]]] = {tag: [] for tag in include_tags}
+    
+    for filename, image_data in images.items():
+        image_tags = set(image_data.get("tags", []))
+        
+        # Skip if image has any exclude tag
+        if exclude_tags and any(tag in image_tags for tag in exclude_tags):
+            continue
+        
+        # Find which include tags this image matches
+        matching_tags = [tag for tag in include_tags if tag in image_tags]
+        
+        if not matching_tags:
+            continue
+        
+        # Assign to highest-weight tag (ties: first in tagset order, which is include_tags order)
+        best_tag = max(matching_tags, key=lambda t: (tag_weights.get(t, 1.0), -include_tags.index(t)))
+        
+        image_with_name = {**image_data, "filename": filename}
+        tag_pools[best_tag].append(image_with_name)
+    
+    return tag_pools
+
+
 def _select_random_image(
     metadata_path: Path,
     include_tags: list[str],
     exclude_tags: list[str],
+    tag_weights: dict[str, float],
     current_image: str | None,
     tv_name: str,
-) -> tuple[dict[str, Any] | None, int]:
-    """Select a random eligible image for the given TV."""
+) -> tuple[dict[str, Any] | None, int, str | None]:
+    """Select a random eligible image using weighted tag selection.
+    
+    Algorithm (Option A - category weighting):
+    1. Build per-tag image pools (multi-tag images → highest-weight tag)
+    2. Weighted random to select a tag
+    3. If selected tag has 0 images, log and re-roll
+    4. Random image from selected tag's pool
+    
+    Args:
+        metadata_path: Path to metadata.json
+        include_tags: Tags to include (from tagset)
+        exclude_tags: Tags to exclude (from tagset)
+        tag_weights: Dict of tag -> weight (missing = 1.0)
+        current_image: Currently displayed image filename (to exclude)
+        tv_name: TV name for logging
+        
+    Returns:
+        Tuple of (selected_image_dict, eligible_count, selected_tag_name)
+        Returns (None, count, None) if no eligible images
+    """
     with open(metadata_path, "r", encoding="utf-8") as file:
         metadata = json.load(file)
 
     images = metadata.get("images", {})
     if not images:
         _LOGGER.warning("No images found in metadata for %s", tv_name)
-        return None, 0
+        return None, 0, None
 
-    eligible_images: list[dict[str, Any]] = []
-    for filename, image_data in images.items():
-        image_tags = set(image_data.get("tags", []))
+    # Handle case where no include tags means "all images"
+    if not include_tags:
+        eligible_images: list[dict[str, Any]] = []
+        for filename, image_data in images.items():
+            image_tags = set(image_data.get("tags", []))
+            if exclude_tags and any(tag in image_tags for tag in exclude_tags):
+                continue
+            image_data_with_name = {**image_data, "filename": filename}
+            eligible_images.append(image_data_with_name)
+        
+        eligible_count = len(eligible_images)
+        if not eligible_images:
+            _LOGGER.warning(
+                "No images matching tag criteria for %s (include: %s, exclude: %s)",
+                tv_name,
+                include_tags,
+                exclude_tags,
+            )
+            return None, 0, None
+        
+        candidates = [img for img in eligible_images if img["filename"] != current_image]
+        if not candidates:
+            if eligible_count == 1:
+                _LOGGER.info(
+                    "Only one image (%s) matches criteria for %s and it's already displayed."
+                    " No shuffle performed.",
+                    eligible_images[0]["filename"],
+                    tv_name,
+                )
+                return None, eligible_count, None
+            _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
+            return None, eligible_count, None
+        
+        selected = random.choice(candidates)
+        _LOGGER.info(
+            "%s selected for TV %s from %d eligible images (no tag filtering)",
+            selected["filename"],
+            tv_name,
+            eligible_count,
+        )
+        return selected, eligible_count, None
 
-        if include_tags and not any(tag in image_tags for tag in include_tags):
-            continue
-        if exclude_tags and any(tag in image_tags for tag in exclude_tags):
-            continue
-
-        image_data_with_name = {**image_data, "filename": filename}
-        eligible_images.append(image_data_with_name)
-
-    eligible_count = len(eligible_images)
-    if not eligible_images:
+    # Build per-tag pools
+    tag_pools = _build_tag_pools(images, include_tags, exclude_tags, tag_weights)
+    
+    # Calculate total eligible count (unique images across all pools)
+    all_eligible = set()
+    for pool in tag_pools.values():
+        for img in pool:
+            all_eligible.add(img["filename"])
+    eligible_count = len(all_eligible)
+    
+    if eligible_count == 0:
         _LOGGER.warning(
             "No images matching tag criteria for %s (include: %s, exclude: %s)",
             tv_name,
             include_tags,
             exclude_tags,
         )
-        return None, 0
-
-    candidates = [img for img in eligible_images if img["filename"] != current_image]
-
+        return None, 0, None
+    
+    # Weighted tag selection with re-roll on empty
+    remaining_tags = list(include_tags)  # Copy to avoid modifying original
+    selected_tag: str | None = None
+    candidates: list[dict[str, Any]] = []
+    
+    while remaining_tags and not candidates:
+        # Calculate weights for remaining tags
+        weights = [tag_weights.get(tag, 1.0) for tag in remaining_tags]
+        total_weight = sum(weights)
+        
+        if total_weight <= 0:
+            break
+        
+        # Weighted random selection
+        roll = random.random() * total_weight
+        cumulative = 0.0
+        selected_tag = remaining_tags[0]  # Default fallback
+        
+        for tag, weight in zip(remaining_tags, weights):
+            cumulative += weight
+            if roll <= cumulative:
+                selected_tag = tag
+                break
+        
+        # Get candidates from selected tag's pool (excluding current image)
+        pool = tag_pools.get(selected_tag, [])
+        candidates = [img for img in pool if img["filename"] != current_image]
+        
+        if not candidates:
+            if pool:
+                # Pool has images but all are current_image
+                _LOGGER.info(
+                    "Tag '%s' rolled for %s but only contains current image, re-rolling",
+                    selected_tag,
+                    tv_name,
+                )
+            else:
+                # Pool is empty
+                _LOGGER.info(
+                    "Tag '%s' rolled for %s but has 0 eligible images, re-rolling",
+                    selected_tag,
+                    tv_name,
+                )
+            remaining_tags.remove(selected_tag)
+            selected_tag = None
+    
     if not candidates:
         if eligible_count == 1:
             _LOGGER.info(
-                "Only one image (%s) matches criteria for %s and it's already displayed."
+                "Only one image matches criteria for %s and it's already displayed."
                 " No shuffle performed.",
-                eligible_images[0]["filename"],
                 tv_name,
             )
-            return None, eligible_count
-        _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
-        return None, eligible_count
-
+            return None, eligible_count, None
+        _LOGGER.warning("No candidate images for %s after weighted selection", tv_name)
+        return None, eligible_count, None
+    
     selected = random.choice(candidates)
+    
+    # Calculate percentage for logging
+    total_weight = sum(tag_weights.get(t, 1.0) for t in include_tags)
+    tag_pct = round((tag_weights.get(selected_tag, 1.0) / total_weight) * 100) if total_weight > 0 else 0
+    
     _LOGGER.info(
-        "%s selected for TV %s from %d eligible images",
+        "%s selected for TV %s (tag: %s, %d%%) from %d eligible images",
         selected["filename"],
         tv_name,
+        selected_tag,
+        tag_pct,
         eligible_count,
     )
-    return selected, eligible_count
+    return selected, eligible_count, selected_tag
 
 
 async def async_shuffle_tv(
@@ -185,6 +335,7 @@ async def _async_shuffle_tv_inner(
 
     # Use effective tags (resolves tagsets from global tagsets)
     include_tags, exclude_tags = get_effective_tags(entry, tv_id)
+    tag_weights = get_tag_weights(entry, tv_id)
 
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     shuffle_cache = entry_data.setdefault("shuffle_cache", {})
@@ -210,11 +361,12 @@ async def _async_shuffle_tv_inner(
             _notify("skipped", message)
             return False
 
-    selected_image, matching_count = await hass.async_add_executor_job(
+    selected_image, matching_count, selected_tag = await hass.async_add_executor_job(
         _select_random_image,
         metadata_path,
         include_tags,
         exclude_tags,
+        tag_weights,
         current_image,
         tv_name,
     )
@@ -251,14 +403,21 @@ async def _async_shuffle_tv_inner(
             "current_filter": image_filter,
             "matching_image_count": matching_count,
             "last_shuffle_timestamp": timestamp,
+            "selected_tag": selected_tag,
         }
+
+        # Build activity message with tag info if available
+        if selected_tag:
+            activity_msg = f"Shuffled to {image_filename} (tag: {selected_tag})"
+        else:
+            activity_msg = f"Shuffled to {image_filename}"
 
         log_activity(
             hass,
             entry.entry_id,
             tv_id,
             "shuffle",
-            f"Shuffled to {image_filename}",
+            activity_msg,
         )
 
         signal = f"{DOMAIN}_shuffle_{entry.entry_id}_{tv_id}"

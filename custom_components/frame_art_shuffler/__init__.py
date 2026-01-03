@@ -766,11 +766,41 @@ if _HA_AVAILABLE:
             original_name = call.data.get("original_name", "").strip()
             tags = call.data.get("tags", [])
             exclude_tags = call.data.get("exclude_tags", [])
+            tag_weights = call.data.get("tag_weights", {})
             
             if not name:
                 raise ServiceValidationError("Tagset name is required")
             if not tags:
                 raise ServiceValidationError("Tagset must have at least one tag")
+            
+            # Validate and clamp weights
+            validated_weights = {}
+            for tag, weight in tag_weights.items():
+                try:
+                    w = float(weight)
+                    if w < 0.1 or w > 10:
+                        _LOGGER.warning(
+                            "Weight %.2f for tag '%s' out of range, clamping to 0.1-10",
+                            w, tag
+                        )
+                        w = max(0.1, min(10.0, w))
+                    validated_weights[tag] = w
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        "Invalid weight '%s' for tag '%s', ignoring",
+                        weight, tag
+                    )
+            
+            # Warn about weights for tags not in the include list
+            for tag in validated_weights:
+                if tag not in tags:
+                    _LOGGER.warning(
+                        "Weight specified for tag '%s' which is not in include tags, ignoring",
+                        tag
+                    )
+            
+            # Only keep weights for tags that are in the include list
+            validated_weights = {t: w for t, w in validated_weights.items() if t in tags}
             
             # Get global tagsets from config entry root
             tagsets = get_global_tagsets(entry).copy()
@@ -799,10 +829,15 @@ if _HA_AVAILABLE:
                 _LOGGER.info(f"Renamed tagset '{original_name}' to '{name}'")
             
             is_new = name not in tagsets and not is_rename
-            tagsets[name] = {
+            tagset_data = {
                 "tags": tags,
                 "exclude_tags": exclude_tags,
             }
+            # Only store tag_weights if there are any non-default weights
+            if validated_weights:
+                tagset_data["tag_weights"] = validated_weights
+            
+            tagsets[name] = tagset_data
             
             update_global_tagsets(hass, entry, tagsets)
             
