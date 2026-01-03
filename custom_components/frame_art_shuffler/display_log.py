@@ -54,6 +54,7 @@ class DisplaySession:
     matched_tags: list[str] | None = None  # intersection with TV's configured tags
     matte: str | None = None
     photo_filter: str | None = None
+    tagset_name: str | None = None  # active tagset name when this display occurred
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-friendly dict."""
@@ -70,6 +71,7 @@ class DisplaySession:
             "matched_tags": self.matched_tags,
             "matte": self.matte,
             "photo_filter": self.photo_filter,
+            "tagset_name": self.tagset_name,
         }
 
     @classmethod
@@ -92,6 +94,7 @@ class DisplaySession:
             matched_tags=payload.get("matched_tags"),
             matte=payload.get("matte"),
             photo_filter=payload.get("photo_filter"),
+            tagset_name=payload.get("tagset_name"),
         )
 
 
@@ -108,6 +111,7 @@ class _ActiveDisplay:
     matched_tags: list[str] | None = None  # intersection with TV's configured tags
     matte: str | None = None
     photo_filter: str | None = None
+    tagset_name: str | None = None  # active tagset name when this display started
 
 
 class DisplayLogManager:
@@ -207,6 +211,7 @@ class DisplayLogManager:
         tv_tags: list[str] | None = None,
         matte: str | None = None,
         photo_filter: str | None = None,
+        tagset_name: str | None = None,
     ) -> None:
         """Update the active display state and capture the previous session.
 
@@ -223,6 +228,7 @@ class DisplayLogManager:
                 This allows per-TV statistics to only count tags relevant to that TV.
             matte: The matte style applied to the image (e.g., "flexible_warm").
             photo_filter: The photo filter applied to the image.
+            tagset_name: The name of the active tagset when this display started.
         """
         if not self._ready or not self._enabled:
             self._active_sessions.pop(tv_id, None)
@@ -248,6 +254,7 @@ class DisplayLogManager:
             matched_tags=matched_tags,
             matte=matte,
             photo_filter=photo_filter,
+            tagset_name=tagset_name,
         )
 
     def note_screen_off(
@@ -295,6 +302,7 @@ class DisplayLogManager:
         started_at: datetime | None = None,
         matte: str | None = None,
         photo_filter: str | None = None,
+        tagset_name: str | None = None,
     ) -> None:
         """Resume display tracking when screen turns on.
 
@@ -311,6 +319,7 @@ class DisplayLogManager:
             started_at: Override timestamp (defaults to now).
             matte: The matte style applied to the image (e.g., "flexible_warm").
             photo_filter: The photo filter applied to the image.
+            tagset_name: The name of the active tagset when this display started.
         """
         if not self._ready or not self._enabled:
             return
@@ -354,6 +363,7 @@ class DisplayLogManager:
             matched_tags=matched_tags,
             matte=matte,
             photo_filter=photo_filter,
+            tagset_name=tagset_name,
         )
         _LOGGER.debug(
             "Display log: Started new session for %s on %s (screen on)",
@@ -732,6 +742,7 @@ class DisplayLogManager:
             matched_tags=active.matched_tags,
             matte=active.matte,
             photo_filter=active.photo_filter,
+            tagset_name=active.tagset_name,
         )
         self.record_session(session)
 

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
-from .config_entry import get_tv_config
+from .config_entry import get_active_tagset_name, get_tv_config
 from .const import DOMAIN
 from . import frame_tv
 
@@ -178,6 +178,9 @@ async def async_setup_entry(
                                 current_matte = shuffle_cache.get("current_matte")
                                 current_filter = shuffle_cache.get("current_filter")
                                 
+                                # Get active tagset name
+                                tagset_name = get_active_tagset_name(entry, tv_id)
+                                
                                 display_log.note_screen_on(
                                     tv_id=tv_id,
                                     tv_name=tv_name,
@@ -186,6 +189,7 @@ async def async_setup_entry(
                                     tv_tags=tv_tags,
                                     matte=current_matte,
                                     photo_filter=current_filter,
+                                    tagset_name=tagset_name,
                                 )
                                 _LOGGER.debug(f"Display log: Started session for {tv_name} (screen on detected by poll)")
 
