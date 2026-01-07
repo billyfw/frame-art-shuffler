@@ -719,6 +719,53 @@ class DisplayLogManager:
         await self._hass.async_add_executor_job(_delete_files)
         _LOGGER.info("Display logs cleared for entry %s", self._entry.entry_id)
 
+    def get_recent_auto_shuffle_images(
+        self,
+        tv_id: str,
+        hours: int = 48,
+    ) -> set[str]:
+        """Get filenames of images shown via auto-shuffle in the last N hours.
+
+        Used by the shuffle algorithm to prefer images that haven't been
+        shown recently, improving perceived variety.
+
+        Args:
+            tv_id: TV identifier to filter by
+            hours: Lookback window (default 48)
+
+        Returns:
+            Set of filenames shown on this TV via auto-shuffle within the window.
+            Returns empty set if logging is disabled or no events found.
+        """
+        if not self._ready or not self._enabled:
+            return set()
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        events = self._read_events_file()
+        recent: set[str] = set()
+
+        for event in events:
+            # Filter by TV
+            if event.get("tv_id") != tv_id:
+                continue
+
+            # Filter by auto-shuffle source
+            if event.get("source") != "shuffle":
+                continue
+            if event.get("shuffle_mode") != "auto":
+                continue
+
+            # Filter by time window
+            completed = _parse_timestamp(event.get("completed_at"))
+            if not completed or completed < cutoff:
+                continue
+
+            filename = event.get("filename")
+            if filename:
+                recent.add(filename)
+
+        return recent
+
     def _record_completed_session(
         self,
         tv_id: str,

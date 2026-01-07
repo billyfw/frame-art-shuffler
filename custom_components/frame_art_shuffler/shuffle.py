@@ -113,13 +113,17 @@ def _select_random_image(
     weighting_type: str,
     current_image: str | None,
     tv_name: str,
-) -> tuple[dict[str, Any] | None, int, str | None]:
+    recent_images: set[str] | None = None,
+) -> tuple[dict[str, Any] | None, int, str | None, int, bool]:
     """Select a random eligible image.
-    
+
     Two modes based on weighting_type:
     - "image": All eligible images weighted equally (original behavior)
     - "tag": Tags weighted (equal by default), then random image from selected tag
-    
+
+    Recency preference: If recent_images is provided, prefers images not in that set.
+    Falls back to full candidate pool if all candidates are recent.
+
     Args:
         metadata_path: Path to metadata.json
         include_tags: Tags to include (from tagset)
@@ -128,11 +132,15 @@ def _select_random_image(
         weighting_type: "image" or "tag"
         current_image: Currently displayed image filename (to exclude)
         tv_name: TV name for logging
-        
+        recent_images: Set of filenames recently shown (for recency preference)
+
     Returns:
-        Tuple of (selected_image_dict, eligible_count, selected_tag_name)
-        Returns (None, count, None) if no eligible images
-        selected_tag_name is only populated in "tag" weighting mode
+        Tuple of (selected_image_dict, eligible_count, selected_tag_name, fresh_count, used_fallback)
+        - selected_image_dict: The chosen image, or None if no eligible images
+        - eligible_count: Total number of eligible images
+        - selected_tag_name: Only populated in "tag" weighting mode
+        - fresh_count: Number of non-recent candidates (0 if recency not applied)
+        - used_fallback: True if recency preference couldn't be applied (all recent)
     """
     with open(metadata_path, "r", encoding="utf-8") as file:
         metadata = json.load(file)
@@ -140,7 +148,7 @@ def _select_random_image(
     images = metadata.get("images", {})
     if not images:
         _LOGGER.warning("No images found in metadata for %s", tv_name)
-        return None, 0, None
+        return None, 0, None, 0, False
 
     # Handle case where no include tags means "all images" (image-weighted flat selection)
     if not include_tags:
@@ -151,7 +159,7 @@ def _select_random_image(
                 continue
             image_data_with_name = {**image_data, "filename": filename}
             eligible_images.append(image_data_with_name)
-        
+
         eligible_count = len(eligible_images)
         if not eligible_images:
             _LOGGER.warning(
@@ -160,8 +168,8 @@ def _select_random_image(
                 include_tags,
                 exclude_tags,
             )
-            return None, 0, None
-        
+            return None, 0, None, 0, False
+
         candidates = [img for img in eligible_images if img["filename"] != current_image]
         if not candidates:
             if eligible_count == 1:
@@ -171,36 +179,50 @@ def _select_random_image(
                     eligible_images[0]["filename"],
                     tv_name,
                 )
-                return None, eligible_count, None
+                return None, eligible_count, None, 0, False
             _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
-            return None, eligible_count, None
-        
-        selected = random.choice(candidates)
+            return None, eligible_count, None, 0, False
+
+        # Apply recency preference
+        if recent_images:
+            fresh_candidates = [img for img in candidates if img["filename"] not in recent_images]
+        else:
+            fresh_candidates = []
+
+        fresh_count = len(fresh_candidates)
+        if fresh_candidates:
+            selected = random.choice(fresh_candidates)
+            used_fallback = False
+        else:
+            selected = random.choice(candidates)
+            used_fallback = bool(recent_images)  # Only true fallback if recency was attempted
+
         _LOGGER.info(
-            "%s selected for TV %s from %d eligible images (no tag filtering)",
+            "%s selected for TV %s from %d eligible images (no tag filtering, %d fresh)",
             selected["filename"],
             tv_name,
             eligible_count,
+            fresh_count,
         )
-        return selected, eligible_count, None
+        return selected, eligible_count, None, fresh_count, used_fallback
 
     # IMAGE-WEIGHTED MODE: All eligible images have equal probability
     if weighting_type == "image":
         eligible_images = []
         for filename, image_data in images.items():
             image_tags = set(image_data.get("tags", []))
-            
+
             # Must have at least one include tag
             if not any(tag in image_tags for tag in include_tags):
                 continue
-            
+
             # Must not have any exclude tag
             if exclude_tags and any(tag in image_tags for tag in exclude_tags):
                 continue
-            
+
             image_data_with_name = {**image_data, "filename": filename}
             eligible_images.append(image_data_with_name)
-        
+
         eligible_count = len(eligible_images)
         if not eligible_images:
             _LOGGER.warning(
@@ -209,8 +231,8 @@ def _select_random_image(
                 include_tags,
                 exclude_tags,
             )
-            return None, 0, None
-        
+            return None, 0, None, 0, False
+
         candidates = [img for img in eligible_images if img["filename"] != current_image]
         if not candidates:
             if eligible_count == 1:
@@ -220,30 +242,44 @@ def _select_random_image(
                     eligible_images[0]["filename"],
                     tv_name,
                 )
-                return None, eligible_count, None
+                return None, eligible_count, None, 0, False
             _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
-            return None, eligible_count, None
-        
-        selected = random.choice(candidates)
+            return None, eligible_count, None, 0, False
+
+        # Apply recency preference
+        if recent_images:
+            fresh_candidates = [img for img in candidates if img["filename"] not in recent_images]
+        else:
+            fresh_candidates = []
+
+        fresh_count = len(fresh_candidates)
+        if fresh_candidates:
+            selected = random.choice(fresh_candidates)
+            used_fallback = False
+        else:
+            selected = random.choice(candidates)
+            used_fallback = bool(recent_images)  # Only true fallback if recency was attempted
+
         _LOGGER.info(
-            "%s selected for TV %s from %d eligible images (image-weighted)",
+            "%s selected for TV %s from %d eligible images (image-weighted, %d fresh)",
             selected["filename"],
             tv_name,
             eligible_count,
+            fresh_count,
         )
-        return selected, eligible_count, None
+        return selected, eligible_count, None, fresh_count, used_fallback
 
     # TAG-WEIGHTED MODE: Select tag first (by weight), then random image from that tag
     # Build per-tag pools
     tag_pools = _build_tag_pools(images, include_tags, exclude_tags, tag_weights)
-    
+
     # Calculate total eligible count (unique images across all pools)
     all_eligible = set()
     for pool in tag_pools.values():
         for img in pool:
             all_eligible.add(img["filename"])
     eligible_count = len(all_eligible)
-    
+
     if eligible_count == 0:
         _LOGGER.warning(
             "No images matching tag criteria for %s (include: %s, exclude: %s)",
@@ -251,36 +287,36 @@ def _select_random_image(
             include_tags,
             exclude_tags,
         )
-        return None, 0, None
-    
+        return None, 0, None, 0, False
+
     # Weighted tag selection with re-roll on empty
     remaining_tags = list(include_tags)  # Copy to avoid modifying original
     selected_tag: str | None = None
     candidates: list[dict[str, Any]] = []
-    
+
     while remaining_tags and not candidates:
         # Calculate weights for remaining tags
         weights = [tag_weights.get(tag, 1.0) for tag in remaining_tags]
         total_weight = sum(weights)
-        
+
         if total_weight <= 0:
             break
-        
+
         # Weighted random selection
         roll = random.random() * total_weight
         cumulative = 0.0
         selected_tag = remaining_tags[0]  # Default fallback
-        
+
         for tag, weight in zip(remaining_tags, weights):
             cumulative += weight
             if roll <= cumulative:
                 selected_tag = tag
                 break
-        
+
         # Get candidates from selected tag's pool (excluding current image)
         pool = tag_pools.get(selected_tag, [])
         candidates = [img for img in pool if img["filename"] != current_image]
-        
+
         if not candidates:
             if pool:
                 # Pool has images but all are current_image
@@ -298,7 +334,7 @@ def _select_random_image(
                 )
             remaining_tags.remove(selected_tag)
             selected_tag = None
-    
+
     if not candidates:
         if eligible_count == 1:
             _LOGGER.info(
@@ -306,25 +342,38 @@ def _select_random_image(
                 " No shuffle performed.",
                 tv_name,
             )
-            return None, eligible_count, None
+            return None, eligible_count, None, 0, False
         _LOGGER.warning("No candidate images for %s after weighted selection", tv_name)
-        return None, eligible_count, None
-    
-    selected = random.choice(candidates)
-    
+        return None, eligible_count, None, 0, False
+
+    # Apply recency preference within the selected tag's candidates
+    if recent_images:
+        fresh_candidates = [img for img in candidates if img["filename"] not in recent_images]
+    else:
+        fresh_candidates = []
+
+    fresh_count = len(fresh_candidates)
+    if fresh_candidates:
+        selected = random.choice(fresh_candidates)
+        used_fallback = False
+    else:
+        selected = random.choice(candidates)
+        used_fallback = bool(recent_images)  # Only true fallback if recency was attempted
+
     # Calculate percentage for logging
     total_weight = sum(tag_weights.get(t, 1.0) for t in include_tags)
     tag_pct = round((tag_weights.get(selected_tag, 1.0) / total_weight) * 100) if total_weight > 0 else 0
-    
+
     _LOGGER.info(
-        "%s selected for TV %s (tag: %s, %d%%) from %d eligible images",
+        "%s selected for TV %s (tag: %s, %d%%) from %d eligible, %d fresh in tag",
         selected["filename"],
         tv_name,
         selected_tag,
         tag_pct,
         eligible_count,
+        fresh_count,
     )
-    return selected, eligible_count, selected_tag
+    return selected, eligible_count, selected_tag, fresh_count, used_fallback
 
 
 async def async_shuffle_tv(
@@ -335,6 +384,7 @@ async def async_shuffle_tv(
     reason: str = "manual",
     skip_if_screen_off: bool = False,
     status_callback: StatusCallback | None = None,
+    recent_images: set[str] | None = None,
 ) -> bool:
     """Shuffle a TV's artwork selection, enforcing the upload guard."""
     def _notify(status: str, message: str) -> None:
@@ -347,7 +397,8 @@ async def async_shuffle_tv(
 
     try:
         return await _async_shuffle_tv_inner(
-            hass, entry, tv_id, tv_config, tv_name, reason, skip_if_screen_off, _notify
+            hass, entry, tv_id, tv_config, tv_name, reason, skip_if_screen_off, _notify,
+            recent_images,
         )
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Shuffle failed for %s: %s", tv_name, err)
@@ -371,6 +422,7 @@ async def _async_shuffle_tv_inner(
     reason: str,
     skip_if_screen_off: bool,
     _notify: Callable[[str, str], None],
+    recent_images: set[str] | None = None,
 ) -> bool:
     """Inner implementation of shuffle - exceptions bubble up to caller."""
     if not tv_config:
@@ -413,7 +465,7 @@ async def _async_shuffle_tv_inner(
             _notify("skipped", message)
             return False
 
-    selected_image, matching_count, selected_tag = await hass.async_add_executor_job(
+    selected_image, matching_count, selected_tag, fresh_count, used_fallback = await hass.async_add_executor_job(
         _select_random_image,
         metadata_path,
         include_tags,
@@ -422,6 +474,7 @@ async def _async_shuffle_tv_inner(
         weighting_type,
         current_image,
         tv_name,
+        recent_images,
     )
 
     if not selected_image:
@@ -459,11 +512,21 @@ async def _async_shuffle_tv_inner(
             "selected_tag": selected_tag,
         }
 
-        # Build activity message with tag info if available
+        # Build activity message with recency and tag info
         if selected_tag:
-            activity_msg = f"Shuffled to {image_filename} (tag: {selected_tag})"
+            if used_fallback:
+                activity_msg = f"Shuffled to {image_filename} (tag: {selected_tag}, all in tag were recent)"
+            elif fresh_count > 0:
+                activity_msg = f"Shuffled to {image_filename} (tag: {selected_tag}, from {fresh_count} fresh in tag)"
+            else:
+                activity_msg = f"Shuffled to {image_filename} (tag: {selected_tag})"
         else:
-            activity_msg = f"Shuffled to {image_filename}"
+            if used_fallback:
+                activity_msg = f"Shuffled to {image_filename} (all {matching_count} eligible were recent, picked randomly)"
+            elif fresh_count > 0:
+                activity_msg = f"Shuffled to {image_filename} (from {fresh_count} fresh of {matching_count} eligible)"
+            else:
+                activity_msg = f"Shuffled to {image_filename}"
 
         log_activity(
             hass,
