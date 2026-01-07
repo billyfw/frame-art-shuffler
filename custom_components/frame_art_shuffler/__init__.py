@@ -1466,12 +1466,19 @@ if _HA_AVAILABLE:
                 )
                 return
 
+            # Get recent images for recency preference (48-hour window)
+            recent_images: set[str] = set()
+            display_log = data.get("display_log")
+            if display_log:
+                recent_images = display_log.get_recent_auto_shuffle_images(tv_id, hours=48)
+
             await async_shuffle_tv(
                 hass,
                 entry,
                 tv_id,
                 reason="auto",
                 skip_if_screen_off=True,
+                recent_images=recent_images,
             )
 
         def start_auto_shuffle_timer(tv_id: str) -> None:

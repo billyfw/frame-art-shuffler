@@ -108,6 +108,46 @@ Feature design docs in `/docs/`:
 - `TV_STATES.md` - Samsung Frame TV state machine
 - `MATTE_BEHAVIOR.md` - Matte upload workarounds
 
+## SSH Access to Home Assistant
+
+Connect to the HA box for verification and debugging:
+
+```bash
+ssh ha                          # Connect to Home Assistant SSH add-on
+```
+
+**IMPORTANT**: Never perform destructive operations on the HA box (deleting files, modifying configs, restarting services, etc.) without explicit user permission. SSH access is primarily for read-only verification and debugging.
+
+### Key Paths on HA Box
+- **HA Config**: `/config/`
+- **Integration**: `/config/custom_components/frame_art_shuffler/`
+- **HA Log**: `/config/home-assistant.log`
+- **Display Logs**: `/config/frame_art/logs/events.json`
+- **Display Summary**: `/config/frame_art/logs/summary.json`
+
+### Useful Commands
+```bash
+# View recent integration logs
+grep 'frame_art_shuffler' /config/home-assistant.log | tail -50
+
+# Watch logs in real-time (for shuffle events)
+tail -f /config/home-assistant.log | grep -E '(shuffle|selected|fresh)'
+
+# Check display log events
+tail -100 /config/frame_art/logs/events.json
+
+# Restart Home Assistant
+ha core restart
+```
+
+### Logging Configuration
+The integration is set to debug level in `/config/configuration.yaml`:
+```yaml
+logger:
+  logs:
+    custom_components.frame_art_shuffler: debug
+```
+
 ## Important Conventions
 
 - Single-instance integration (only one config entry allowed)
