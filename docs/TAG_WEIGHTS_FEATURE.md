@@ -51,6 +51,17 @@ If a tag is rolled but has 0 eligible images:
 3. Recalculate weights and re-roll
 4. If all tags exhausted: return no selection (existing behavior)
 
+### Recency Preference Interaction
+
+During auto-shuffle, recency preference is applied *after* tag selection:
+
+1. Weighted random selects a tag (e.g., "zebra" at 57%)
+2. Build candidate images from that tag's pool
+3. Filter out images shown in last 48 hours → "fresh" pool
+4. If fresh images exist, select from fresh pool; otherwise fallback to full pool
+
+This preserves tag weight proportions while still preferring fresh images. The recency filter only affects which *image* is chosen from the selected tag, not which tag is selected.
+
 ---
 
 ## Data Model
@@ -200,15 +211,17 @@ Add to extra state attributes:
 
 ### 5. Activity Logging
 
-When shuffle completes, log the selected tag:
+When shuffle completes, log the selected tag and recency info (auto-shuffle only):
 
-**Current**: `Shuffled to z15.jpg`
+**Manual shuffle**: `Shuffled to z15.jpg (tag: zebra, from 50 in tag)`
 
-**New**: `Shuffled to z15.jpg (tag: zebra)`
+**Auto-shuffle (fresh images available)**: `Shuffled to z15.jpg (tag: zebra, from 12 fresh of 50 in tag)`
+
+**Auto-shuffle (all recent)**: `Shuffled to z15.jpg (tag: zebra, all 50 in tag were recent)`
 
 When tag rolled but empty:
 
-**New**: `Tag 'extinct_animals' rolled but has 0 images, re-rolling`
+`Tag 'extinct_animals' rolled but has 0 images, re-rolling`
 
 ---
 

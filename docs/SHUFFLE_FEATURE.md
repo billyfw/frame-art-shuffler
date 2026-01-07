@@ -18,6 +18,8 @@ When you press the "Auto-Shuffle Now" button for a TV:
 4. **Upload** the selected image using `--delete-others` flag (removes all other images from TV)
 5. **Update sensors** with the new image name and timestamp
 
+Note: Manual button presses do not apply recency preference (see below). For recency-aware selection, use auto-shuffle.
+
 ### Auto Shuffle Scheduler
 
 When the "Auto-Shuffle Enable" switch is turned on for a TV (or the option is enabled in the config flow), Home Assistant starts a dedicated timer for that TV:
@@ -29,6 +31,40 @@ When the "Auto-Shuffle Enable" switch is turned on for a TV (or the option is en
 5. **Next run + persistence**: the `auto_shuffle_next` sensor (see below) exposes the upcoming timestamp, and the same value is persisted in the config entry so it survives Home Assistant restarts. On startup the timer restarts from the saved timestamp instead of starting over.
 
 When auto-shuffle is enabled, the manual button also routes through the scheduler. Pressing it immediately runs `async_run_auto_shuffle`, logs the outcome, and then restarts the timer so the next run remains frequency minutes in the future.
+
+### Recency Preference (Auto-Shuffle Only)
+
+Auto-shuffle applies a **recency preference** to avoid showing images that were recently displayed on the same TV. This creates a more varied viewing experience without requiring strict rotation.
+
+**How it works:**
+
+1. When auto-shuffle runs, the integration queries the display log for images shown on this TV via auto-shuffle in the last **48 hours**
+2. These "recent" images are deprioritized in favor of "fresh" images
+3. If fresh images are available, one is selected randomly from the fresh pool
+4. If all eligible images are recent (small pool or high shuffle frequency), the algorithm falls back to the full candidate pool
+
+**Key design decisions:**
+
+- **48-hour window**: Based on human perception—after ~48 hours, you've likely forgotten you saw an image recently
+- **Auto-shuffle only**: Manual displays (via button or service call) don't affect recency tracking. Only auto-scheduled shuffles are tracked and filtered
+- **Soft preference**: Recency is preferred, not required. The algorithm never fails to select an image due to recency
+- **Per-TV tracking**: Each TV maintains its own recency window, so the same image can show on different TVs
+
+**Activity log messages reflect recency:**
+
+```
+Shuffled to sunset.jpg (from 12 fresh of 25 eligible)
+Shuffled to sunset.jpg (all 8 eligible were recent, picked randomly)
+Shuffled to sunset.jpg (tag: Nature, from 5 fresh of 12 in tag)
+Shuffled to sunset.jpg (tag: Nature, all 3 in tag were recent)
+```
+
+**Edge cases:**
+
+- **Cold start / empty log**: All images are considered "fresh"
+- **Logging disabled**: Recency preference is skipped, all images equally likely
+- **Small image pools**: Will naturally fall back to full pool more often
+- **Tagset changes**: Only images in the new tagset that were previously shown are filtered
 
 ### Logging
 
@@ -230,7 +266,7 @@ You can still automate manual shuffles (e.g., specific tags at certain times) by
 
 Potential improvements not implemented:
 
-- [ ] Weighted random selection (avoid recently shown images)
+- [x] ~~Weighted random selection (avoid recently shown images)~~ — Implemented as recency preference (48-hour window)
 - [ ] Time-of-day based tag filtering
 - [ ] Persistent notification on success/failure
 - [ ] Upload progress indicator
