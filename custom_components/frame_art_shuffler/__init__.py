@@ -1466,11 +1466,11 @@ if _HA_AVAILABLE:
                 )
                 return
 
-            # Get recent images for recency preference (48-hour window)
+            # Get recent images for recency preference (72-hour window)
             recent_images: set[str] = set()
             display_log = data.get("display_log")
             if display_log:
-                recent_images = display_log.get_recent_auto_shuffle_images(tv_id, hours=48)
+                recent_images = display_log.get_recent_auto_shuffle_images(tv_id, hours=72)
 
             await async_shuffle_tv(
                 hass,

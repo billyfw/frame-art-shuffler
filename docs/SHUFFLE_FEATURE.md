@@ -38,14 +38,14 @@ Auto-shuffle applies a **recency preference** to avoid showing images that were 
 
 **How it works:**
 
-1. When auto-shuffle runs, the integration queries the display log for images shown on this TV via auto-shuffle in the last **48 hours**
+1. When auto-shuffle runs, the integration queries the display log for images shown on this TV via auto-shuffle in the last **72 hours**
 2. These "recent" images are deprioritized in favor of "fresh" images
 3. If fresh images are available, one is selected randomly from the fresh pool
 4. If all eligible images are recent (small pool or high shuffle frequency), the algorithm falls back to the full candidate pool
 
 **Key design decisions:**
 
-- **48-hour window**: Based on human perception—after ~48 hours, you've likely forgotten you saw an image recently
+- **72-hour window**: Based on human perception—after ~3 days, you've likely forgotten you saw an image recently
 - **Auto-shuffle only**: Manual displays (via button or service call) don't affect recency tracking. Only auto-scheduled shuffles are tracked and filtered
 - **Soft preference**: Recency is preferred, not required. The algorithm never fails to select an image due to recency
 - **Per-TV tracking**: Each TV maintains its own recency window, so the same image can show on different TVs
