@@ -57,10 +57,12 @@ During auto-shuffle, recency preference is applied *after* tag selection:
 
 1. Weighted random selects a tag (e.g., "zebra" at 57%)
 2. Build candidate images from that tag's pool
-3. Filter out images shown in last 72 hours → "fresh" pool
+3. Filter out recent images (72h same-TV + 12h cross-TV) → "fresh" pool
 4. If fresh images exist, select from fresh pool; otherwise fallback to full pool
 
 This preserves tag weight proportions while still preferring fresh images. The recency filter only affects which *image* is chosen from the selected tag, not which tag is selected.
+
+The short cross-TV window (12h vs 72h) is intentional: a longer window could cause "eddy currents" where a TV with a larger pool dominates shared tags, pushing other TVs toward their unique tags.
 
 ---
 
