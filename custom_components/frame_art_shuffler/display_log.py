@@ -721,8 +721,8 @@ class DisplayLogManager:
 
     def get_recent_auto_shuffle_images(
         self,
-        tv_id: str,
-        hours: int = 48,
+        tv_id: str | None = None,
+        hours: int = 72,
     ) -> set[str]:
         """Get filenames of images shown via auto-shuffle in the last N hours.
 
@@ -730,11 +730,11 @@ class DisplayLogManager:
         shown recently, improving perceived variety.
 
         Args:
-            tv_id: TV identifier to filter by
-            hours: Lookback window (default 48)
+            tv_id: TV identifier to filter by. If None, returns images from all TVs.
+            hours: Lookback window (default 72)
 
         Returns:
-            Set of filenames shown on this TV via auto-shuffle within the window.
+            Set of filenames shown via auto-shuffle within the window.
             Returns empty set if logging is disabled or no events found.
         """
         if not self._ready or not self._enabled:
@@ -745,8 +745,8 @@ class DisplayLogManager:
         recent: set[str] = set()
 
         for event in events:
-            # Filter by TV
-            if event.get("tv_id") != tv_id:
+            # Filter by TV (skip filter if tv_id is None to get all TVs)
+            if tv_id is not None and event.get("tv_id") != tv_id:
                 continue
 
             # Filter by auto-shuffle source

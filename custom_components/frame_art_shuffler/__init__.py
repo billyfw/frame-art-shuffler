@@ -1466,11 +1466,24 @@ if _HA_AVAILABLE:
                 )
                 return
 
-            # Get recent images for recency preference (72-hour window)
+            # Get recent images for recency preference using dual time windows:
+            # - Same-TV: 72 hours — "don't show what I've seen on this TV recently"
+            # - Cross-TV: 12 hours — "don't show what was just on another TV"
+            #
+            # The shorter cross-TV window prevents an "eddy current" effect where
+            # a TV with a larger pool could dominate shared tags, pushing other TVs
+            # toward their unique tags. By keeping cross-TV recency short, images
+            # age out quickly and tag proportions stay balanced across TVs.
+            #
+            # The all-TVs query includes the current TV, so there's some overlap
+            # with the same-TV query. This is harmless — unioning sets just means
+            # some images appear in both, but the final "recent" set is the same.
             recent_images: set[str] = set()
             display_log = data.get("display_log")
             if display_log:
-                recent_images = display_log.get_recent_auto_shuffle_images(tv_id, hours=72)
+                same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=72)
+                cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=12)
+                recent_images = same_tv_recent | cross_tv_recent
 
             await async_shuffle_tv(
                 hass,
