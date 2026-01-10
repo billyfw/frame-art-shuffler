@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Workflow Preferences
 
-When you believe a task is complete, ask the user whether to:
+**Never commit or deploy without explicit user approval.** When you believe a task is complete, ask the user whether to:
 - **Commit**: `git commit` (with a succinct, meaningful message) + `git push`
 - **Commit and deploy**: `git commit` (with a succinct, meaningful message) + `git push` + `./scripts/dev_deploy.sh --restart`
 
