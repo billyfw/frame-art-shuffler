@@ -545,6 +545,9 @@ async def _async_shuffle_tv_inner(
         display_log = entry_data.get("display_log")
         if display_log:
             tagset_name = get_active_tagset_name(entry, tv_id)
+            # Pass pool stats for sparkline history (only for auto-shuffle)
+            pool_size_arg = matching_count if reason == "auto" else None
+            pool_available_arg = fresh_count if reason == "auto" else None
             display_log.note_display_start(
                 tv_id=tv_id,
                 tv_name=tv_name,
@@ -557,6 +560,8 @@ async def _async_shuffle_tv_inner(
                 matte=image_matte,
                 photo_filter=image_filter,
                 tagset_name=tagset_name,
+                pool_size=pool_size_arg,
+                pool_available=pool_available_arg,
             )
 
         _notify("success", f"Shuffled to {image_filename}")

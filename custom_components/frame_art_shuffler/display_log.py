@@ -55,10 +55,12 @@ class DisplaySession:
     matte: str | None = None
     photo_filter: str | None = None
     tagset_name: str | None = None  # active tagset name when this display occurred
+    pool_size: int | None = None  # total images in pool at shuffle time
+    pool_available: int | None = None  # fresh images available at shuffle time
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-friendly dict."""
-        return {
+        result = {
             "tv_id": self.tv_id,
             "tv_name": self.tv_name,
             "filename": self.filename,
@@ -73,6 +75,12 @@ class DisplaySession:
             "photo_filter": self.photo_filter,
             "tagset_name": self.tagset_name,
         }
+        # Only include pool stats if present (for auto-shuffle events)
+        if self.pool_size is not None:
+            result["pool_size"] = self.pool_size
+        if self.pool_available is not None:
+            result["pool_available"] = self.pool_available
+        return result
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "DisplaySession":
@@ -95,6 +103,8 @@ class DisplaySession:
             matte=payload.get("matte"),
             photo_filter=payload.get("photo_filter"),
             tagset_name=payload.get("tagset_name"),
+            pool_size=payload.get("pool_size"),
+            pool_available=payload.get("pool_available"),
         )
 
 
@@ -112,6 +122,8 @@ class _ActiveDisplay:
     matte: str | None = None
     photo_filter: str | None = None
     tagset_name: str | None = None  # active tagset name when this display started
+    pool_size: int | None = None  # total images in pool at shuffle time
+    pool_available: int | None = None  # fresh images available at shuffle time
 
 
 class DisplayLogManager:
@@ -212,6 +224,8 @@ class DisplayLogManager:
         matte: str | None = None,
         photo_filter: str | None = None,
         tagset_name: str | None = None,
+        pool_size: int | None = None,
+        pool_available: int | None = None,
     ) -> None:
         """Update the active display state and capture the previous session.
 
@@ -229,6 +243,8 @@ class DisplayLogManager:
             matte: The matte style applied to the image (e.g., "flexible_warm").
             photo_filter: The photo filter applied to the image.
             tagset_name: The name of the active tagset when this display started.
+            pool_size: Total images in the pool at shuffle time (for pool health tracking).
+            pool_available: Fresh images available at shuffle time (for pool health tracking).
         """
         if not self._ready or not self._enabled:
             self._active_sessions.pop(tv_id, None)
@@ -255,6 +271,8 @@ class DisplayLogManager:
             matte=matte,
             photo_filter=photo_filter,
             tagset_name=tagset_name,
+            pool_size=pool_size,
+            pool_available=pool_available,
         )
 
     def note_screen_off(
@@ -835,6 +853,65 @@ class DisplayLogManager:
             "cross_tv_hours": cross_tv_hours,
         }
 
+    def get_pool_health_history(
+        self,
+        tv_id: str,
+        hours: int = 24,
+    ) -> list[dict[str, Any]]:
+        """Get historical pool health data from recorded shuffle events.
+
+        Returns pool_available and pool_size at each auto-shuffle event within
+        the time window. This data is recorded at shuffle time, so it reflects
+        the actual pool state when each shuffle occurred.
+
+        Args:
+            tv_id: TV identifier
+            hours: Lookback window (default 24)
+
+        Returns:
+            List of dicts with timestamp, pool_size, pool_available, sorted oldest first.
+            Returns empty list if logging is disabled or no events found.
+        """
+        if not self._ready or not self._enabled:
+            return []
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        events = self._read_events_file()
+        history: list[dict[str, Any]] = []
+
+        for event in events:
+            # Filter by TV
+            if event.get("tv_id") != tv_id:
+                continue
+
+            # Filter by auto-shuffle source
+            if event.get("source") != "shuffle":
+                continue
+            if event.get("shuffle_mode") != "auto":
+                continue
+
+            # Filter by time window (use started_at if available, else completed_at)
+            timestamp_str = event.get("started_at") or event.get("completed_at")
+            timestamp = _parse_timestamp(timestamp_str)
+            if not timestamp or timestamp < cutoff:
+                continue
+
+            # Only include events with pool data
+            pool_size = event.get("pool_size")
+            pool_available = event.get("pool_available")
+            if pool_size is None or pool_available is None:
+                continue
+
+            history.append({
+                "timestamp": timestamp.isoformat(),
+                "pool_size": pool_size,
+                "pool_available": pool_available,
+            })
+
+        # Sort by timestamp, oldest first
+        history.sort(key=lambda x: x["timestamp"])
+        return history
+
     def _record_completed_session(
         self,
         tv_id: str,
@@ -859,6 +936,8 @@ class DisplayLogManager:
             matte=active.matte,
             photo_filter=active.photo_filter,
             tagset_name=active.tagset_name,
+            pool_size=active.pool_size,
+            pool_available=active.pool_available,
         )
         self.record_session(session)
 
