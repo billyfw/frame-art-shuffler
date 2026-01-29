@@ -37,6 +37,7 @@ HomeAssistant: Any = Any
 ConfigEntry: Any = Any
 ServiceCall: Any = Any
 Platform: Any = Any
+HomeAssistantView: Any = Any
 callback: Callable[..., Any] = lambda func, *args, **kwargs: func  # type: ignore[assignment]
 dr = None
 
@@ -50,6 +51,7 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         _helpers_er = importlib.import_module("homeassistant.helpers.entity_registry")
         _helpers_event = importlib.import_module("homeassistant.helpers.event")
         _exceptions = importlib.import_module("homeassistant.exceptions")
+        _http = importlib.import_module("homeassistant.components.http")
 
         ConfigEntry = getattr(_config_entries, "ConfigEntry")
         Platform = getattr(_const, "Platform")
@@ -60,6 +62,7 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
         dr = _helpers_dr
         er = _helpers_er
         async_track_time_interval = getattr(_helpers_event, "async_track_time_interval")
+        HomeAssistantView = getattr(_http, "HomeAssistantView")
         _HA_AVAILABLE = True
     except ModuleNotFoundError:
         _HA_AVAILABLE = False
@@ -82,7 +85,7 @@ if _HA_AVAILABLE:
     )
     from .display_log import DisplayLogManager
     from .coordinator import FrameArtCoordinator
-    from .config_entry import get_tv_config, get_global_tagsets, list_tv_configs, remove_tv_config, update_tv_config, update_global_tagsets
+    from .config_entry import get_tv_config, get_global_tagsets, list_tv_configs, remove_tv_config, update_tv_config, update_global_tagsets, get_effective_tags
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory, tv_on, tv_off, set_art_mode, is_screen_on
     from .metadata import MetadataStore
@@ -152,6 +155,129 @@ if _HA_AVAILABLE:
                 "light_sensor": tv_data.get("light_sensor"),
             }
         return structural
+
+
+    def _calculate_pool_filenames(
+        metadata_path: Path,
+        include_tags: list[str],
+        exclude_tags: list[str],
+    ) -> set[str]:
+        """Calculate the set of filenames in a TV's eligible pool based on tags.
+
+        Args:
+            metadata_path: Path to metadata.json
+            include_tags: Tags that images must have at least one of
+            exclude_tags: Tags that images must not have any of
+
+        Returns:
+            Set of eligible filenames
+        """
+        import json
+
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except (OSError, json.JSONDecodeError) as err:
+            _LOGGER.warning(f"Failed to read metadata for pool calculation: {err}")
+            return set()
+
+        images = metadata.get("images", {})
+        pool: set[str] = set()
+
+        for filename, image_data in images.items():
+            image_tags = set(image_data.get("tags", []))
+
+            # Must have at least one include tag (if include_tags is specified)
+            if include_tags and not any(tag in image_tags for tag in include_tags):
+                continue
+
+            # Must not have any exclude tag
+            if exclude_tags and any(tag in image_tags for tag in exclude_tags):
+                continue
+
+            pool.add(filename)
+
+        return pool
+
+
+    class PoolHealthView(HomeAssistantView):
+        """API endpoint to get pool health data for all TVs."""
+
+        url = "/api/frame_art_shuffler/pool_health"
+        name = "api:frame_art_shuffler:pool_health"
+        requires_auth = True
+
+        # Current recency window settings (in hours)
+        # These match the values used in the shuffle algorithm
+        SAME_TV_HOURS = 120
+        CROSS_TV_HOURS = 72
+
+        def __init__(self, hass: Any, entry: Any) -> None:
+            """Initialize the view."""
+            self._hass = hass
+            self._entry = entry
+
+        async def get(self, request: Any) -> Any:
+            """Handle GET request for pool health data."""
+            from aiohttp import web
+
+            data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
+            if not data:
+                return web.json_response(
+                    {"error": "Integration data not available"},
+                    status=500,
+                )
+
+            display_log = data.get("display_log")
+            metadata_path = data.get("metadata_path")
+
+            if not display_log or not metadata_path:
+                return web.json_response(
+                    {"error": "Display log or metadata not available"},
+                    status=500,
+                )
+
+            tv_configs = list_tv_configs(self._entry)
+            result: dict[str, Any] = {
+                "tvs": {},
+                "windows": {
+                    "same_tv_hours": self.SAME_TV_HOURS,
+                    "cross_tv_hours": self.CROSS_TV_HOURS,
+                },
+            }
+
+            for tv_id, tv_config in tv_configs.items():
+                tv_name = tv_config.get("name", tv_id)
+
+                # Get shuffle frequency for this TV (default 60 minutes)
+                shuffle_frequency = int(tv_config.get(CONF_SHUFFLE_FREQUENCY, 60) or 60)
+
+                # Get effective tags for this TV (resolves tagset)
+                include_tags, exclude_tags = get_effective_tags(self._entry, tv_id)
+
+                # Calculate pool filenames
+                pool_filenames = await self._hass.async_add_executor_job(
+                    _calculate_pool_filenames,
+                    metadata_path,
+                    include_tags,
+                    exclude_tags,
+                )
+
+                # Get pool health from display log
+                health = display_log.get_pool_health(
+                    tv_id=tv_id,
+                    pool_filenames=pool_filenames,
+                    same_tv_hours=self.SAME_TV_HOURS,
+                    cross_tv_hours=self.CROSS_TV_HOURS,
+                )
+
+                result["tvs"][tv_id] = {
+                    "name": tv_name,
+                    "shuffle_frequency_minutes": shuffle_frequency,
+                    **health,
+                }
+
+            return web.json_response(result)
 
 
     async def async_setup_entry(hass: Any, entry: Any) -> bool:
@@ -1467,8 +1593,8 @@ if _HA_AVAILABLE:
                 return
 
             # Get recent images for recency preference using dual time windows:
-            # - Same-TV: 72 hours — "don't show what I've seen on this TV recently"
-            # - Cross-TV: 36 hours — "don't show what was recently on another TV"
+            # - Same-TV: 120 hours (5 days) — "don't show what I've seen on this TV recently"
+            # - Cross-TV: 72 hours (3 days) — "don't show what was recently on another TV"
             #
             # The all-TVs query includes the current TV, so there's some overlap
             # with the same-TV query. This is harmless — unioning sets just means
@@ -1476,8 +1602,8 @@ if _HA_AVAILABLE:
             recent_images: set[str] = set()
             display_log = data.get("display_log")
             if display_log:
-                same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=72)
-                cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=36)
+                same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=120)
+                cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=72)
                 recent_images = same_tv_recent | cross_tv_recent
 
             await async_shuffle_tv(
@@ -1880,6 +2006,9 @@ if _HA_AVAILABLE:
                 "integration_start",
                 "Integration loaded",
             )
+
+        # Register pool health API endpoint
+        hass.http.register_view(PoolHealthView(hass, entry))
 
         return True
 

@@ -39,8 +39,8 @@ Auto-shuffle applies a **recency preference** to avoid showing images that were 
 **How it works:**
 
 1. When auto-shuffle runs, the integration queries the display log using **dual time windows**:
-   - **Same-TV: 72 hours** — images shown on this TV via auto-shuffle
-   - **Cross-TV: 12 hours** — images shown on any TV via auto-shuffle
+   - **Same-TV: 120 hours (5 days)** — images shown on this TV via auto-shuffle
+   - **Cross-TV: 72 hours (3 days)** — images shown on any TV via auto-shuffle
 2. The union of these sets becomes the "recent" images to avoid
 3. If fresh images are available, one is selected randomly from the fresh pool
 4. If all eligible images are recent (small pool or high shuffle frequency), the algorithm falls back to the full candidate pool
@@ -48,9 +48,9 @@ Auto-shuffle applies a **recency preference** to avoid showing images that were 
 **Key design decisions:**
 
 - **Dual time windows**: Different concerns need different horizons:
-  - Same-TV (72h): "I don't want to see the same image on this TV for days"
-  - Cross-TV (12h): "I don't want to walk between rooms and see the same image"
-- **Short cross-TV window prevents "eddy current"**: A longer cross-TV window could cause a TV with a larger pool to "use up" shared tags, pushing other TVs toward their unique tags. The 12h window lets images age out quickly, preserving tag proportions.
+  - Same-TV (120h / 5 days): "I don't want to see the same image on this TV for almost a week"
+  - Cross-TV (72h / 3 days): "I don't want to walk between rooms and see the same image for days"
+- **Longer windows for better variety**: The extended windows ensure images feel fresh across multiple days of viewing.
 - **Auto-shuffle only**: Manual displays (via button or service call) don't affect recency tracking. Only auto-scheduled shuffles are tracked and filtered
 - **Soft preference**: Recency is preferred, not required. The algorithm never fails to select an image due to recency
 
@@ -266,11 +266,85 @@ You can still automate manual shuffles (e.g., specific tags at certain times) by
 - Upload time: 5-15 seconds depending on image size and network
 - No polling or background tasks
 
+## Pool Health API
+
+The integration exposes a REST API endpoint to monitor pool health — how many images are "fresh" vs. recently shown for each TV.
+
+### Endpoint
+
+```
+GET /api/frame_art_shuffler/pool_health
+```
+
+Requires authentication (same as other HA APIs).
+
+### Response
+
+```json
+{
+  "tvs": {
+    "abc123...": {
+      "name": "Fireplace",
+      "pool_size": 500,
+      "same_tv_recent": 300,
+      "cross_tv_recent": 50,
+      "total_recent": 350,
+      "available": 150,
+      "shuffle_frequency_minutes": 15,
+      "same_tv_hours": 120,
+      "cross_tv_hours": 72
+    }
+  },
+  "windows": {
+    "same_tv_hours": 120,
+    "cross_tv_hours": 72
+  }
+}
+```
+
+### Field Definitions
+
+| Field | Description |
+|-------|-------------|
+| `pool_size` | Total images in this TV's eligible pool (based on tagset) |
+| `same_tv_recent` | Images shown on THIS TV within `same_tv_hours` |
+| `cross_tv_recent` | Images shown on OTHER TVs within `cross_tv_hours` (excludes same-TV to avoid double-counting) |
+| `total_recent` | Sum of `same_tv_recent` + `cross_tv_recent` |
+| `available` | Images not recently shown, preferred for selection. `pool_size - total_recent` |
+| `shuffle_frequency_minutes` | How often this TV shuffles (used to calculate variety hours) |
+
+### Variety Metric
+
+The Frame Art Manager UI displays a **Variety** column calculated as:
+
+```
+Variety (hours) = available × (shuffle_frequency_minutes / 60)
+```
+
+This represents how many hours of unique shuffles are possible before the fresh pool is exhausted and sequences may start repeating.
+
+| Variety | Status | Meaning |
+|---------|--------|---------|
+| 10+ hours | 🟢 Healthy | Good variety, patterns unlikely |
+| 5-10 hours | 🟡 Moderate | Some repetition possible over a full day |
+| <5 hours | 🔴 Low | Sequences will repeat; consider adding images |
+
+### Use Cases
+
+- **Monitoring**: Check if pool sizes are adequate for your shuffle frequency
+- **Tuning**: Decide whether to adjust recency windows or add more images
+- **Debugging**: Understand why certain images keep appearing
+
+### Frame Art Manager Integration
+
+The Frame Art Manager dashboard includes a "Pool Health" table that calls this API and displays the results in a user-friendly format.
+
 ## Future Enhancements
 
 Potential improvements not implemented:
 
-- [x] ~~Weighted random selection (avoid recently shown images)~~ — Implemented as recency preference (48-hour window)
+- [x] ~~Weighted random selection (avoid recently shown images)~~ — Implemented as recency preference
+- [x] ~~Pool health monitoring~~ — Implemented via REST API
 - [ ] Time-of-day based tag filtering
 - [ ] Persistent notification on success/failure
 - [ ] Upload progress indicator
