@@ -271,9 +271,16 @@ if _HA_AVAILABLE:
                     cross_tv_hours=self.CROSS_TV_HOURS,
                 )
 
+                # Get historical pool health for sparkline (last 48 hours)
+                history = display_log.get_pool_health_history(
+                    tv_id=tv_id,
+                    hours=48,
+                )
+
                 result["tvs"][tv_id] = {
                     "name": tv_name,
                     "shuffle_frequency_minutes": shuffle_frequency,
+                    "history": history,
                     **health,
                 }
 
