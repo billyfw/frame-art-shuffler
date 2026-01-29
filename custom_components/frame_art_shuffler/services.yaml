@@ -281,3 +281,28 @@ clear_tagset_override:
       selector:
         entity:
           integration: frame_art_shuffler
+
+set_recency_windows:
+  name: Set Recency Windows
+  description: Configure the recency time windows used by the shuffle algorithm to deprioritize recently shown images.
+  fields:
+    same_tv_hours:
+      name: Same-TV Window (hours)
+      description: Images shown on the same TV within this window are deprioritized. Range 6-168 (1 week).
+      required: false
+      selector:
+        number:
+          min: 6
+          max: 168
+          unit_of_measurement: hours
+          mode: slider
+    cross_tv_hours:
+      name: Cross-TV Window (hours)
+      description: Images shown on any TV within this window are deprioritized. Range 6-168 (1 week).
+      required: false
+      selector:
+        number:
+          min: 6
+          max: 168
+          unit_of_measurement: hours
+          mode: slider

@@ -39,8 +39,8 @@ Auto-shuffle applies a **recency preference** to avoid showing images that were 
 **How it works:**
 
 1. When auto-shuffle runs, the integration queries the display log using **dual time windows**:
-   - **Same-TV: 120 hours (5 days)** — images shown on this TV via auto-shuffle
-   - **Cross-TV: 72 hours (3 days)** — images shown on any TV via auto-shuffle
+   - **Same-TV: 120 hours (5 days) default** — images shown on this TV via auto-shuffle
+   - **Cross-TV: 72 hours (3 days) default** — images shown on any TV via auto-shuffle
 2. The union of these sets becomes the "recent" images to avoid
 3. If fresh images are available, one is selected randomly from the fresh pool
 4. If all eligible images are recent (small pool or high shuffle frequency), the algorithm falls back to the full candidate pool
@@ -48,11 +48,24 @@ Auto-shuffle applies a **recency preference** to avoid showing images that were 
 **Key design decisions:**
 
 - **Dual time windows**: Different concerns need different horizons:
-  - Same-TV (120h / 5 days): "I don't want to see the same image on this TV for almost a week"
-  - Cross-TV (72h / 3 days): "I don't want to walk between rooms and see the same image for days"
-- **Longer windows for better variety**: The extended windows ensure images feel fresh across multiple days of viewing.
+  - Same-TV: "I don't want to see the same image on this TV for almost a week"
+  - Cross-TV: "I don't want to walk between rooms and see the same image for days"
+- **Configurable windows**: Windows can be adjusted from 6 to 168 hours (7 days) via service call or the Frame Art Manager UI
 - **Auto-shuffle only**: Manual displays (via button or service call) don't affect recency tracking. Only auto-scheduled shuffles are tracked and filtered
 - **Soft preference**: Recency is preferred, not required. The algorithm never fails to select an image due to recency
+
+### Configuring Recency Windows
+
+Use the `frame_art_shuffler.set_recency_windows` service to adjust the time windows:
+
+```yaml
+service: frame_art_shuffler.set_recency_windows
+data:
+  same_tv_hours: 120   # 6-168 hours (default: 120)
+  cross_tv_hours: 72   # 6-168 hours (default: 72)
+```
+
+The Frame Art Manager dashboard provides a visual interface with sliders and live preview of how window changes affect pool availability.
 
 **Activity log messages reflect recency:**
 
@@ -278,6 +291,14 @@ GET /api/frame_art_shuffler/pool_health
 
 Requires authentication (same as other HA APIs).
 
+### Query Parameters (Optional)
+
+Pass `same_tv_hours` and/or `cross_tv_hours` as query parameters to preview what pool health would look like with different window settings:
+
+```
+GET /api/frame_art_shuffler/pool_health?same_tv_hours=96&cross_tv_hours=48
+```
+
 ### Response
 
 ```json
@@ -292,12 +313,18 @@ Requires authentication (same as other HA APIs).
       "available": 150,
       "shuffle_frequency_minutes": 15,
       "same_tv_hours": 120,
-      "cross_tv_hours": 72
+      "cross_tv_hours": 72,
+      "history": [
+        {"timestamp": "2026-01-21T12:00:00Z", "pool_size": 500, "pool_available": 180},
+        {"timestamp": "2026-01-21T12:15:00Z", "pool_size": 500, "pool_available": 179}
+      ]
     }
   },
   "windows": {
     "same_tv_hours": 120,
-    "cross_tv_hours": 72
+    "cross_tv_hours": 72,
+    "configured_same_tv_hours": 120,
+    "configured_cross_tv_hours": 72
   }
 }
 ```
@@ -312,6 +339,16 @@ Requires authentication (same as other HA APIs).
 | `total_recent` | Sum of `same_tv_recent` + `cross_tv_recent` |
 | `available` | Images not recently shown, preferred for selection. `pool_size - total_recent` |
 | `shuffle_frequency_minutes` | How often this TV shuffles (used to calculate variety hours) |
+| `history` | Array of pool health snapshots over the last 7 days (recorded at each auto-shuffle) |
+
+### History Field
+
+The `history` array contains snapshots recorded each time auto-shuffle runs. Each entry has:
+- `timestamp`: ISO 8601 timestamp of the shuffle
+- `pool_size`: Total eligible images at that time
+- `pool_available`: Fresh (non-recent) images available at that time
+
+This data powers the 7-day trend sparkline in the Frame Art Manager UI.
 
 ### Variety Metric
 
@@ -345,6 +382,8 @@ Potential improvements not implemented:
 
 - [x] ~~Weighted random selection (avoid recently shown images)~~ — Implemented as recency preference
 - [x] ~~Pool health monitoring~~ — Implemented via REST API
+- [x] ~~Pool health history/sparkline~~ — 7-day trend tracked per shuffle
+- [x] ~~Configurable recency windows~~ — Adjustable via service call (6-168 hours)
 - [ ] Time-of-day based tag filtering
 - [ ] Persistent notification on success/failure
 - [ ] Upload progress indicator

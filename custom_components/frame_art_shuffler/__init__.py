@@ -200,6 +200,26 @@ if _HA_AVAILABLE:
         return pool
 
 
+    # Default recency window settings (in hours)
+    DEFAULT_SAME_TV_HOURS = 120
+    DEFAULT_CROSS_TV_HOURS = 72
+    MIN_RECENCY_HOURS = 6
+    MAX_RECENCY_HOURS = 168  # 1 week
+
+    def get_recency_windows(entry: Any) -> tuple[int, int]:
+        """Get recency window settings from config entry options.
+
+        Returns:
+            Tuple of (same_tv_hours, cross_tv_hours)
+        """
+        same_tv = entry.options.get("same_tv_hours", DEFAULT_SAME_TV_HOURS)
+        cross_tv = entry.options.get("cross_tv_hours", DEFAULT_CROSS_TV_HOURS)
+        # Clamp to valid range
+        same_tv = max(MIN_RECENCY_HOURS, min(MAX_RECENCY_HOURS, int(same_tv)))
+        cross_tv = max(MIN_RECENCY_HOURS, min(MAX_RECENCY_HOURS, int(cross_tv)))
+        return same_tv, cross_tv
+
+
     class PoolHealthView(HomeAssistantView):
         """API endpoint to get pool health data for all TVs."""
 
@@ -207,18 +227,18 @@ if _HA_AVAILABLE:
         name = "api:frame_art_shuffler:pool_health"
         requires_auth = True
 
-        # Current recency window settings (in hours)
-        # These match the values used in the shuffle algorithm
-        SAME_TV_HOURS = 120
-        CROSS_TV_HOURS = 72
-
         def __init__(self, hass: Any, entry: Any) -> None:
             """Initialize the view."""
             self._hass = hass
             self._entry = entry
 
         async def get(self, request: Any) -> Any:
-            """Handle GET request for pool health data."""
+            """Handle GET request for pool health data.
+
+            Optional query params for preview:
+                same_tv_hours: Override same-TV window (6-168)
+                cross_tv_hours: Override cross-TV window (6-168)
+            """
             from aiohttp import web
 
             data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
@@ -237,12 +257,30 @@ if _HA_AVAILABLE:
                     status=500,
                 )
 
+            # Get configured windows (from config entry options)
+            configured_same_tv, configured_cross_tv = get_recency_windows(self._entry)
+
+            # Allow query param overrides for preview (clamped to valid range)
+            try:
+                same_tv_hours = int(request.query.get("same_tv_hours", configured_same_tv))
+                same_tv_hours = max(MIN_RECENCY_HOURS, min(MAX_RECENCY_HOURS, same_tv_hours))
+            except (ValueError, TypeError):
+                same_tv_hours = configured_same_tv
+
+            try:
+                cross_tv_hours = int(request.query.get("cross_tv_hours", configured_cross_tv))
+                cross_tv_hours = max(MIN_RECENCY_HOURS, min(MAX_RECENCY_HOURS, cross_tv_hours))
+            except (ValueError, TypeError):
+                cross_tv_hours = configured_cross_tv
+
             tv_configs = list_tv_configs(self._entry)
             result: dict[str, Any] = {
                 "tvs": {},
                 "windows": {
-                    "same_tv_hours": self.SAME_TV_HOURS,
-                    "cross_tv_hours": self.CROSS_TV_HOURS,
+                    "same_tv_hours": same_tv_hours,
+                    "cross_tv_hours": cross_tv_hours,
+                    "configured_same_tv_hours": configured_same_tv,
+                    "configured_cross_tv_hours": configured_cross_tv,
                 },
             }
 
@@ -267,14 +305,14 @@ if _HA_AVAILABLE:
                 health = display_log.get_pool_health(
                     tv_id=tv_id,
                     pool_filenames=pool_filenames,
-                    same_tv_hours=self.SAME_TV_HOURS,
-                    cross_tv_hours=self.CROSS_TV_HOURS,
+                    same_tv_hours=same_tv_hours,
+                    cross_tv_hours=cross_tv_hours,
                 )
 
-                # Get historical pool health for sparkline (last 48 hours)
+                # Get historical pool health for sparkline (last 7 days)
                 history = display_log.get_pool_health_history(
                     tv_id=tv_id,
-                    hours=48,
+                    hours=168,
                 )
 
                 result["tvs"][tv_id] = {
@@ -1168,6 +1206,37 @@ if _HA_AVAILABLE:
             async_handle_clear_tagset_override,
         )
 
+        # Service to set recency windows
+        async def async_handle_set_recency_windows(call: Any) -> None:
+            """Handle set_recency_windows service call."""
+            same_tv_hours = call.data.get("same_tv_hours")
+            cross_tv_hours = call.data.get("cross_tv_hours")
+
+            # Build new options dict
+            new_options = dict(entry.options)
+
+            if same_tv_hours is not None:
+                same_tv_hours = max(MIN_RECENCY_HOURS, min(MAX_RECENCY_HOURS, int(same_tv_hours)))
+                new_options["same_tv_hours"] = same_tv_hours
+
+            if cross_tv_hours is not None:
+                cross_tv_hours = max(MIN_RECENCY_HOURS, min(MAX_RECENCY_HOURS, int(cross_tv_hours)))
+                new_options["cross_tv_hours"] = cross_tv_hours
+
+            # Update config entry options
+            hass.config_entries.async_update_entry(entry, options=new_options)
+            _LOGGER.info(
+                "Recency windows updated: same_tv=%sh, cross_tv=%sh",
+                new_options.get("same_tv_hours", DEFAULT_SAME_TV_HOURS),
+                new_options.get("cross_tv_hours", DEFAULT_CROSS_TV_HOURS),
+            )
+
+        hass.services.async_register(
+            DOMAIN,
+            "set_recency_windows",
+            async_handle_set_recency_windows,
+        )
+
         # Per-TV auto brightness timer management
         auto_brightness_timers: dict[str, Callable[[], None]] = {}
         # Use the dict already initialized in hass.data so sensors can access it
@@ -1609,8 +1678,10 @@ if _HA_AVAILABLE:
             recent_images: set[str] = set()
             display_log = data.get("display_log")
             if display_log:
-                same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=120)
-                cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=72)
+                # Get recency windows from config (with defaults)
+                same_tv_hours, cross_tv_hours = get_recency_windows(entry)
+                same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=same_tv_hours)
+                cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=cross_tv_hours)
                 recent_images = same_tv_recent | cross_tv_recent
 
             await async_shuffle_tv(
