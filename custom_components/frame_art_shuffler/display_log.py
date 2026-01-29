@@ -766,6 +766,75 @@ class DisplayLogManager:
 
         return recent
 
+    def get_pool_health(
+        self,
+        tv_id: str,
+        pool_filenames: set[str],
+        same_tv_hours: int = 72,
+        cross_tv_hours: int = 36,
+    ) -> dict[str, Any]:
+        """Calculate pool health metrics for a TV.
+
+        Returns intuitive buckets for understanding pool availability:
+        - same_tv_recent: Images shown on THIS TV within same_tv_hours
+        - cross_tv_recent: Images shown on OTHER TVs within cross_tv_hours
+          (excludes images already counted in same_tv_recent to avoid double-counting)
+        - total_recent: Sum of same_tv_recent + cross_tv_recent
+        - available: pool_size - total_recent
+
+        Args:
+            tv_id: TV identifier
+            pool_filenames: Set of filenames in the TV's eligible pool (based on tagset)
+            same_tv_hours: Same-TV recency window (default 72)
+            cross_tv_hours: Cross-TV recency window (default 36)
+
+        Returns:
+            Dict with pool_size, same_tv_recent, cross_tv_recent, total_recent,
+            available, same_tv_hours, cross_tv_hours
+        """
+        if not self._ready or not self._enabled:
+            return {
+                "pool_size": len(pool_filenames),
+                "same_tv_recent": 0,
+                "cross_tv_recent": 0,
+                "total_recent": 0,
+                "available": len(pool_filenames),
+                "same_tv_hours": same_tv_hours,
+                "cross_tv_hours": cross_tv_hours,
+            }
+
+        # Get recent images for this TV
+        same_tv_recent = self.get_recent_auto_shuffle_images(
+            tv_id=tv_id, hours=same_tv_hours
+        )
+
+        # Get recent images for ALL TVs (includes this TV)
+        all_tv_recent = self.get_recent_auto_shuffle_images(
+            tv_id=None, hours=cross_tv_hours
+        )
+
+        # Filter to only images in the pool
+        same_tv_in_pool = same_tv_recent & pool_filenames
+        all_tv_in_pool = all_tv_recent & pool_filenames
+
+        # Cross-TV recent = images on other TVs, excluding this TV's images
+        # (to avoid double-counting with same_tv_recent)
+        cross_tv_in_pool = all_tv_in_pool - same_tv_in_pool
+
+        # Total recent = union (same as same_tv + cross_tv since they're now mutually exclusive)
+        total_recent = len(same_tv_in_pool) + len(cross_tv_in_pool)
+        available = len(pool_filenames) - total_recent
+
+        return {
+            "pool_size": len(pool_filenames),
+            "same_tv_recent": len(same_tv_in_pool),
+            "cross_tv_recent": len(cross_tv_in_pool),
+            "total_recent": total_recent,
+            "available": available,
+            "same_tv_hours": same_tv_hours,
+            "cross_tv_hours": cross_tv_hours,
+        }
+
     def _record_completed_session(
         self,
         tv_id: str,
