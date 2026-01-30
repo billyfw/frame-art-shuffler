@@ -563,6 +563,8 @@ async def _async_shuffle_tv_inner(
                 pool_size=pool_size_arg,
                 pool_available=pool_available_arg,
             )
+            # Flush immediately to persist - don't wait for periodic flush
+            await display_log.async_flush(force=True)
 
         _notify("success", f"Shuffled to {image_filename}")
         

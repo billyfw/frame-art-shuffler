@@ -539,6 +539,8 @@ if _HA_AVAILABLE:
                         started_at=datetime.now(dt_timezone.utc),
                         matte=matte,
                     )
+                    # Flush immediately to persist - don't wait for periodic flush
+                    await display_log.async_flush(force=True)
 
                 return True
 
