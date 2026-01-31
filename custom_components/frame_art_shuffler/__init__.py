@@ -1151,7 +1151,8 @@ if _HA_AVAILABLE:
             async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
             
             # Trigger immediate shuffle to apply the override tagset
-            await async_shuffle_tv(hass, target_entry, tv_id, reason="override")
+            # Skip recency - user deliberately chose this tagset, don't constrain the pool
+            await async_shuffle_tv(hass, target_entry, tv_id, reason="override", recent_images=None)
 
         async def async_handle_clear_tagset_override(call: ServiceCall) -> None:
             """Clear an active tagset override early."""
@@ -1670,21 +1671,27 @@ if _HA_AVAILABLE:
                 )
                 return
 
-            # Get recent images for recency preference using dual time windows:
-            # - Same-TV: 120 hours (5 days) — "don't show what I've seen on this TV recently"
-            # - Cross-TV: 72 hours (3 days) — "don't show what was recently on another TV"
-            #
-            # The all-TVs query includes the current TV, so there's some overlap
-            # with the same-TV query. This is harmless — unioning sets just means
-            # some images appear in both, but the final "recent" set is the same.
-            recent_images: set[str] = set()
-            display_log = data.get("display_log")
-            if display_log:
-                # Get recency windows from config (with defaults)
-                same_tv_hours, cross_tv_hours = get_recency_windows(entry)
-                same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=same_tv_hours)
-                cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=cross_tv_hours)
-                recent_images = same_tv_recent | cross_tv_recent
+            # Check if override is active - skip recency during overrides
+            # (user deliberately chose a different tagset, don't constrain their pool)
+            has_override = tv_config.get("override_tagset")
+            if has_override:
+                recent_images = None
+            else:
+                # Get recent images for recency preference using dual time windows:
+                # - Same-TV: 120 hours (5 days) — "don't show what I've seen on this TV recently"
+                # - Cross-TV: 72 hours (3 days) — "don't show what was recently on another TV"
+                #
+                # The all-TVs query includes the current TV, so there's some overlap
+                # with the same-TV query. This is harmless — unioning sets just means
+                # some images appear in both, but the final "recent" set is the same.
+                recent_images: set[str] | None = set()
+                display_log = data.get("display_log")
+                if display_log:
+                    # Get recency windows from config (with defaults)
+                    same_tv_hours, cross_tv_hours = get_recency_windows(entry)
+                    same_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=tv_id, hours=same_tv_hours)
+                    cross_tv_recent = display_log.get_recent_auto_shuffle_images(tv_id=None, hours=cross_tv_hours)
+                    recent_images = same_tv_recent | cross_tv_recent
 
             await async_shuffle_tv(
                 hass,
