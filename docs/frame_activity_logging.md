@@ -45,6 +45,23 @@ To accurately track viewing time, display sessions are automatically closed when
 - **Screen On**: When the screen turns on (motion detected, remote, app, etc.), `note_screen_on()` starts a new session for the same image that was showing.
 
 This means the **same image can have multiple session entries** if the screen cycles on/off:
+
+### Auto-Shuffle State Tracking
+To prevent inflated display times when the TV is used for other purposes (e.g., watching Netflix), sessions are automatically managed when auto-shuffle is toggled:
+
+- **Auto-Shuffle Disabled**: When the user disables auto-shuffle, `note_auto_shuffle_disabled()` is called to immediately end the current session. This prevents time spent watching Netflix or other content from being attributed to the art image that was displaying.
+
+- **Auto-Shuffle Enabled**: When the user re-enables auto-shuffle, an immediate shuffle is triggered (respecting `skip_if_screen_off`). This starts a fresh session for the new image right away, closing any gap in tracking.
+
+Example timeline:
+| Time | Event | Session Effect |
+|------|-------|----------------|
+| 2:00 PM | Auto-shuffle displays Image A | Session starts (0 min) |
+| 2:30 PM | User disables auto-shuffle | Session ends (30 min recorded) |
+| 2:30-6:00 PM | User watches Netflix | No tracking (correct!) |
+| 6:00 PM | User re-enables auto-shuffle | Immediate shuffle to Image B, new session starts |
+
+This means the **same image can have multiple session entries** if the screen cycles on/off:
 ```json
 [
   {"filename": "sunset.jpg", "started_at": "10:00", "completed_at": "10:15", "duration_seconds": 900, "source": "shuffle"},
