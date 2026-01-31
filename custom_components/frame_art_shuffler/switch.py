@@ -452,6 +452,13 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             starter = data.get("start_auto_shuffle_timer")
             if starter:
                 starter(self._tv_id)
+
+            # Trigger immediate shuffle to start fresh session
+            # (respects skip_if_screen_off - won't shuffle if TV is off)
+            runner = data.get("async_run_auto_shuffle")
+            if runner:
+                await runner(self._tv_id)
+
         log_activity(
             self.hass,
             self._entry.entry_id,
@@ -464,6 +471,14 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if data:
+            # End the current display session before canceling the timer
+            # This prevents inflated display times when TV is used for other purposes
+            display_log = data.get("display_log")
+            if display_log:
+                tv_config = get_tv_config(self._entry, self._tv_id)
+                tv_name = tv_config.get("name", self._tv_id) if tv_config else self._tv_id
+                display_log.note_auto_shuffle_disabled(tv_id=self._tv_id, tv_name=tv_name)
+
             canceller = data.get("cancel_auto_shuffle_timer")
             if canceller:
                 canceller(self._tv_id)

@@ -309,6 +309,40 @@ class DisplayLogManager:
             tv_name,
         )
 
+    def note_auto_shuffle_disabled(
+        self,
+        *,
+        tv_id: str,
+        tv_name: str,
+        ended_at: datetime | None = None,
+    ) -> None:
+        """End display session when auto-shuffle is disabled.
+
+        When the user disables auto-shuffle (typically to use the TV for other
+        purposes like watching Netflix), we close the current session so that
+        time spent on other activities doesn't count toward the displayed image.
+
+        Args:
+            tv_id: The TV's unique identifier.
+            tv_name: Human-readable TV name (for logging).
+            ended_at: Override timestamp (defaults to now).
+        """
+        if not self._ready or not self._enabled:
+            self._active_sessions.pop(tv_id, None)
+            return
+
+        active = self._active_sessions.pop(tv_id, None)
+        if not active:
+            return
+
+        now = ended_at or datetime.now(timezone.utc)
+        self._record_completed_session(tv_id, active, now)
+        _LOGGER.debug(
+            "Display log: Closed session for %s on %s (auto-shuffle disabled)",
+            active.filename,
+            tv_name,
+        )
+
     def note_screen_on(
         self,
         *,
