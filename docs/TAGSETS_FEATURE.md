@@ -180,6 +180,14 @@ duration_minutes: int     # required, must be > 0
 3. Set TV's `override_tagset = name`
 4. Calculate expiry and start timer
 5. Persist to config entry
+6. Trigger immediate shuffle (ignores recency - see below)
+
+**Recency Behavior:**
+During an active tagset override, **recency filtering is disabled**. The user deliberately chose a different tagset, so the pool shouldn't be constrained by images recently shown from the previous tagset. This applies to:
+- The immediate shuffle triggered when the override is applied
+- All auto-shuffles while the override is active
+
+When the override expires, normal recency filtering resumes.
 
 **Errors:**
 - `tagset_not_found`

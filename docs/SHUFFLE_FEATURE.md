@@ -81,7 +81,8 @@ Shuffled to sunset.jpg (tag: Nature, all 3 in tag were recent)
 - **Cold start / empty log**: All images are considered "fresh"
 - **Logging disabled**: Recency preference is skipped, all images equally likely
 - **Small image pools**: Will naturally fall back to full pool more often
-- **Tagset changes**: Only images in the new tagset that were previously shown are filtered
+- **Tagset overrides**: Recency is disabled entirely during an active tagset override. The user deliberately chose a different tagset, so the pool shouldn't be constrained by images from the previous tagset's recency window.
+- **Tagset changes (permanent)**: Only images in the new tagset that were previously shown are filtered
 
 ### Logging
 
