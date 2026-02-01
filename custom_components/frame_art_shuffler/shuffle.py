@@ -545,9 +545,10 @@ async def _async_shuffle_tv_inner(
         display_log = entry_data.get("display_log")
         if display_log:
             tagset_name = get_active_tagset_name(entry, tv_id)
-            # Pass pool stats for sparkline history (only for auto-shuffle)
-            pool_size_arg = matching_count if reason == "auto" else None
-            pool_available_arg = fresh_count if reason == "auto" else None
+            # Pass pool stats for sparkline history (only for auto-shuffle with recency enabled)
+            # Skip recording when recent_images is None (e.g., during tagset overrides)
+            pool_size_arg = matching_count if reason == "auto" and recent_images is not None else None
+            pool_available_arg = fresh_count if reason == "auto" and recent_images is not None else None
             display_log.note_display_start(
                 tv_id=tv_id,
                 tv_name=tv_name,
