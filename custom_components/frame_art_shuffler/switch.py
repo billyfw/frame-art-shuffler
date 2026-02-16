@@ -453,12 +453,10 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             if starter:
                 starter(self._tv_id)
 
-            # Trigger immediate shuffle to start fresh session
-            # (respects skip_if_screen_off - won't shuffle if TV is off)
-            runner = data.get("async_run_auto_shuffle")
-            if runner:
-                await runner(self._tv_id)
-
+        # Write state immediately so HA entity reflects the change before the
+        # potentially long-running shuffle.  This prevents restart-mode
+        # automations from cancelling the shuffle and leaving the entity in a
+        # stale "off" state.
         log_activity(
             self.hass,
             self._entry.entry_id,
@@ -467,6 +465,13 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             "Auto-shuffle enabled",
         )
         self.async_write_ha_state()
+
+        if data:
+            # Trigger immediate shuffle to start fresh session
+            # (respects skip_if_screen_off - won't shuffle if TV is off)
+            runner = data.get("async_run_auto_shuffle")
+            if runner:
+                await runner(self._tv_id)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
