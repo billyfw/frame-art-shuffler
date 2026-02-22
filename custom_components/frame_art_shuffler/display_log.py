@@ -488,21 +488,16 @@ class DisplayLogManager:
     def _persist_to_disk(self, new_sessions: list[dict[str, Any]], force: bool) -> None:
         self._base_path.mkdir(parents=True, exist_ok=True)
 
-        # Append new events as JSONL (one JSON object per line)
-        if new_sessions:
-            with self._events_path.open("a", encoding="utf-8") as f:
-                for session in new_sessions:
-                    f.write(json.dumps(session, ensure_ascii=False) + "\n")
-
-        # Read back, trim old events, rebuild summary
         all_events = self._read_events_file()
+        if new_sessions:
+            all_events.extend(new_sessions)
+
         trimmed = self._trim_events(all_events)
 
-        # Only rewrite events file if trimming actually removed something
-        if len(trimmed) < len(all_events):
+        # Write as JSONL if there are changes (also converts JSON array → JSONL)
+        if new_sessions or len(trimmed) < len(all_events):
             self._write_jsonl(self._events_path, trimmed)
 
-        # Always rebuild summary
         summary = self._build_summary(trimmed)
         self._atomic_write_json(self._summary_path, summary)
 
