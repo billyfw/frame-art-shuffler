@@ -154,6 +154,7 @@ class DisplayLogManager:
         self._flush_unsub: Callable[[], None] | None = None
         self._pending_save_task: asyncio.Task[None] | None = None
         self._active_sessions: dict[str, _ActiveDisplay] = {}
+        self._flush_lock = asyncio.Lock()
         self._ready = False
 
     async def async_setup(self) -> None:
@@ -433,29 +434,30 @@ class DisplayLogManager:
 
     async def async_flush(self, *, force: bool = False) -> None:
         """Persist queued events and rebuild the summary snapshot."""
-        if not self._ready:
-            return
+        async with self._flush_lock:
+            if not self._ready:
+                return
 
-        if not self._enabled and not force:
-            return
+            if not self._enabled and not force:
+                return
 
-        if not self._queue and not force:
-            return
+            if not self._queue and not force:
+                return
 
-        payload = [session.to_dict() for session in self._queue]
+            payload = [session.to_dict() for session in self._queue]
 
-        try:
-            await self._hass.async_add_executor_job(
-                self._persist_to_disk,
-                payload,
-                force,
-            )
-        except Exception:  # pragma: no cover - defensive logging
-            _LOGGER.exception("Failed to flush Frame Art display log for %s", self._entry.entry_id)
-            return
+            try:
+                await self._hass.async_add_executor_job(
+                    self._persist_to_disk,
+                    payload,
+                    force,
+                )
+            except Exception:  # pragma: no cover - defensive logging
+                _LOGGER.exception("Failed to flush Frame Art display log for %s", self._entry.entry_id)
+                return
 
-        self._queue.clear()
-        await self._hass.async_add_executor_job(self._remove_pending_copy)
+            self._queue.clear()
+            await self._hass.async_add_executor_job(self._remove_pending_copy)
 
     async def _load_pending_buffer(self) -> None:
         sessions = await self._hass.async_add_executor_job(self._read_pending_file)
@@ -485,16 +487,23 @@ class DisplayLogManager:
 
     def _persist_to_disk(self, new_sessions: list[dict[str, Any]], force: bool) -> None:
         self._base_path.mkdir(parents=True, exist_ok=True)
-        existing_events = self._read_events_file()
+
+        # Append new events as JSONL (one JSON object per line)
         if new_sessions:
-            existing_events.extend(new_sessions)
+            with self._events_path.open("a", encoding="utf-8") as f:
+                for session in new_sessions:
+                    f.write(json.dumps(session, ensure_ascii=False) + "\n")
 
-        trimmed_events = self._trim_events(existing_events)
-        if not force and not new_sessions and len(trimmed_events) == len(existing_events):
-            return
+        # Read back, trim old events, rebuild summary
+        all_events = self._read_events_file()
+        trimmed = self._trim_events(all_events)
 
-        self._atomic_write_json(self._events_path, trimmed_events)
-        summary = self._build_summary(trimmed_events)
+        # Only rewrite events file if trimming actually removed something
+        if len(trimmed) < len(all_events):
+            self._write_jsonl(self._events_path, trimmed)
+
+        # Always rebuild summary
+        summary = self._build_summary(trimmed)
         self._atomic_write_json(self._summary_path, summary)
 
     def _read_events_file(self) -> list[dict[str, Any]]:
@@ -502,10 +511,23 @@ class DisplayLogManager:
             return []
         try:
             with self._events_path.open("r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            return list(data) if isinstance(data, list) else []
+                raw = handle.read()
+            stripped = raw.strip()
+            if not stripped:
+                return []
+            # Detect format: JSON array starts with '[', JSONL starts with '{'
+            if stripped.startswith("["):
+                data = json.loads(stripped)
+                return list(data) if isinstance(data, list) else []
+            # JSONL: one JSON object per line
+            events = []
+            for line in stripped.splitlines():
+                line = line.strip()
+                if line:
+                    events.append(json.loads(line))
+            return events
         except Exception:
-            _LOGGER.exception("Failed to read Frame Art event log; recreating %s", self._events_path)
+            _LOGGER.exception("Failed to read Frame Art event log: %s", self._events_path)
         return []
 
     def _read_pending_file(self) -> list[DisplaySession]:
@@ -733,6 +755,14 @@ class DisplayLogManager:
         temp_path = path.with_suffix(".tmp")
         with temp_path.open("w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
+        os.replace(temp_path, path)
+
+    def _write_jsonl(self, path: Path, events: list[dict[str, Any]]) -> None:
+        """Atomically rewrite events file in JSONL format."""
+        temp_path = path.with_suffix(".jsonl.tmp")
+        with temp_path.open("w", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         os.replace(temp_path, path)
 
     def _retention_cutoff(self) -> datetime:
