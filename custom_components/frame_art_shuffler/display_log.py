@@ -505,21 +505,12 @@ class DisplayLogManager:
         if not self._events_path.exists():
             return []
         try:
-            with self._events_path.open("r", encoding="utf-8") as handle:
-                raw = handle.read()
-            stripped = raw.strip()
-            if not stripped:
-                return []
-            # Detect format: JSON array starts with '[', JSONL starts with '{'
-            if stripped.startswith("["):
-                data = json.loads(stripped)
-                return list(data) if isinstance(data, list) else []
-            # JSONL: one JSON object per line
             events = []
-            for line in stripped.splitlines():
-                line = line.strip()
-                if line:
-                    events.append(json.loads(line))
+            with self._events_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if line:
+                        events.append(json.loads(line))
             return events
         except Exception:
             _LOGGER.exception("Failed to read Frame Art event log: %s", self._events_path)
