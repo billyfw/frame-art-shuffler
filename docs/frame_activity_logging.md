@@ -11,7 +11,7 @@ The Frame Art Shuffler integration maintains a shared activity log that tracks h
 
 | File | Purpose |
 |------|---------|
-| `events.json` | Rolling array of raw session entries (trimmed by retention) |
+| `events.json` | JSONL file of raw session entries (one JSON object per line, trimmed by retention) |
 | `summary.json` | Aggregated stats by TV/image/tag, regenerated on each flush |
 | `pending.json` | Crash-recovery buffer, deleted after successful flush |
 
@@ -62,22 +62,21 @@ Example timeline:
 | 6:00 PM | User re-enables auto-shuffle | Immediate shuffle to Image B, new session starts |
 
 This means the **same image can have multiple session entries** if the screen cycles on/off:
-```json
-[
-  {"filename": "sunset.jpg", "started_at": "10:00", "completed_at": "10:15", "duration_seconds": 900, "source": "shuffle"},
-  {"filename": "sunset.jpg", "started_at": "14:00", "completed_at": "14:30", "duration_seconds": 1800, "source": "screen_on"}
-]
+```jsonl
+{"filename": "sunset.jpg", "started_at": "10:00", "completed_at": "10:15", "duration_seconds": 900, "source": "shuffle"}
+{"filename": "sunset.jpg", "started_at": "14:00", "completed_at": "14:30", "duration_seconds": 1800, "source": "screen_on"}
 ```
 
 This design provides accurate viewing time statistics rather than wall-clock time between shuffles.
 
 ### Flush Cycle (default: every 5 minutes)
-1. Read existing `events.json`
-2. Append queued sessions
-3. Trim events older than retention window
-4. Write back atomically (temp file + rename)
-5. Rebuild `summary.json` from trimmed events
-6. Clear queue and delete `pending.json`
+1. Acquire asyncio lock (prevents concurrent flushes)
+2. Read existing `events.json` (JSONL format)
+3. Append queued sessions
+4. Trim events older than retention window
+5. Write back atomically as JSONL (temp file + `os.replace`)
+6. Rebuild `summary.json` from trimmed events
+7. Clear queue and delete `pending.json`
 
 ### Crash Recovery
 - On each session record, `pending.json` is updated immediately
@@ -85,23 +84,9 @@ This design provides accurate viewing time statistics rather than wall-clock tim
 - Ensures minimal data loss on unexpected restarts
 
 ## 4. Event Schema (`events.json`)
-```json
-[
-  {
-    "tv_id": "a9eef6ac436f482090e5e66ecbe88641",
-    "tv_name": "Office Frame",
-    "filename": "sunset-beach.jpg",
-    "duration_seconds": 900,
-    "completed_at": "2025-12-03T10:15:00+00:00",
-    "started_at": "2025-12-03T10:00:00+00:00",
-    "tags": ["nature", "landscape"],
-    "matched_tags": ["nature"],
-    "source": "shuffle",
-    "shuffle_mode": "auto",
-    "matte": "flexible_warm",
-    "photo_filter": null
-  }
-]
+JSONL format — one JSON object per line, no wrapping array:
+```jsonl
+{"tv_id": "a9eef6ac436f482090e5e66ecbe88641", "tv_name": "Office Frame", "filename": "sunset-beach.jpg", "duration_seconds": 900, "completed_at": "2025-12-03T10:15:00+00:00", "started_at": "2025-12-03T10:00:00+00:00", "tags": ["nature", "landscape"], "matched_tags": ["nature"], "source": "shuffle", "shuffle_mode": "auto", "matte": "flexible_warm", "photo_filter": null}
 ```
 
 ### Field Notes
@@ -283,4 +268,4 @@ The generated Lovelace dashboard includes a **Settings** tab (gear icon) that sh
 - [ ] Incremental summary updates instead of full rebuild
 
 ---
-*Last updated: December 2025*
+*Last updated: February 2026*
