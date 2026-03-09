@@ -187,14 +187,11 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
-        return FrameArtOptionsFlowHandler(config_entry)
+        return FrameArtOptionsFlowHandler()
 
 
 class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
     """Options flow for adding TVs."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
 
     @property
     def _metadata_path(self) -> Path:

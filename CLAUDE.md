@@ -123,23 +123,28 @@ ssh ha                          # Connect to Home Assistant SSH add-on
 ### Key Paths on HA Box
 - **HA Config**: `/config/`
 - **Integration**: `/config/custom_components/frame_art_shuffler/`
-- **HA Log**: `/config/home-assistant.log`
 - **Display Logs**: `/config/frame_art/logs/events.json`
 - **Display Summary**: `/config/frame_art/logs/summary.json`
 
+### Debugging: Data Source Priority
+
+When investigating TV behavior (what happened, when, why a TV is in a certain state):
+
+1. **Check `events.json` FIRST** — this is the most reliable source for recent TV activity. It has timestamped display sessions with TV names, filenames, sources, and durations. It persists across HA restarts and log rotations.
+2. **Then check HA logs via Supervisor API** — `curl -H "Authorization: Bearer $TOKEN" http://ha.mad:8123/api/hassio/core/logs`. There is no `home-assistant.log` file on disk (removed in HA 2025.11); logs are in the systemd journal.
+3. **Don't rely on stale files** — there are no log files on disk to grep.
+
 ### Useful Commands
 ```bash
-# View recent integration logs
-grep 'frame_art_shuffler' /config/home-assistant.log | tail -50
-
-# Watch logs in real-time (for shuffle events)
-tail -f /config/home-assistant.log | grep -E '(shuffle|selected|fresh)'
-
-# Check display log events
+# Check display log events (BEST source for recent TV activity)
 tail -100 /config/frame_art/logs/events.json
 
-# Restart Home Assistant
-ha core restart
+# Filter display log by TV name
+grep 'fireplace' /config/frame_art/logs/events.json | tail -30
+
+# HA logs are accessed via the Supervisor API (no log file on disk)
+# Use the ha_logs MCP tool from the ha-config project, or:
+curl -H "Authorization: Bearer $TOKEN" http://ha.mad:8123/api/hassio/core/logs
 ```
 
 ### Logging Configuration
