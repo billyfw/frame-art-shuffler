@@ -449,6 +449,11 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
 
         data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if data:
+            # Clear TV mode flag so motion auto-turn-off resumes
+            tv_mode = data.get("tv_mode_active")
+            if tv_mode is not None:
+                tv_mode.discard(self._tv_id)
+
             starter = data.get("start_auto_shuffle_timer")
             if starter:
                 starter(self._tv_id)
@@ -473,6 +478,15 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             if runner:
                 await runner(self._tv_id)
 
+            # Resume motion off timer now that TV mode is over.
+            # Analogous to the startup behavior that starts the timer
+            # when the TV screen is on.
+            tv_config = get_tv_config(self._entry, self._tv_id)
+            if tv_config and tv_config.get("enable_motion_control", False):
+                timer_starter = data.get("start_motion_off_timer")
+                if timer_starter:
+                    timer_starter(self._tv_id)
+
     async def async_turn_off(self, **kwargs: Any) -> None:
         data = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id)
         if data:
@@ -488,6 +502,15 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             if canceller:
                 canceller(self._tv_id)
 
+            # Pause motion auto-turn-off while in TV mode so the TV
+            # doesn't shut off while the user is watching.
+            tv_mode = data.get("tv_mode_active")
+            if tv_mode is not None:
+                tv_mode.add(self._tv_id)
+            motion_canceller = data.get("cancel_motion_off_timer")
+            if motion_canceller:
+                motion_canceller(self._tv_id)
+
         update_tv_config(
             self.hass,
             self._entry,
@@ -499,7 +522,7 @@ class FrameArtAutoShuffleSwitch(SwitchEntity):
             self._entry.entry_id,
             self._tv_id,
             "auto_shuffle_disabled",
-            "Auto-shuffle disabled",
+            "Auto-shuffle disabled (TV mode)",
         )
         self.async_write_ha_state()
 

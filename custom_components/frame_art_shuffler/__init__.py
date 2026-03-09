@@ -364,6 +364,7 @@ if _HA_AVAILABLE:
             "shuffle_cache": {},
             "upload_in_progress": set(),
             "auto_shuffle_next_times": {},
+            "tv_mode_active": set(),
         }
 
         display_log = DisplayLogManager(hass, entry)
@@ -1798,6 +1799,15 @@ if _HA_AVAILABLE:
             if not tv_config:
                 return
 
+            # Don't start the off timer if TV mode is active (auto-shuffle
+            # toggled off via switch).  The user is watching TV and shouldn't
+            # be interrupted by an auto-turn-off.  Motion wake still works.
+            tv_mode_tvs = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("tv_mode_active", set())
+            if tv_id in tv_mode_tvs:
+                tv_name = tv_config.get("name", tv_id)
+                _LOGGER.debug("Auto motion: Skipping off timer for %s (TV mode active)", tv_name)
+                return
+
             # If this is a reschedule due to upload-in-progress, use short delay
             # Otherwise use the configured off_delay_minutes
             if reschedule_count > 0:
@@ -1819,6 +1829,15 @@ if _HA_AVAILABLE:
                 tv_configs = list_tv_configs(entry)
                 tv_config = tv_configs.get(tv_id)
                 if not tv_config or not tv_config.get("enable_motion_control", False):
+                    cancel_motion_off_timer(tv_id)
+                    return
+
+                # Safety net: don't turn off if TV mode was activated after
+                # the timer was started.
+                tv_mode_tvs = hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("tv_mode_active", set())
+                if tv_id in tv_mode_tvs:
+                    tv_name = tv_config.get("name", tv_id)
+                    _LOGGER.info("Auto motion: Skipping turn-off for %s (TV mode active)", tv_name)
                     cancel_motion_off_timer(tv_id)
                     return
 
