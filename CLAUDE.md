@@ -155,6 +155,50 @@ logger:
     custom_components.frame_art_shuffler: debug
 ```
 
+## Known Failure Modes
+
+### Image shown twice / "I just saw this recently"
+**Quick diagnosis**: Check if HA restarted shortly after the image was first shown.
+
+1. `grep 'img-XXXX' /config/frame_art/logs/events.json` — if missing, session was never logged
+2. Look for an HA restart within ~15 min of the first display
+
+**Root cause**: When HA restarts, `async_finalize_active_sessions()` tries to flush the active
+display session to disk via `hass.async_add_executor_job()`, but if the executor is already
+shutting down, the write fails silently. The image never makes it into `events.json`, so
+`get_recent_auto_shuffle_images()` treats it as "fresh" on the next shuffle.
+
+**If this happens frequently**: investigate hardening `async_finalize_active_sessions()` to
+not rely on the executor (e.g., synchronous write path during shutdown).
+
+### HA Logging — No log file on disk (since HA 2025.11)
+
+HA removed `home-assistant.log` for HAOS/Supervised installs.
+
+**How to access logs programmatically:**
+- Supervisor API: `GET /api/hassio/core/logs` (proxied through HA, uses Bearer token)
+- The ha-config MCP server's `ha_logs` tool uses this endpoint
+- WebSocket: `system_log/list` returns structured JSON of recent errors/warnings
+- UI: Settings → System → Logs
+- The old `/api/error_log` REST endpoint returns 404 (it was backed by the file)
+
+## Historical Notes
+
+### Fireplace TV WiFi-to-Wired Migration (March 2026)
+Fireplace Frame TV (192.168.1.199) was switched from WiFi to wired ethernet. The integration's
+config had the WiFi MAC; the wired MAC is different. Impact: `tv_on()` sent WoL to the wrong
+MAC, so the TV couldn't be woken from standby. All IP-based operations (shuffles, tv_off,
+brightness) worked fine since the IP didn't change.
+
+**Fix**: Update MAC via config flow (Settings → Integrations → Frame Art Shuffler → Configure →
+Edit TV → update MAC field). Direct file edit of `core.config_entries` doesn't work because HA
+overwrites the file on shutdown with its in-memory state. Also needed: enable WoL for the wired
+interface in TV settings.
+
+**Config flow 500 error** encountered during fix: HA 2026.3.0 made `OptionsFlow.config_entry`
+a read-only property. Our `__init__` was setting `self.config_entry = config_entry` which raised
+`AttributeError`. Fixed by removing the `__init__` — HA provides `config_entry` automatically.
+
 ## Important Conventions
 
 - Single-instance integration (only one config entry allowed)
