@@ -85,6 +85,25 @@ DEBUG:Retrying tv_on attempt 2/2
 DEBUG:tv_on succeeded on attempt 2
 ```
 
+## WOL Wake Reliability
+
+`tv_on()` sends two WOL magic packets (with a 12-second gap) but does **not** verify
+the TV actually woke or retry on failure — it always returns `True`. This differs from
+`tv_off()` which retries up to 4 times.
+
+As of March 2026 this has not been a problem in practice. WOL unreliability observed
+in March 2026 turned out to be caused by the `samsungtv_smart` HA integration
+continuously pinging the TV on port 9197 (every 1 second) and opening WebSocket
+connections, which prevented the TV from entering proper deep sleep for WOL. Removing
+`samsungtv_smart` for the affected TV resolved the issue.
+
+**If WOL failures resurface in the future**, adding retry logic to `tv_on()` would be
+straightforward — check `is_screen_on()` after the wake sequence, and if still off,
+retry WOL (up to 3 attempts with a short delay). The motion handler
+(`async_handle_motion`) also does not call `set_art_mode()` after `tv_on()` unlike
+other power-on paths (service handler, power switch) — adding that call could improve
+wake reliability if the TV needs an explicit art mode activation after WOL.
+
 ## Related: Art Operations Don't Have This Issue
 
 Functions like `set_art_on_tv_deleteothers()`, `set_tv_brightness()`, and `is_tv_on()` use the art websocket directly (via `_FrameTVSession`) and don't hit the REST API during initialization, so they're not affected by this timing issue.

@@ -199,6 +199,21 @@ interface in TV settings.
 a read-only property. Our `__init__` was setting `self.config_entry = config_entry` which raised
 `AttributeError`. Fixed by removing the `__init__` — HA provides `config_entry` automatically.
 
+### samsungtv_smart Interference with WOL (March 2026)
+The `samsungtv_smart` HA integration (HACS, by ollo69) caused WOL wake failures on the
+office TV. It runs a background TCP ping to port 9197 **every 1 second** and opens WebSocket
+connections when the ping succeeds. This prevented the TV from entering proper deep sleep,
+making WOL unreliable (40% failure rate, requiring 2-3 attempts).
+
+**Fix**: Removed the `samsungtv_smart` config entry for the office TV. FAS handles all
+Frame TV operations directly. Also deleted the redundant `office_samsung_frame_tv_motion_control`
+HA automation that had been using `media_player.office_frame` (already disabled, last triggered
+Oct 2025).
+
+**Key lesson**: If WOL becomes unreliable for a TV, check whether another integration
+(samsungtv_smart, samsungtv, dlna_dmr, etc.) is maintaining connections to the same TV.
+Two integrations polling the same TV on the same WebSocket port is a recipe for conflicts.
+
 ## Important Conventions
 
 - Single-instance integration (only one config entry allowed)
