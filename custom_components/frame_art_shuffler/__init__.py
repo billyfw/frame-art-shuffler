@@ -364,13 +364,25 @@ if _HA_AVAILABLE:
                 "summary": LOG_SUMMARY_FILENAME,
                 "pending": LOG_PENDING_FILENAME,
             }
-            if log_type not in filenames:
+            if log_type == "upload":
+                # The TV upload progress log lives beside the pairing tokens, not
+                # in the display-log directory (frame_tv.PROGRESS_LOG_FILE).
+                path = Path(self._hass.config.path("frame_art_shuffler")) / "upload.log"
+            elif log_type in filenames:
+                path = (
+                    Path(self._hass.config.path(LOG_STORAGE_RELATIVE_PATH))
+                    / filenames[log_type]
+                )
+            else:
                 return web.json_response(
-                    {"error": f"unknown type '{log_type}' (expected events|summary|pending)"},
+                    {
+                        "error": (
+                            f"unknown type '{log_type}' "
+                            "(expected events|summary|pending|upload)"
+                        )
+                    },
                     status=400,
                 )
-
-            path = Path(self._hass.config.path(LOG_STORAGE_RELATIVE_PATH)) / filenames[log_type]
             since = request.query.get("since")
 
             def _read() -> str | None:
@@ -397,7 +409,10 @@ if _HA_AVAILABLE:
             content = await self._hass.async_add_executor_job(_read)
             if content is None:
                 return web.json_response({"error": "log file not found"}, status=404)
-            content_type = "text/plain" if log_type == "events" else "application/json"
+            # events is JSONL and upload is free text; only summary/pending are JSON.
+            content_type = (
+                "text/plain" if log_type in ("events", "upload") else "application/json"
+            )
             return web.Response(text=content, content_type=content_type)
 
 
