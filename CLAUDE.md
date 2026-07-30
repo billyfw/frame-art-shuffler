@@ -14,6 +14,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Frame Art Shuffler is a Home Assistant custom integration for managing Samsung Frame TVs. It handles art uploads, brightness control, gallery management, image shuffling with tag-based filtering, and activity logging. The integration coordinates with a separate Frame Art Manager add-on via a shared `metadata.json` file.
 
+## Multi-home migration (2026-07, in progress)
+
+The frame-art system is being restructured for a second house (Maui): the manager add-on
+moves to a single central Fly.io instance, and **this integration gains a `library_sync`
+module** that mirrors `library/` + `metadata.json` from GitHub over HTTPS (Trees/Contents/
+LFS-batch APIs, read-only PAT, no git binary), plus a `sync_library` service the central
+manager pokes after each push, a sync-status sensor, and a logs `HomeAssistantView`.
+The authoritative spec is
+`~/devprojects/ha-frame-art-manager/docs/MULTI_HOME_PLAN.md` (§4 is this repo's work) —
+read it before starting Phase 2.
+
 ## Commands
 
 ### Testing
