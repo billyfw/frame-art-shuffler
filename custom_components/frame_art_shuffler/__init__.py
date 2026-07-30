@@ -1354,11 +1354,18 @@ if _HA_AVAILABLE:
             state_path = metadata_path.parent / STATE_FILENAME
             try:
                 data = _json.loads(state_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            except (OSError, ValueError) as err:
+                _LOGGER.warning(
+                    "library sync: could not seed status from %s: %s", state_path, err
+                )
                 return None
             commit = data.get("last_synced_commit")
             if not commit:
+                _LOGGER.warning(
+                    "library sync: state file %s has no last_synced_commit", state_path
+                )
                 return None
+            _LOGGER.info("library sync: seeded status at %s", commit[:10])
             return {"state": "ok", "last_synced_commit": commit}
 
         seeded_status = await hass.async_add_executor_job(_seed_library_sync_status)
