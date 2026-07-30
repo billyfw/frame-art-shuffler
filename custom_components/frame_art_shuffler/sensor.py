@@ -208,7 +208,12 @@ MATCHING_IMAGE_COUNT_DESCRIPTION = SensorEntityDescription(
 class FrameArtLibrarySyncEntity(SensorEntity):
     """Status of the GitHub library mirror (multi-home library_sync)."""
 
-    _attr_should_poll = False
+    # Polls (30s default) rather than relying solely on the sync event: the
+    # sensor platform is set up early in async_setup_entry, long before the
+    # library-sync status is seeded from the on-disk state file, so an
+    # event-only entity renders "never" after every restart until the first
+    # sync. Polling keeps it truthful without ordering assumptions.
+    _attr_should_poll = True
     _attr_icon = "mdi:cloud-sync"
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
