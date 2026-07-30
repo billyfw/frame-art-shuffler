@@ -70,6 +70,15 @@
         "data": {
           "action": "Select Action"
         }
+      },
+      "library_sync_settings": {
+        "title": "Library sync settings",
+        "description": "Mirror the art library from GitHub (multi-home). Token: fine-grained PAT with read-only Contents access to the frame_art repo. Interval 0 disables the timer (poke-only).",
+        "data": {
+          "library_sync_token": "GitHub token (read-only)",
+          "library_sync_repo": "Library repository (owner/name)",
+          "library_sync_interval_minutes": "Sync interval (minutes, 0 = poke-only)"
+        }
       }
     }
   },

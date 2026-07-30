@@ -232,6 +232,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_delete_tv()
             elif user_input["action"] == "logging_settings":
                 return await self.async_step_logging_settings()
+            elif user_input["action"] == "library_sync_settings":
+                return await self.async_step_library_sync_settings()
 
         # Get list of existing TVs
         from .config_entry import list_tv_configs
@@ -239,6 +241,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
         
         options = {
             "logging_settings": "Logging settings",
+            "library_sync_settings": "Library sync settings",
             "add_tv": "Add a new TV",
         }
         if tvs:
@@ -314,6 +317,83 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="logging_settings",
+            data_schema=schema,
+            errors=errors,
+        )
+
+    async def async_step_library_sync_settings(
+        self,
+        user_input: Optional[Dict[str, Any]] = None,
+    ) -> ConfigFlowResult:
+        """Configure the GitHub library mirror (multi-home library_sync).
+
+        Token: fine-grained PAT, single repo, Contents: read-only.
+        Interval 0 disables the timer (sync then runs only when the central
+        manager pokes the sync_library service).
+        """
+        from .const import (
+            CONF_LIBRARY_SYNC_INTERVAL,
+            CONF_LIBRARY_SYNC_REPO,
+            CONF_LIBRARY_SYNC_TOKEN,
+            DEFAULT_LIBRARY_SYNC_INTERVAL,
+            DEFAULT_LIBRARY_SYNC_REPO,
+        )
+
+        options = dict(self.config_entry.options or {})
+        errors: Dict[str, str] = {}
+
+        if user_input is not None:
+            token = str(user_input.get(CONF_LIBRARY_SYNC_TOKEN, "")).strip()
+            repo = str(
+                user_input.get(CONF_LIBRARY_SYNC_REPO, DEFAULT_LIBRARY_SYNC_REPO)
+            ).strip()
+            try:
+                interval = int(
+                    user_input.get(
+                        CONF_LIBRARY_SYNC_INTERVAL, DEFAULT_LIBRARY_SYNC_INTERVAL
+                    )
+                )
+                if not 0 <= interval <= 1440:
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors[CONF_LIBRARY_SYNC_INTERVAL] = "invalid_interval"
+                interval = DEFAULT_LIBRARY_SYNC_INTERVAL
+
+            if "/" not in repo:
+                errors[CONF_LIBRARY_SYNC_REPO] = "invalid_repo"
+
+            if not errors:
+                options[CONF_LIBRARY_SYNC_TOKEN] = token
+                options[CONF_LIBRARY_SYNC_REPO] = repo
+                options[CONF_LIBRARY_SYNC_INTERVAL] = interval
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    options=options,
+                )
+                return self.async_create_entry(title="", data={})
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_LIBRARY_SYNC_TOKEN,
+                    default=options.get(CONF_LIBRARY_SYNC_TOKEN, ""),
+                ): str,
+                vol.Required(
+                    CONF_LIBRARY_SYNC_REPO,
+                    default=options.get(
+                        CONF_LIBRARY_SYNC_REPO, DEFAULT_LIBRARY_SYNC_REPO
+                    ),
+                ): str,
+                vol.Required(
+                    CONF_LIBRARY_SYNC_INTERVAL,
+                    default=options.get(
+                        CONF_LIBRARY_SYNC_INTERVAL, DEFAULT_LIBRARY_SYNC_INTERVAL
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=1440)),
+            }
+        )
+        return self.async_show_form(
+            step_id="library_sync_settings",
             data_schema=schema,
             errors=errors,
         )
