@@ -70,10 +70,19 @@ if ha_spec is not None:  # pragma: no cover - depends on optional dependency
 if _HA_AVAILABLE:
     from .const import (
         CONF_ENABLE_AUTO_SHUFFLE,
+        CONF_LIBRARY_SYNC_BRANCH,
+        CONF_LIBRARY_SYNC_INTERVAL,
+        CONF_LIBRARY_SYNC_REPO,
+        CONF_LIBRARY_SYNC_TOKEN,
         CONF_LOGGING_ENABLED,
         CONF_LOG_FLUSH_MINUTES,
         CONF_LOG_RETENTION_MONTHS,
         CONF_METADATA_PATH,
+        DEFAULT_LIBRARY_SYNC_BRANCH,
+        DEFAULT_LIBRARY_SYNC_INTERVAL,
+        DEFAULT_LIBRARY_SYNC_REPO,
+        EVENT_LIBRARY_SYNCED,
+        SERVICE_SYNC_LIBRARY,
         CONF_OVERRIDE_EXPIRY_TIME,
         CONF_OVERRIDE_TAGSET,
         CONF_SELECTED_TAGSET,
@@ -323,6 +332,73 @@ if _HA_AVAILABLE:
                 }
 
             return web.json_response(result)
+
+
+    class LibraryLogsView(HomeAssistantView):
+        """Expose display logs over HTTP for the central Frame Art Manager.
+
+        Replaces the manager's direct filesystem read of /config/frame_art/logs
+        (multi-home Phase 4; see ha-frame-art-manager/docs/MULTI_HOME_PLAN.md §4.3).
+        """
+
+        url = "/api/frame_art_shuffler/logs"
+        name = "api:frame_art_shuffler:logs"
+        requires_auth = True
+
+        def __init__(self, hass: Any) -> None:
+            self._hass = hass
+
+        async def get(self, request: Any) -> Any:
+            from aiohttp import web
+
+            from .const import (
+                LOG_EVENTS_FILENAME,
+                LOG_PENDING_FILENAME,
+                LOG_STORAGE_RELATIVE_PATH,
+                LOG_SUMMARY_FILENAME,
+            )
+
+            log_type = request.query.get("type", "events")
+            filenames = {
+                "events": LOG_EVENTS_FILENAME,
+                "summary": LOG_SUMMARY_FILENAME,
+                "pending": LOG_PENDING_FILENAME,
+            }
+            if log_type not in filenames:
+                return web.json_response(
+                    {"error": f"unknown type '{log_type}' (expected events|summary|pending)"},
+                    status=400,
+                )
+
+            path = Path(self._hass.config.path(LOG_STORAGE_RELATIVE_PATH)) / filenames[log_type]
+            since = request.query.get("since")
+
+            def _read() -> str | None:
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except OSError:
+                    return None
+                if log_type == "events" and since:
+                    import json as _json
+
+                    kept = []
+                    for line in content.splitlines():
+                        if not line.strip():
+                            continue
+                        try:
+                            event = _json.loads(line)
+                        except ValueError:
+                            continue
+                        if str(event.get("started_at", "")) >= since:
+                            kept.append(line)
+                    return "\n".join(kept) + ("\n" if kept else "")
+                return content
+
+            content = await self._hass.async_add_executor_job(_read)
+            if content is None:
+                return web.json_response({"error": "log file not found"}, status=404)
+            content_type = "text/plain" if log_type == "events" else "application/json"
+            return web.Response(text=content, content_type=content_type)
 
 
     async def async_setup_entry(hass: Any, entry: Any) -> bool:
@@ -1239,6 +1315,149 @@ if _HA_AVAILABLE:
             async_handle_set_recency_windows,
         )
 
+        # ------------------------------------------------------------------
+        # Library sync: mirror library/ + metadata.json from GitHub over HTTPS.
+        # The central manager pokes frame_art_shuffler.sync_library after each
+        # push; the timer below is the fallback. Multi-home Phase 2 — see
+        # ha-frame-art-manager/docs/MULTI_HOME_PLAN.md §4.
+        library_sync_running: dict[str, bool] = {"running": False}
+
+        def _library_sync_options() -> dict[str, Any]:
+            opts = entry.options or {}
+            try:
+                interval = int(
+                    opts.get(CONF_LIBRARY_SYNC_INTERVAL, DEFAULT_LIBRARY_SYNC_INTERVAL)
+                )
+            except (TypeError, ValueError):
+                interval = DEFAULT_LIBRARY_SYNC_INTERVAL
+            return {
+                "token": str(opts.get(CONF_LIBRARY_SYNC_TOKEN) or "").strip(),
+                "repo": str(opts.get(CONF_LIBRARY_SYNC_REPO) or DEFAULT_LIBRARY_SYNC_REPO),
+                "branch": str(
+                    opts.get(CONF_LIBRARY_SYNC_BRANCH) or DEFAULT_LIBRARY_SYNC_BRANCH
+                ),
+                "interval": interval,
+            }
+
+        def _set_library_sync_status(updates: dict[str, Any]) -> None:
+            status = dict(
+                hass.data[DOMAIN][entry.entry_id].get("library_sync_status") or {}
+            )
+            status.update(updates)
+            hass.data[DOMAIN][entry.entry_id]["library_sync_status"] = status
+
+        def _seed_library_sync_status() -> dict[str, Any] | None:
+            import json as _json
+
+            from .library_sync import STATE_FILENAME
+
+            state_path = metadata_path.parent / STATE_FILENAME
+            try:
+                data = _json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            commit = data.get("last_synced_commit")
+            if not commit:
+                return None
+            return {"state": "ok", "last_synced_commit": commit}
+
+        seeded_status = await hass.async_add_executor_job(_seed_library_sync_status)
+        _set_library_sync_status(seeded_status or {"state": "never"})
+
+        async def _async_run_library_sync(source: str, full_verify: bool = False) -> None:
+            from .library_sync import LibraryAuthError, LibrarySyncer
+
+            opts = _library_sync_options()
+            if not opts["token"]:
+                raise ServiceValidationError(
+                    "Library sync token is not configured "
+                    "(integration Options → Library sync settings)"
+                )
+            if library_sync_running["running"]:
+                _LOGGER.info("Library sync already running; skipped (%s)", source)
+                return
+            library_sync_running["running"] = True
+            _set_library_sync_status({"state": "syncing", "source": source})
+            syncer = LibrarySyncer(
+                library_dir=metadata_path.parent,
+                repo=opts["repo"],
+                branch=opts["branch"],
+                token=opts["token"],
+                full_verify=full_verify,
+            )
+            try:
+                result = await hass.async_add_executor_job(syncer.run)
+                payload = result.as_dict()
+                _set_library_sync_status(
+                    {
+                        "state": "ok",
+                        "last_synced_commit": result.commit,
+                        "last_sync_time": datetime.now(timezone.utc).isoformat(),
+                        "last_error": None,
+                        "last_result": payload,
+                        "source": source,
+                    }
+                )
+                if not result.skipped:
+                    _LOGGER.info(
+                        "Library sync (%s): +%d added, %d updated, %d deleted "
+                        "(%.1f MB) at commit %s",
+                        source,
+                        len(result.added),
+                        len(result.updated),
+                        len(result.deleted),
+                        result.downloaded_bytes / 1048576,
+                        result.commit[:10],
+                    )
+                hass.bus.async_fire(
+                    EVENT_LIBRARY_SYNCED, {**payload, "status": "ok", "source": source}
+                )
+            except LibraryAuthError as err:
+                _set_library_sync_status(
+                    {"state": "error", "last_error": str(err), "source": source}
+                )
+                hass.bus.async_fire(
+                    EVENT_LIBRARY_SYNCED,
+                    {"status": "error", "error": str(err), "source": source},
+                )
+                _LOGGER.error("Library sync auth failure: %s", err)
+            except Exception as err:  # noqa: BLE001 - any failure must land on the sensor
+                _set_library_sync_status(
+                    {"state": "error", "last_error": str(err), "source": source}
+                )
+                hass.bus.async_fire(
+                    EVENT_LIBRARY_SYNCED,
+                    {"status": "error", "error": str(err), "source": source},
+                )
+                _LOGGER.error("Library sync failed: %s", err)
+            finally:
+                library_sync_running["running"] = False
+
+        async def async_handle_sync_library(call: ServiceCall) -> None:
+            await _async_run_library_sync(
+                source="service", full_verify=bool(call.data.get("full_verify", False))
+            )
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SYNC_LIBRARY,
+            async_handle_sync_library,
+        )
+
+        _library_sync_opts = _library_sync_options()
+        if _library_sync_opts["token"] and _library_sync_opts["interval"] > 0:
+
+            async def _scheduled_library_sync(_now: Any) -> None:
+                await _async_run_library_sync(source="timer")
+
+            entry.async_on_unload(
+                async_track_time_interval(
+                    hass,
+                    _scheduled_library_sync,
+                    timedelta(minutes=_library_sync_opts["interval"]),
+                )
+            )
+
         # Per-TV auto brightness timer management
         auto_brightness_timers: dict[str, Callable[[], None]] = {}
         # Use the dict already initialized in hass.data so sensors can access it
@@ -2113,6 +2332,9 @@ if _HA_AVAILABLE:
 
         # Register pool health API endpoint
         hass.http.register_view(PoolHealthView(hass, entry))
+
+        # Register logs endpoint (read by the central Frame Art Manager)
+        hass.http.register_view(LibraryLogsView(hass))
 
         return True
 

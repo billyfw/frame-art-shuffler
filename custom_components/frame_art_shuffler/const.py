@@ -44,5 +44,18 @@ DEFAULT_LOGGING_ENABLED = True
 DEFAULT_LOG_RETENTION_MONTHS = 6
 DEFAULT_LOG_FLUSH_MINUTES = 5
 
+# Library sync (multi-home: mirror library from GitHub; see
+# ha-frame-art-manager/docs/MULTI_HOME_PLAN.md §4)
+CONF_LIBRARY_SYNC_TOKEN = "library_sync_token"
+CONF_LIBRARY_SYNC_REPO = "library_sync_repo"
+CONF_LIBRARY_SYNC_BRANCH = "library_sync_branch"
+CONF_LIBRARY_SYNC_INTERVAL = "library_sync_interval_minutes"
+DEFAULT_LIBRARY_SYNC_REPO = "billyfw/frame_art"
+DEFAULT_LIBRARY_SYNC_BRANCH = "main"
+DEFAULT_LIBRARY_SYNC_INTERVAL = 15
+LOG_PENDING_FILENAME = "pending.json"
+EVENT_LIBRARY_SYNCED = f"{DOMAIN}_library_synced"
+SERVICE_SYNC_LIBRARY = "sync_library"
+
 SIGNAL_SHUFFLE = f"{DOMAIN}_shuffle"
 SIGNAL_AUTO_SHUFFLE_NEXT = f"{DOMAIN}_auto_shuffle_next"

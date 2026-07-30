@@ -306,3 +306,19 @@ set_recency_windows:
           max: 168
           unit_of_measurement: hours
           mode: slider
+
+sync_library:
+  name: Sync library
+  description: >-
+    Mirror library images and metadata.json from the GitHub frame_art repo to
+    the local library directory (multi-home). Requires the library sync token
+    in the integration options. The central Frame Art Manager calls this after
+    every push; a fallback timer runs per the configured interval.
+  fields:
+    full_verify:
+      name: Full verify
+      description: Re-check every tracked file instead of trusting the sync state.
+      required: false
+      default: false
+      selector:
+        boolean:

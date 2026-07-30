@@ -205,6 +205,46 @@ MATCHING_IMAGE_COUNT_DESCRIPTION = SensorEntityDescription(
 )
 
 
+class FrameArtLibrarySyncEntity(SensorEntity):
+    """Status of the GitHub library mirror (multi-home library_sync)."""
+
+    _attr_should_poll = False
+    _attr_icon = "mdi:cloud-sync"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_library_sync"
+        self._attr_name = "Frame Art Library Sync"
+
+    def _status(self) -> dict[str, Any]:
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id) or {}
+        return data.get("library_sync_status") or {}
+
+    @property
+    def native_value(self) -> str:
+        return str(self._status().get("state") or "never")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        status = self._status()
+        return {
+            "last_synced_commit": status.get("last_synced_commit"),
+            "last_sync_time": status.get("last_sync_time"),
+            "last_error": status.get("last_error"),
+            "last_result": status.get("last_result"),
+            "source": status.get("source"),
+        }
+
+    async def async_added_to_hass(self) -> None:
+        from .const import EVENT_LIBRARY_SYNCED
+
+        async def _refresh(_event: Any) -> None:
+            self.async_write_ha_state()
+
+        self.async_on_remove(self.hass.bus.async_listen(EVENT_LIBRARY_SYNCED, _refresh))
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -214,6 +254,9 @@ async def async_setup_entry(
 
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: FrameArtCoordinator = data["coordinator"]
+
+    # One library-sync status sensor per entry (not per TV)
+    async_add_entities([FrameArtLibrarySyncEntity(hass, entry)])
 
     tracked: dict[str, tuple] = {}
 
