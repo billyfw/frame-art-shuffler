@@ -1378,14 +1378,16 @@ if _HA_AVAILABLE:
                 return
             library_sync_running["running"] = True
             _set_library_sync_status({"state": "syncing", "source": source})
-            syncer = LibrarySyncer(
-                library_dir=metadata_path.parent,
-                repo=opts["repo"],
-                branch=opts["branch"],
-                token=opts["token"],
-                full_verify=full_verify,
-            )
             try:
+                # Constructed inside the try so a failure here can't strand the
+                # running flag (which would silently disable all future syncs).
+                syncer = LibrarySyncer(
+                    library_dir=metadata_path.parent,
+                    repo=opts["repo"],
+                    branch=opts["branch"],
+                    token=opts["token"],
+                    full_verify=full_verify,
+                )
                 result = await hass.async_add_executor_job(syncer.run)
                 payload = result.as_dict()
                 _set_library_sync_status(
@@ -1444,19 +1446,34 @@ if _HA_AVAILABLE:
             async_handle_sync_library,
         )
 
-        _library_sync_opts = _library_sync_options()
-        if _library_sync_opts["token"] and _library_sync_opts["interval"] > 0:
+        # The timer ticks every minute and decides whether to sync by re-reading
+        # options each tick. It must NOT be conditional on the token being set at
+        # setup time: library-sync settings live in entry.options, and this
+        # integration's update listener only reloads on *structural* (entry.data)
+        # changes — so saving a token never re-runs setup. A setup-time
+        # conditional therefore left the timer permanently unregistered while the
+        # service still worked (it reads options at call time), which is exactly
+        # the silent-staleness failure the syshealth check exists to catch.
+        library_sync_timer_state: dict[str, Any] = {"last_attempt": None}
 
-            async def _scheduled_library_sync(_now: Any) -> None:
-                await _async_run_library_sync(source="timer")
+        async def _scheduled_library_sync(_now: Any) -> None:
+            opts = _library_sync_options()
+            if not opts["token"] or opts["interval"] <= 0:
+                return
+            now = datetime.now(timezone.utc)
+            last = library_sync_timer_state["last_attempt"]
+            if last and (now - last).total_seconds() < opts["interval"] * 60:
+                return
+            library_sync_timer_state["last_attempt"] = now
+            await _async_run_library_sync(source="timer")
 
-            entry.async_on_unload(
-                async_track_time_interval(
-                    hass,
-                    _scheduled_library_sync,
-                    timedelta(minutes=_library_sync_opts["interval"]),
-                )
+        entry.async_on_unload(
+            async_track_time_interval(
+                hass,
+                _scheduled_library_sync,
+                timedelta(minutes=1),
             )
+        )
 
         # Per-TV auto brightness timer management
         auto_brightness_timers: dict[str, Callable[[], None]] = {}
