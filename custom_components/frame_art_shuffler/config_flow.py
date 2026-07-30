@@ -291,11 +291,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 new_options[CONF_LOG_RETENTION_MONTHS] = retention_int
                 new_options[CONF_LOG_FLUSH_MINUTES] = flush_int
 
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    options=new_options,
-                )
-                return self.async_create_entry(title="", data={})
+                # The returned data BECOMES entry.options (applied by HA's
+                # OptionsFlowManager.async_finish_flow) — the previous
+                # data={} return wiped options on every save, so logging
+                # settings never actually persisted.
+                return self.async_create_entry(title="", data=new_options)
 
         retention_choices = [str(value) for value in range(LOG_RETENTION_MIN, LOG_RETENTION_MAX + 1)]
         schema = vol.Schema(
@@ -366,11 +366,10 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 options[CONF_LIBRARY_SYNC_TOKEN] = token
                 options[CONF_LIBRARY_SYNC_REPO] = repo
                 options[CONF_LIBRARY_SYNC_INTERVAL] = interval
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    options=options,
-                )
-                return self.async_create_entry(title="", data={})
+                # The returned data BECOMES entry.options (applied by HA's
+                # OptionsFlowManager.async_finish_flow) — returning {} here
+                # would wipe the options we just built.
+                return self.async_create_entry(title="", data=options)
 
         schema = vol.Schema(
             {
