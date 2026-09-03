@@ -10,6 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Deploy is fire-and-forget**: When running `dev_deploy.sh`, use `run_in_background: true` and don't wait for output. The script is reliable and takes ~45 seconds. Continue the conversation immediately after launching it.
 
+**Times are shown in Central Time**, never UTC: convert timestamps before displaying them (logs view, upload log, replies to Billy).
+
 ## Project Overview
 
 Frame Art Shuffler is a Home Assistant custom integration for managing Samsung Frame TVs. It handles art uploads, brightness control, gallery management, image shuffling with tag-based filtering, and activity logging. The integration coordinates with a separate Frame Art Manager add-on via a shared `metadata.json` file.
