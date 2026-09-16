@@ -62,6 +62,7 @@ class ActivityEvent:
 EVENT_TYPES = {
     "motion_detected": ("mdi:motion-sensor", "Motion detected"),
     "motion_wake": ("mdi:power", "Screen on (woken by motion)"),
+    "motion_wake_failed": ("mdi:power-plug-off", "Wake sent, no answer from TV"),
     "motion_off": ("mdi:power-off", "TV turned off (no motion)"),
     "motion_timer_reset": ("mdi:timer-refresh", "Motion timer reset"),
     "brightness_adjusted": ("mdi:brightness-6", "Brightness adjusted"),

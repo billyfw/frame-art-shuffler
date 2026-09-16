@@ -286,6 +286,7 @@ class TestEventTypes:
         expected = [
             "motion_detected",
             "motion_wake",
+            "motion_wake_failed",
             "motion_off",
             "brightness_adjusted",
             "shuffle",
