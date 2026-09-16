@@ -529,6 +529,23 @@ def is_screen_on(ip: str, timeout: Optional[float] = None) -> bool:
         return False
 
 
+def verify_screen_on(ip: str, attempts: int = 3, delay: float = 4.0) -> bool:
+    """Return True once the TV reports its screen on, polling a few times.
+
+    Used after a Wake-on-LAN sequence. A TV that is genuinely waking answers
+    within a few seconds; a TV that is off the network never does (a mains
+    loss leaves a Frame in a cold standby with networking off, which only a
+    local power-on fixes). The retries cover one poll colliding with the
+    entity pollers' own REST calls to the same TV.
+    """
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(delay)
+        if is_screen_on(ip, timeout=_SCREEN_CHECK_TIMEOUT):
+            return True
+    return False
+
+
 # Backwards compatibility alias
 def is_tv_on(ip: str) -> bool:
     """Deprecated: Use is_art_mode_enabled() instead.

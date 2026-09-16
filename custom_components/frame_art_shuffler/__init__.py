@@ -2245,13 +2245,27 @@ if _HA_AVAILABLE:
                     power_on_in_progress[tv_id] = True
                     _LOGGER.info(f"Auto motion: Waking {tv_name} ({ip}) via WOL")
                     await hass.async_add_executor_job(frame_tv.tv_on, ip, mac)
-                    _LOGGER.info(f"Auto motion: {tv_name} wake sequence complete")
                     sensor_short = _get_sensor_short_name(sensor_id) if sensor_id else "motion"
-                    log_activity(
-                        hass, entry.entry_id, tv_id,
-                        "motion_wake",
-                        f"Screen on (woken by {sensor_short})",
-                    )
+                    screen_on = await hass.async_add_executor_job(frame_tv.verify_screen_on, ip)
+                    if screen_on:
+                        _LOGGER.info(f"Auto motion: {tv_name} wake sequence complete")
+                        log_activity(
+                            hass, entry.entry_id, tv_id,
+                            "motion_wake",
+                            f"Screen on (woken by {sensor_short})",
+                        )
+                    else:
+                        # Nothing answered after two WoL packets: the TV is off the
+                        # network (a Frame after a power loss sits in a cold standby
+                        # with networking off) and only a local power-on brings it
+                        # back. Say so instead of claiming the screen is on.
+                        _LOGGER.info(f"Auto motion: {tv_name} did not answer after Wake-on-LAN")
+                        log_activity(
+                            hass, entry.entry_id, tv_id,
+                            "motion_wake_failed",
+                            f"Wake sent, no answer from TV ({sensor_short})",
+                        )
+                        cancel_motion_off_timer(tv_id)
                 except Exception as err:
                     _LOGGER.warning(f"Auto motion: Failed to wake {tv_name}: {err}")
                     log_activity(

@@ -227,6 +227,24 @@ Oct 2025).
 (samsungtv_smart, samsungtv, dlna_dmr, etc.) is maintaining connections to the same TV.
 Two integrations polling the same TV on the same WebSocket port is a recipe for conflicts.
 
+### TV unreachable after a power loss (September 2026, office TV)
+Symptoms: `tv_on()` sends both WoL packets, then logs "Could not check TV state after
+Wake-on-LAN: Unable to connect"; the HA box cannot ARP the TV at all; and the auto-motion path
+logs `Screen on (woken by <sensor>)` on every motion although `binary_sensor.<tv>_screen_on`
+never turns on (the activity line is written when the WoL send completes, not when the screen
+comes on). Cause: a mains interruption leaves a Frame in a cold standby with its network off, so
+there is nothing for WoL to reach. Only a local power-on (remote or the TV's button) fixes it;
+FAS resumes by itself afterwards. Real incident 2026-09-15 (house power blip at 13:10 CDT; the
+full timeline is in ha-config's CLAUDE.md, Frame section). Two log facts learned then: the REST
+reply line with `"ip":"<tv ip>"` is the only reliable reachability marker, and the 10-second
+`Screen status check failed for <ip>` debug line fires constantly on the 32" office model even
+when it is working. Fixed 2026-09-16: the motion-wake path now verifies the screen with
+`verify_screen_on()` (three REST polls, 4 s apart) and logs `Wake sent, no answer from TV
+(<sensor>)` (event `motion_wake_failed`) when nothing answers, cancelling the off timer it had
+optimistically started; `Screen on (woken by ...)` is only written when the TV really answered.
+Not built on purpose: backing off the WoL re-sends (one packet per motion event is harmless).
+The house side has a matching phone alert in ha-config (`alert_if_officeframe_stays_dark_through_motion`).
+
 ## Important Conventions
 
 - Single-instance integration (only one config entry allowed)
