@@ -211,10 +211,13 @@ The CLI shares the same token cache directory, so you only need to approve the T
 You can install the integration manually via HACS while it’s under active development:
 
 1. In Home Assistant, open **HACS → Integrations → Custom repositories**.
+2. Add `https://github.com/billyfw/frame-art-shuffler` with the category **Integration**.
 3. Search for “Frame Art Shuffler” in the HACS Integrations list and install it.
 4. Restart Home Assistant to load the integration.
 5. Go to **Settings → Devices & Services → Add Integration** and pick **Frame Art Shuffler**.
-6. Enter a unique Home name.
+6. Choose the library folder (default `/media/frame_art`). Keep it outside `www`: Home Assistant
+   publishes `www` at `/local/` with no login, so a library there (the layout of entries created
+   before 0.4.0) is readable by anyone who can reach the instance, Nabu Casa remote URL included.
 
 
 ### Developing without publishing a release
@@ -257,6 +260,27 @@ This configures a custom git merge driver that auto-resolves `manifest.json` ver
 After creating the integration entry, Home Assistant registers a dedicated device and status sensor for each TV (state shows the IP address with tags and metadata exposed as attributes). You can monitor these to verify metadata updates without waiting for future control entities.
 
 Open **Configure** on the integration card to manage TVs:
+
+### Wall tablets (0.4.0)
+
+A wall tablet is a display target like a TV, without a TV: **Configure → Add a wall tablet**.
+Nothing is ever sent to the tablet. The shuffler picks pictures from the tablet's tagset on its
+own interval and publishes the pick as the tablet's **Artwork** image entity
+(`image.<tablet>_artwork`), which HA serves at `/api/image_proxy/<entity_id>` to logged-in users,
+fitted to 1920 x 1200 and cached beside the library. The tablet's dashboard shows that picture.
+
+- **Showing entity**: a `binary_sensor` or `input_boolean` that is on while the tablet shows art.
+  It is the tablet's "screen on": the display log counts only that time, and each switch to on
+  brings a fresh pick (unless the last one is under a minute old).
+- **Tags are an allow-list**: a tablet with no include tags shows nothing. (For a TV an empty
+  include list means every picture.) Give the tablet's tagset explicit tags and exclude private ones.
+- Entities: current artwork, last shuffle image and time, next auto-shuffle, screen on, the
+  tagset sensors, shuffle frequency, auto-shuffle switch, shuffle-now button, the Artwork image.
+  No power, brightness, motion, matte or token entities.
+- `display_image` with a library `filename` shows a picture on a tablet; `turn_on_tv` and
+  `turn_off_tv` refuse a tablet (its screen is switched in HA).
+
+Every target, TV or tablet, has the Artwork image entity. Design: `docs/TABLET_TARGETS.md`.
 
 ### Tagsets
 
@@ -337,6 +361,16 @@ Then restart Home Assistant. The "Frame Art Shuffler" dashboard will appear in t
 3. Edit the TV in the options flow and confirm the settings update.
 4. Delete the TV and verify it is removed.
 5. Watch the Home Assistant logs for pairing success or errors (`Logger: custom_components.frame_art_shuffler`).
+
+## Tests
+
+The suite runs inside Home Assistant 2026.9 through `pytest-homeassistant-custom-component`
+(`tests/test_tablet_targets.py` sets up the real integration; the other files are pure):
+
+```bash
+uv venv --python 3.14 .venv && VIRTUAL_ENV=.venv uv pip install -r requirements_test.txt
+.venv/bin/python -m pytest
+```
 
 ## About the `.venv` directory
 
