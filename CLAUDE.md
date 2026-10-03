@@ -27,15 +27,26 @@ The authoritative spec is
 `~/devprojects/ha-frame-art-manager/docs/MULTI_HOME_PLAN.md` (§4 is this repo's work) —
 read it before starting Phase 2.
 
+## Wall tablets and the private library (0.4.0, 2026-10-03)
+
+A target is a Frame TV or a **wall tablet** (`kind`, `targets.py`): a tablet is never contacted,
+its pick is served by its Artwork image entity, its "screen on" mirrors a showing entity, and no
+include tags means no pictures. New entries keep the library outside www (default
+`/media/frame_art`) because HA publishes www at `/local/` without login: Madrone's www library
+(metadata.json and the private pictures) answered through its Nabu Casa URL with no credentials
+on 2026-10-03. Design and what did not change: `docs/TABLET_TARGETS.md`. Maui (ha-lau) is the
+first house to run it (maui-tablets `docs/frame-art-plan.md`).
+
 ## Commands
 
 ### Testing
 ```bash
-source .venv/bin/activate
-pytest                           # Run all tests
-pytest tests/test_activity.py    # Run specific test file
-pytest -v                        # Verbose output
+# once: Home Assistant 2026.9 (the houses' version) through pytest-homeassistant-custom-component
+uv venv --python 3.14 .venv && VIRTUAL_ENV=.venv uv pip install -r requirements_test.txt
+.venv/bin/python -m pytest                              # all (pure + real-HA tests)
+.venv/bin/python -m pytest tests/test_tablet_targets.py  # the integration inside HA
 ```
+`pytest.ini` sets `asyncio_mode = auto` so the pure tests run beside HA's test plugin.
 
 ### Development Deployment
 ```bash
