@@ -16,6 +16,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN
+from .targets import is_tablet, target_device_info
 from .frame_tv import FrameArtError, set_tv_brightness
 from .activity import log_activity
 
@@ -34,6 +35,10 @@ async def async_setup_entry(
     entities: list[NumberEntity] = []
     for tv_id, tv in tvs_dict.items():
         if not tv_id:
+            continue
+
+        if is_tablet(tv):
+            entities.append(FrameArtShuffleFrequencyEntity(hass, entry, tv_id))
             continue
 
         entities.extend([
@@ -82,12 +87,7 @@ class FrameArtShuffleFrequencyEntity(NumberEntity):
         identifier = tv_id
 
         self._attr_unique_id = f"{tv_id}_shuffle_frequency"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, identifier)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, identifier, tv_name)
 
     @property
     def native_value(self) -> float | None:
@@ -158,12 +158,7 @@ class FrameArtBrightnessEntity(NumberEntity):
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
         
         self._attr_unique_id = f"{tv_id}_brightness"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to brightness adjusted signals for real-time updates."""
@@ -328,12 +323,7 @@ class FrameArtMinLuxEntity(NumberEntity):
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_min_lux"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> float | None:
@@ -382,12 +372,7 @@ class FrameArtMaxLuxEntity(NumberEntity):
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_max_lux"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> float | None:
@@ -435,12 +420,7 @@ class FrameArtMinBrightnessEntity(NumberEntity):
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_min_auto_brightness"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> float | None:
@@ -488,12 +468,7 @@ class FrameArtMaxBrightnessEntity(NumberEntity):
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_max_auto_brightness"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> float | None:
@@ -542,12 +517,7 @@ class FrameArtMotionOffDelayEntity(NumberEntity):
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_motion_off_delay"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> float | None:

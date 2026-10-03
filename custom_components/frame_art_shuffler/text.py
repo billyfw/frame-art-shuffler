@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .config_entry import get_effective_tags, get_tv_config, update_tv_config
 from .const import CONF_TAGSETS, DOMAIN
+from .targets import target_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,12 +77,7 @@ class FrameArtTextEntityBase(TextEntity):
         identifier = tv_id
 
         self._attr_unique_id = f"{tv_id}_{key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, identifier)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, identifier, tv_name)
 
     @property
     def native_value(self) -> str | None:

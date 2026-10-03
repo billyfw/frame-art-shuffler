@@ -48,7 +48,14 @@ from .const import (
     DEFAULT_METADATA_RELATIVE_PATH,
     DOMAIN,
     TOKEN_DIR_NAME,
+    CONF_KIND,
+    CONF_LIBRARY_DIR,
+    CONF_SHOWING_ENTITY,
+    DEFAULT_LIBRARY_DIR,
+    DEFAULT_TABLET_SHUFFLE_MINUTES,
+    KIND_TABLET,
 )
+from .targets import is_tablet
 from .flow_utils import parse_tag_string, pair_tv, safe_token_filename, validate_host
 from .metadata import (
     MetadataStore,
@@ -91,22 +98,43 @@ class FrameArtConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: Dict[str, str] = {}
 
         if user_input is not None:
-            metadata_path = _default_metadata_path(self.hass)
-            token_dir = _default_token_dir(self.hass)
-            
-            self._metadata_path = metadata_path
-            self._token_dir = token_dir
-            data = {
-                CONF_METADATA_PATH: str(metadata_path),
-                CONF_TOKEN_DIR: str(token_dir),
-            }
-            return self.async_create_entry(
-                title="Frame Art Shuffler",
-                data=data,
-            )
+            # The library folder holds metadata.json and library/. Default /media/frame_art:
+            # HA serves www at /local/ without login, so a library there is public; outside it,
+            # pictures reach a dashboard only through each target's image entity.
+            library_dir = Path(str(user_input.get(CONF_LIBRARY_DIR) or DEFAULT_LIBRARY_DIR).strip())
+            if not library_dir.is_absolute():
+                errors[CONF_LIBRARY_DIR] = "invalid_library_dir"
+            else:
+                try:
+                    await self.hass.async_add_executor_job(
+                        partial(library_dir.mkdir, parents=True, exist_ok=True)
+                    )
+                except OSError:
+                    errors[CONF_LIBRARY_DIR] = "invalid_library_dir"
 
-        # Just need a confirmation, no home required
-        schema = vol.Schema({})
+            if not errors:
+                metadata_path = library_dir / "metadata.json"
+                token_dir = _default_token_dir(self.hass)
+
+                self._metadata_path = metadata_path
+                self._token_dir = token_dir
+                data = {
+                    CONF_METADATA_PATH: str(metadata_path),
+                    CONF_TOKEN_DIR: str(token_dir),
+                }
+                return self.async_create_entry(
+                    title="Frame Art Shuffler",
+                    data=data,
+                )
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_LIBRARY_DIR,
+                    default=(user_input or {}).get(CONF_LIBRARY_DIR, DEFAULT_LIBRARY_DIR),
+                ): str,
+            }
+        )
         return self.async_show_form(
             step_id="user",
             data_schema=schema,
@@ -234,6 +262,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 return await self.async_step_logging_settings()
             elif user_input["action"] == "library_sync_settings":
                 return await self.async_step_library_sync_settings()
+            elif user_input["action"] == "add_tablet":
+                return await self.async_step_add_tablet()
 
         # Get list of existing TVs
         from .config_entry import list_tv_configs
@@ -243,10 +273,11 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             "logging_settings": "Logging settings",
             "library_sync_settings": "Library sync settings",
             "add_tv": "Add a new TV",
+            "add_tablet": "Add a wall tablet",
         }
         if tvs:
-            options["edit_tv"] = "Edit a TV"
-            options["delete_tv"] = "Delete a TV"
+            options["edit_tv"] = "Edit a TV or tablet"
+            options["delete_tv"] = "Delete a TV or tablet"
 
         return self.async_show_form(
             step_id="menu",
@@ -407,6 +438,9 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             self._edit_tv_id = user_input["tv_id"]
+            from .config_entry import get_tv_config
+            if is_tablet(get_tv_config(self.config_entry, self._edit_tv_id)):
+                return await self.async_step_edit_tablet()
             return await self.async_step_edit_tv()
 
         options = {tv_id: data.get("name", tv_id) for tv_id, data in tvs.items()}
@@ -551,7 +585,9 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
 
                 if not errors:
                     self._async_schedule_refresh()
-                    return self.async_create_entry(title="", data={})
+                    # The returned data BECOMES entry.options: keep them (data={} wiped the
+                    # library sync token and the logging settings on every TV edit).
+                    return self.async_create_entry(title="", data=dict(self.config_entry.options or {}))
 
         schema = vol.Schema(
             {
@@ -700,7 +736,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     self._async_schedule_refresh()
                     return self.async_create_entry(
                         title=f"{name} added as TV for Frame Art Shuffler",
-                        data={},
+                        data=dict(self.config_entry.options or {}),
                     )
 
         # Use preserved input as defaults when re-rendering form with errors
@@ -734,6 +770,114 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             step_id="add_tv",
             data_schema=schema,
             errors=errors,
+        )
+
+    def _tablet_schema(self, defaults: Dict[str, Any], *, with_tags: bool) -> vol.Schema:
+        fields: Dict[Any, Any] = {
+            vol.Required(CONF_NAME, default=defaults.get(CONF_NAME, "")): str,
+            vol.Optional(CONF_SHORT_NAME, default=defaults.get(CONF_SHORT_NAME, "")): str,
+        }
+        if with_tags:
+            fields[vol.Optional(CONF_TAGS, default=defaults.get(CONF_TAGS, ""))] = str
+            fields[vol.Optional(CONF_EXCLUDE_TAGS, default=defaults.get(CONF_EXCLUDE_TAGS, ""))] = str
+        fields[vol.Required(CONF_SHOWING_ENTITY, default=defaults.get(CONF_SHOWING_ENTITY) or vol.UNDEFINED)] = EntitySelector(
+            EntitySelectorConfig(domain=["binary_sensor", "input_boolean"])
+        )
+        fields[vol.Required(
+            CONF_SHUFFLE_FREQUENCY,
+            default=defaults.get(CONF_SHUFFLE_FREQUENCY, DEFAULT_TABLET_SHUFFLE_MINUTES),
+        )] = vol.All(vol.Coerce(int), vol.Range(min=1, max=1440))
+        fields[vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=defaults.get(CONF_ENABLE_AUTO_SHUFFLE, True))] = bool
+        return vol.Schema(fields)
+
+    async def async_step_add_tablet(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Add a wall tablet: a display target that is never contacted (see targets.py)."""
+        errors: Dict[str, str] = {}
+        if user_input is not None:
+            name = (user_input.get(CONF_NAME) or "").strip()
+            short_name = (user_input.get(CONF_SHORT_NAME) or "").strip()
+            showing = user_input.get(CONF_SHOWING_ENTITY)
+            tags = parse_tag_string(user_input.get(CONF_TAGS, ""))
+            exclude_tags = parse_tag_string(user_input.get(CONF_EXCLUDE_TAGS, ""))
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            if not showing:
+                errors[CONF_SHOWING_ENTITY] = "showing_entity_required"
+            if not errors:
+                from uuid import uuid4
+                from .config_entry import (
+                    add_tv_config,
+                    generate_unique_tagset_name,
+                    get_global_tagsets,
+                    update_global_tagsets,
+                )
+
+                tv_id = uuid4().hex
+                tagset_name = None
+                if tags:
+                    base = f"{short_name or name}_primary".lower().replace(" ", "_")
+                    tagset_name = generate_unique_tagset_name(self.config_entry, base)
+                    global_tagsets = get_global_tagsets(self.config_entry).copy()
+                    global_tagsets[tagset_name] = {"tags": tags, "exclude_tags": exclude_tags}
+                    update_global_tagsets(self.hass, self.config_entry, global_tagsets)
+                add_tv_config(self.hass, self.config_entry, tv_id, {
+                    CONF_KIND: KIND_TABLET,
+                    "name": name,
+                    "short_name": short_name,
+                    CONF_SHOWING_ENTITY: showing,
+                    "selected_tagset": tagset_name,
+                    "shuffle_frequency_minutes": int(user_input[CONF_SHUFFLE_FREQUENCY]),
+                    "enable_auto_shuffle": bool(user_input.get(CONF_ENABLE_AUTO_SHUFFLE, True)),
+                })
+                self._async_schedule_refresh()
+                return self.async_create_entry(
+                    title=f"{name} added as a wall tablet",
+                    data=dict(self.config_entry.options or {}),
+                )
+        return self.async_show_form(
+            step_id="add_tablet",
+            data_schema=self._tablet_schema(user_input or {}, with_tags=True),
+            errors=errors,
+        )
+
+    async def async_step_edit_tablet(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Edit a wall tablet (its tags live in its tagset, managed like a TV's)."""
+        from .config_entry import get_tv_config, update_tv_config
+
+        tv_id = getattr(self, "_edit_tv_id", None)
+        current = get_tv_config(self.config_entry, tv_id) if tv_id else None
+        if not current:
+            return await self.async_step_menu()
+        errors: Dict[str, str] = {}
+        if user_input is not None:
+            name = (user_input.get(CONF_NAME) or "").strip()
+            showing = user_input.get(CONF_SHOWING_ENTITY)
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            if not showing:
+                errors[CONF_SHOWING_ENTITY] = "showing_entity_required"
+            if not errors:
+                update_tv_config(self.hass, self.config_entry, tv_id, {
+                    "name": name,
+                    "short_name": (user_input.get(CONF_SHORT_NAME) or "").strip(),
+                    CONF_SHOWING_ENTITY: showing,
+                    "shuffle_frequency_minutes": int(user_input[CONF_SHUFFLE_FREQUENCY]),
+                    "enable_auto_shuffle": bool(user_input.get(CONF_ENABLE_AUTO_SHUFFLE, True)),
+                })
+                self._async_schedule_refresh()
+                return self.async_create_entry(title="", data=dict(self.config_entry.options or {}))
+        defaults = {
+            CONF_NAME: current.get("name", ""),
+            CONF_SHORT_NAME: current.get("short_name", ""),
+            CONF_SHOWING_ENTITY: current.get(CONF_SHOWING_ENTITY),
+            CONF_SHUFFLE_FREQUENCY: current.get("shuffle_frequency_minutes", DEFAULT_TABLET_SHUFFLE_MINUTES),
+            CONF_ENABLE_AUTO_SHUFFLE: current.get("enable_auto_shuffle", True),
+        }
+        return self.async_show_form(
+            step_id="edit_tablet",
+            data_schema=self._tablet_schema(user_input or defaults, with_tags=False),
+            errors=errors,
+            description_placeholders={"tv_name": current.get("name", "")},
         )
 
     async def _async_pair_tv(self, host: str, token_path: Path, *, mac: str | None = None) -> bool:

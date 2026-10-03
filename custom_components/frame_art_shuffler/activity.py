@@ -24,6 +24,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from .config_entry import get_tv_config
 from .const import DOMAIN
+from .targets import target_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -211,12 +212,7 @@ class FrameArtActivitySensor(RestoreEntity, SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to updates."""
