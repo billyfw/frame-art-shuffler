@@ -101,8 +101,9 @@ if _HA_AVAILABLE:
     from .dashboard import async_generate_dashboard
     from .activity import log_activity
     from .shuffle import async_guarded_upload, async_shuffle_tv
+    from .targets import is_tablet, resolve_library_file
 
-    PLATFORMS = [Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR]
+    PLATFORMS = [Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.IMAGE]
 else:
     DEFAULT_TOKEN_DIR = Path(__file__).resolve().parent / "tokens"
     PLATFORMS: list[Any] = []
@@ -162,6 +163,8 @@ if _HA_AVAILABLE:
                 "short_name": tv_data.get("short_name"),
                 "motion_sensors": tv_data.get("motion_sensors", []),
                 "light_sensor": tv_data.get("light_sensor"),
+                "kind": tv_data.get("kind"),
+                "showing_entity": tv_data.get("showing_entity"),
             }
         return structural
 
@@ -521,18 +524,16 @@ if _HA_AVAILABLE:
             final_path = None
             if image_path:
                 final_path = image_path
+            elif filename:
+                # The library file wins over image_url: the manager sends both, and a library
+                # outside www (/media/frame_art, 0.4.0) has no /local URL.
+                metadata_path = data["metadata_path"]
+                final_path = str(metadata_path.parent / "library" / filename)
             elif image_url:
                 if image_url.startswith("/local/"):
                     final_path = hass.config.path("www", image_url[7:])
                 else:
                     raise ValueError("image_url must start with /local/")
-            elif filename:
-                # Use metadata path to find library root
-                metadata_path = data["metadata_path"]
-                # metadata_path is like /config/www/frame_art/metadata.json
-                # so library root is /config/www/frame_art/
-                # Images are stored in the 'library' subdirectory
-                final_path = str(metadata_path.parent / "library" / filename)
             
             if not final_path:
                 raise ValueError("Must provide image_path, image_url, or filename")
@@ -552,10 +553,22 @@ if _HA_AVAILABLE:
             if not tv_data:
                 raise ValueError(f"TV {tv_id} not found in coordinator data")
             
-            ip = tv_data["ip"]
+            ip = tv_data.get("ip")
             mac = tv_data.get("mac")
+            tablet = is_tablet(tv_data)
 
             tv_name = tv_data.get("name", tv_id)
+
+            if tablet:
+                # A tablet shows library pictures only, through its image entity.
+                if not filename or resolve_library_file(data["metadata_path"], filename) is None:
+                    raise ServiceValidationError(
+                        f"{tv_name} is a wall tablet: display_image needs the filename of a picture in the library"
+                    )
+                matte = None
+                filter_id = None
+            elif not ip:
+                raise ValueError(f"TV {tv_name} has no IP address")
 
             # Determine display filename for logging
             if filename:
@@ -576,17 +589,18 @@ if _HA_AVAILABLE:
                     f"Displaying custom image ({display_filename}) via service call",
                 )
 
-                await hass.async_add_executor_job(
-                    functools.partial(
-                        frame_tv.set_art_on_tv_deleteothers,
-                        ip,
-                        final_path,
-                        mac_address=mac,
-                        matte=matte,
-                        photo_filter=filter_id,
-                        delete_others=True,
+                if not tablet:
+                    await hass.async_add_executor_job(
+                        functools.partial(
+                            frame_tv.set_art_on_tv_deleteothers,
+                            ip,
+                            final_path,
+                            mac_address=mac,
+                            matte=matte,
+                            photo_filter=filter_id,
+                            delete_others=True,
+                        )
                     )
-                )
 
                 # Update shuffle_cache with all current state (like shuffle does)
                 # This ensures the dashboard sensors show the correct image/matte/filter
@@ -815,6 +829,10 @@ if _HA_AVAILABLE:
             target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
             reason = call.data.get("reason")
 
+            if is_tablet(tv_data):
+                raise ServiceValidationError(
+                    f"{tv_data.get('name', tv_id)} is a wall tablet; its screen is switched in Home Assistant, not by the shuffler"
+                )
             ip = tv_data["ip"]
             mac = tv_data.get("mac")
             tv_name = tv_data.get("name", tv_id)
@@ -892,6 +910,10 @@ if _HA_AVAILABLE:
             target_entry, tv_id, tv_data = await _resolve_tv_from_call(call)
             reason = call.data.get("reason")
 
+            if is_tablet(tv_data):
+                raise ServiceValidationError(
+                    f"{tv_data.get('name', tv_id)} is a wall tablet; its screen is switched in Home Assistant, not by the shuffler"
+                )
             ip = tv_data["ip"]
             tv_name = tv_data.get("name", tv_id)
 
@@ -1887,6 +1909,16 @@ if _HA_AVAILABLE:
         auto_shuffle_timers: dict[str, Callable[[], None]] = {}
         auto_shuffle_next_times = hass.data[DOMAIN][entry.entry_id]["auto_shuffle_next_times"]
 
+        @callback
+        def _cancel_all_auto_shuffle_timers() -> None:
+            for unsubscribe_timer in list(auto_shuffle_timers.values()):
+                unsubscribe_timer()
+            auto_shuffle_timers.clear()
+
+        # One unload hook for every timer (a tablet restarts its timer each time it starts
+        # showing art; registering a hook per restart grew the unload list without bound).
+        entry.async_on_unload(_cancel_all_auto_shuffle_timers)
+
         def _set_auto_shuffle_next_time(tv_id: str, next_time: datetime | None) -> None:
             if next_time is None:
                 auto_shuffle_next_times.pop(tv_id, None)
@@ -1991,7 +2023,6 @@ if _HA_AVAILABLE:
                 interval,
             )
             auto_shuffle_timers[tv_id] = unsubscribe
-            entry.async_on_unload(unsubscribe)
 
             next_time = datetime.now(timezone.utc) + interval
             _set_auto_shuffle_next_time(tv_id, next_time)

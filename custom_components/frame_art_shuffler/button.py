@@ -15,6 +15,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .config_entry import get_tv_config, update_tv_config
 from .const import DOMAIN, CONF_ENABLE_AUTO_SHUFFLE
+from .targets import is_tablet, target_device_info
 from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
 from .shuffle import async_shuffle_tv
 from .activity import log_activity
@@ -34,6 +35,10 @@ async def async_setup_entry(
     entities: list[ButtonEntity] = []
     for tv_id, tv in tvs_dict.items():
         if not tv_id:
+            continue
+
+        if is_tablet(tv):
+            entities.append(FrameArtShuffleButton(hass, entry, tv_id))
             continue
 
         entities.extend([
@@ -79,12 +84,7 @@ class FrameArtRemoveTVButton(ButtonEntity):
         identifier = tv_id
 
         self._attr_unique_id = f"{tv_id}_remove"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, identifier)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, identifier, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - remove this TV."""
@@ -141,12 +141,7 @@ class FrameArtArtModeButton(ButtonEntity):
             self._tv_ip = None
 
         self._attr_unique_id = f"{tv_id}_art_mode"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - switch TV to art mode."""
@@ -191,12 +186,7 @@ class FrameArtOnArtModeButton(ButtonEntity):
             self._tv_mac = None
 
         self._attr_unique_id = f"{tv_id}_on_art_mode"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - turn TV on and switch to art mode."""
@@ -252,12 +242,7 @@ class FrameArtShuffleButton(ButtonEntity):
 
         self._attr_name = f"{self._tv_name} Auto-Shuffle Now"
         self._attr_unique_id = f"{tv_id}_shuffle"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - shuffle to a random image.
@@ -318,12 +303,7 @@ class FrameArtClearTokenButton(ButtonEntity):
             self._tv_ip = None
 
         self._attr_unique_id = f"{tv_id}_clear_token"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - delete the token file."""
@@ -361,12 +341,7 @@ class FrameArtCalibrateDarkButton(ButtonEntity):
         self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_calibrate_dark"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - set min_lux to current sensor value."""
@@ -423,12 +398,7 @@ class FrameArtCalibrateBrightButton(ButtonEntity):
         self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_calibrate_bright"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - set max_lux to current sensor value."""
@@ -485,12 +455,7 @@ class FrameArtTriggerBrightnessButton(ButtonEntity):
         self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_trigger_brightness"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - trigger auto brightness adjustment."""
@@ -536,12 +501,7 @@ class FrameArtTriggerMotionOffButton(ButtonEntity):
         self._tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
         self._attr_unique_id = f"{tv_id}_trigger_motion_off"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=self._tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, self._tv_name)
 
     async def async_press(self) -> None:
         """Handle the button press - turn TV off and cancel motion timer."""

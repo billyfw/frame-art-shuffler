@@ -1,0 +1,8 @@
+# Test environment: Home Assistant 2026.9.0 (both houses' version) through its custom-component test helpers.
+#   uv venv --python 3.14 .venv && VIRTUAL_ENV=.venv uv pip install -r requirements_test.txt
+#   .venv/bin/python -m pytest
+pytest-homeassistant-custom-component==0.13.363
+Pillow
+# HA's own samsungtv requirement; the vendored samsungtvws imports samsungtvws.event absolutely
+samsungtvws[async,encrypted]==3.0.5
+websocket-client

@@ -14,10 +14,11 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 
 from .config_entry import get_active_tagset_name, get_tv_config
-from .const import DOMAIN
+from .const import CONF_ENABLE_AUTO_SHUFFLE, CONF_SHOWING_ENTITY, DOMAIN
+from .targets import is_tablet, target_device_info
 from . import frame_tv
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,6 +27,14 @@ _LOGGER = logging.getLogger(__name__)
 TV_STATUS_POLL_INTERVAL = timedelta(seconds=10)
 # Timeout for status checks (short to avoid blocking)
 TV_STATUS_CHECK_TIMEOUT = 5
+# A tablet that starts showing art again gets a fresh pick, unless its last pick is this recent
+TABLET_REPICK_MIN_SECONDS = 60
+
+
+def _showing_is_on(state: Any) -> bool:
+    """A tablet shows art while its showing entity is on; anything else (off, missing,
+    unavailable) counts as not showing, so a tablet never logs 'screen state unknown'."""
+    return state is not None and state.state == "on"
 
 
 SCREEN_ON_DESCRIPTION = BinarySensorEntityDescription(
@@ -52,6 +61,86 @@ async def async_setup_entry(
 
     tracked: dict[str, tuple] = {}
 
+    def _image_tags(metadata_path: Any, filename: str) -> list[str]:
+        try:
+            from .metadata import MetadataStore
+            image_meta = MetadataStore(metadata_path).get_image(filename)
+            return list(image_meta.get("tags", [])) if image_meta else []
+        except Exception:  # pylint: disable=broad-except
+            return []
+
+    async def _async_start_session_for_current(tv_id: str, tv_config: dict[str, Any]) -> None:
+        """Open a display-log session for the picture already on the screen."""
+        display_log = data.get("display_log")
+        if not display_log:
+            return
+        shuffle_cache = data.get("shuffle_cache", {}).get(tv_id, {})
+        current_image = shuffle_cache.get("current_image") or tv_config.get("current_image")
+        if not current_image:
+            return
+        metadata_path = data.get("metadata_path")
+        image_tags = (
+            await hass.async_add_executor_job(_image_tags, metadata_path, current_image)
+            if metadata_path
+            else []
+        )
+        if not tv_status_cache.get(tv_id, {}).get("screen_on"):
+            return  # it stopped showing art while the tags were read
+        display_log.note_screen_on(
+            tv_id=tv_id,
+            tv_name=tv_config.get("name", tv_id),
+            filename=current_image,
+            tags=image_tags,
+            tv_tags=tv_config.get("include_tags"),
+            matte=shuffle_cache.get("current_matte"),
+            photo_filter=shuffle_cache.get("current_filter"),
+            tagset_name=get_active_tagset_name(entry, tv_id),
+        )
+
+    def _recently_picked(tv_id: str, tv_config: dict[str, Any]) -> bool:
+        from homeassistant.util import dt as dt_util
+
+        stamp = data.get("shuffle_cache", {}).get(tv_id, {}).get("last_shuffle_timestamp") or tv_config.get(
+            "last_shuffle_timestamp"
+        )
+        when = dt_util.parse_datetime(stamp) if isinstance(stamp, str) else None
+        if when is None:
+            return False
+        return (dt_util.utcnow() - when).total_seconds() < TABLET_REPICK_MIN_SECONDS
+
+    @callback
+    def _handle_showing_change(tv_id: str, event: Any) -> None:
+        """A tablet started or stopped showing art."""
+        tv_config = get_tv_config(entry, tv_id)
+        if not tv_config or tv_id not in tv_status_cache:
+            return
+        new_on = _showing_is_on(event.data.get("new_state"))
+        if new_on == tv_status_cache[tv_id].get("screen_on"):
+            return
+        tv_status_cache[tv_id]["screen_on"] = new_on
+        if tv_id in tracked:
+            tracked[tv_id].async_write_ha_state()
+        tv_name = tv_config.get("name", tv_id)
+        display_log = data.get("display_log")
+        if not new_on:
+            if display_log:
+                display_log.note_screen_off(tv_id=tv_id, tv_name=tv_name)
+            return
+        start_timer = data.get("start_auto_shuffle_timer")
+        run_auto_shuffle = data.get("async_run_auto_shuffle")
+        if (
+            tv_config.get(CONF_ENABLE_AUTO_SHUFFLE, False)
+            and start_timer
+            and run_auto_shuffle
+            and not _recently_picked(tv_id, tv_config)
+        ):
+            # A fresh pick each time the tablet starts showing art (the shuffle opens the
+            # display-log session), and the interval counts from now.
+            start_timer(tv_id)
+            hass.async_create_task(run_auto_shuffle(tv_id))
+        else:
+            hass.async_create_task(_async_start_session_for_current(tv_id, tv_config))
+
     @callback
     def _process_tvs(tvs: Iterable[dict[str, Any]]) -> None:
         new_entities: list[BinarySensorEntity] = []
@@ -70,6 +159,23 @@ async def async_setup_entry(
 
             tracked[tv_id] = screen_on_entity
             new_entities.append(screen_on_entity)
+
+            tv_config = get_tv_config(entry, tv_id) or {}
+            if is_tablet(tv_config):
+                # A tablet's screen state is its showing entity, not a poll.
+                showing = tv_config.get(CONF_SHOWING_ENTITY)
+                is_on = _showing_is_on(hass.states.get(showing)) if showing else False
+                tv_status_cache[tv_id]["screen_on"] = is_on
+                if is_on:
+                    hass.async_create_task(_async_start_session_for_current(tv_id, tv_config))
+                if showing:
+                    entry.async_on_unload(
+                        async_track_state_change_event(
+                            hass,
+                            [showing],
+                            callback(lambda event, _tv_id=tv_id: _handle_showing_change(_tv_id, event)),
+                        )
+                    )
 
         if new_entities:
             async_add_entities(new_entities)
@@ -226,12 +332,7 @@ class FrameArtScreenOnEntity(BinarySensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def is_on(self) -> bool | None:

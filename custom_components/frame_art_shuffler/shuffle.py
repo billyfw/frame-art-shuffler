@@ -24,6 +24,7 @@ from .activity import log_activity
 from .config_entry import get_active_tagset_name, get_effective_tags, get_tag_weights, get_tv_config, get_weighting_type
 from .const import DOMAIN
 from .frame_tv import FrameArtError, set_art_on_tv_deleteothers
+from .targets import is_tablet
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -428,8 +429,10 @@ async def _async_shuffle_tv_inner(
     if not tv_config:
         raise FrameArtError(f"TV config not found for {tv_id}")
 
+    # A wall tablet is never contacted: its pick is recorded and read through its image entity.
+    tablet = is_tablet(tv_config)
     tv_ip = tv_config.get("ip")
-    if not tv_ip:
+    if not tablet and not tv_ip:
         raise FrameArtError(f"Missing IP address in config for {tv_name}")
 
     metadata_path = Path(entry.data.get("metadata_path", ""))
@@ -442,6 +445,24 @@ async def _async_shuffle_tv_inner(
     weighting_type = get_weighting_type(entry, tv_id)
 
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+
+    if tablet:
+        # On a communal screen the tags are an allow-list: no include tags, no pictures. (For a
+        # TV an empty include list means every picture, private ones included.)
+        warned: set[str] = entry_data.setdefault("tablet_no_tags_warned", set())
+        if not include_tags:
+            if tv_id not in warned:
+                warned.add(tv_id)
+                log_activity(
+                    hass,
+                    entry.entry_id,
+                    tv_id,
+                    "shuffle_skipped",
+                    "No tags chosen for this tablet yet; it shows nothing until its tagset has tags",
+                )
+            _notify("skipped", "No tags chosen for this tablet")
+            return False
+        warned.discard(tv_id)
     shuffle_cache = entry_data.setdefault("shuffle_cache", {})
     runtime_state = shuffle_cache.get(tv_id, {})
     current_image = runtime_state.get("current_image") or tv_config.get("current_image")
@@ -490,6 +511,10 @@ async def _async_shuffle_tv_inner(
     image_filter = selected_image.get("filter")
     if image_filter and isinstance(image_filter, str) and image_filter.lower() == "none":
         image_filter = None
+    if tablet:
+        # Mattes and filters are Frame TV features.
+        image_matte = None
+        image_filter = None
 
     async def _perform_upload() -> bool:
         upload_func = functools.partial(
@@ -499,7 +524,8 @@ async def _async_shuffle_tv_inner(
             photo_filter=image_filter,
         )
 
-        await hass.async_add_executor_job(upload_func, tv_ip, str(image_path))
+        if not tablet:
+            await hass.async_add_executor_job(upload_func, tv_ip, str(image_path))
 
         now = datetime.now(timezone.utc)
         timestamp = now.isoformat()
@@ -570,7 +596,7 @@ async def _async_shuffle_tv_inner(
         # Sync brightness after shuffle to ensure TV has correct brightness
         # This helps recover from cases where brightness was set but TV didn't apply it
         async_sync_brightness = entry_data.get("async_sync_brightness_after_shuffle")
-        if async_sync_brightness:
+        if async_sync_brightness and not tablet:
             try:
                 await async_sync_brightness(tv_id)
             except Exception as err:

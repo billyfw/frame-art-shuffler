@@ -59,3 +59,17 @@ SERVICE_SYNC_LIBRARY = "sync_library"
 
 SIGNAL_SHUFFLE = f"{DOMAIN}_shuffle"
 SIGNAL_AUTO_SHUFFLE_NEXT = f"{DOMAIN}_auto_shuffle_next"
+
+# Display targets (0.4.0): a target in entry.data["tvs"] is a Frame TV or a wall tablet.
+# See targets.py and docs/TABLET_TARGETS.md.
+CONF_KIND = "kind"
+KIND_TV = "tv"
+KIND_TABLET = "tablet"
+CONF_SHOWING_ENTITY = "showing_entity"
+DEFAULT_TABLET_SHUFFLE_MINUTES = 5
+
+# Library location (0.4.0). New entries keep the library outside www, because HA serves www at
+# /local/ without login; tablets get pictures through each target's image entity instead.
+CONF_LIBRARY_DIR = "library_dir"
+DEFAULT_LIBRARY_DIR = "/media/frame_art"
+DERIVATIVE_DIR_NAME = ".derivatives"

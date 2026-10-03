@@ -2,12 +2,26 @@
   "config": {
     "abort": {
       "single_instance_allowed": "Integration already configured. To add TVs, click the gear icon (⚙️) on the Frame Art integration card."
+    },
+    "step": {
+      "user": {
+        "title": "Frame Art Shuffler",
+        "description": "Where the library lives (metadata.json and the library folder). Keep it outside www: Home Assistant publishes www at /local/ without a login, so pictures there are public. Wall tablets get their pictures through each target's image entity either way.",
+        "data": {
+          "library_dir": "Library folder"
+        }
+      }
+    },
+    "error": {
+      "invalid_library_dir": "Enter an absolute folder path Home Assistant can create, for example /media/frame_art."
     }
   },
   "options": {
     "error": {
       "invalid_retention": "Retention must be between 1 and 12 months.",
-      "invalid_flush": "Flush interval must be between 1 and 60 minutes."
+      "invalid_flush": "Flush interval must be between 1 and 60 minutes.",
+      "showing_entity_required": "Choose the entity that is on while the tablet shows art.",
+      "name_required": "A name is required."
     },
     "step": {
       "add_tv": {
@@ -78,6 +92,30 @@
           "library_sync_token": "GitHub token (read-only)",
           "library_sync_repo": "Library repository (owner/name)",
           "library_sync_interval_minutes": "Sync interval (minutes, 0 = poke-only)"
+        }
+      },
+      "add_tablet": {
+        "title": "Add a wall tablet",
+        "description": "A wall tablet shows its picture through its Artwork image entity; nothing is sent to the device. Its screen counts as on while the showing entity is on.",
+        "data": {
+          "name": "Tablet name",
+          "short_name": "Short name (for dashboard tab)",
+          "tags": "Image tags to include (a tablet with no tags shows nothing)",
+          "exclude_tags": "Image tags to exclude",
+          "showing_entity": "Showing art (on while the tablet shows the ambient picture)",
+          "shuffle_frequency_minutes": "New picture every (minutes)",
+          "enable_auto_shuffle": "Auto-shuffle"
+        }
+      },
+      "edit_tablet": {
+        "title": "Edit {tv_name}",
+        "description": "The tablet's tags live in its tagset (set in the frame art manager or with the tagset services).",
+        "data": {
+          "name": "Tablet name",
+          "short_name": "Short name (for dashboard tab)",
+          "showing_entity": "Showing art (on while the tablet shows the ambient picture)",
+          "shuffle_frequency_minutes": "New picture every (minutes)",
+          "enable_auto_shuffle": "Auto-shuffle"
         }
       }
     }

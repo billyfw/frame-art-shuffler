@@ -34,6 +34,7 @@ from .const import (
     SIGNAL_SHUFFLE,
     SIGNAL_AUTO_SHUFFLE_NEXT,
 )
+from .targets import is_tablet, public_library_url, target_device_info
 from .coordinator import FrameArtCoordinator
 from .activity import FrameArtActivitySensor
 
@@ -272,7 +273,27 @@ async def async_setup_entry(
             tv_id = tv.get("id")
             if not tv_id or tv_id in tracked:
                 continue
-            
+
+            if is_tablet(get_tv_config(entry, tv_id)):
+                # A wall tablet: the shuffle and tagset sensors only (no IP, MAC, matte,
+                # brightness or motion; see targets.py).
+                tablet_entities: list[SensorEntity] = [
+                    FrameArtTVEntity(hass, entry, tv_id),
+                    FrameArtLastShuffleImageEntity(hass, entry, tv_id),
+                    FrameArtLastShuffleTimestampEntity(hass, entry, tv_id),
+                    FrameArtAutoShuffleNextEntity(hass, entry, tv_id),
+                    FrameArtTagsCombinedEntity(hass, entry, tv_id),
+                    FrameArtSelectedTagsetEntity(hass, entry, tv_id),
+                    FrameArtSelectedTagsetWeightingEntity(hass, entry, tv_id),
+                    FrameArtOverrideTagsetEntity(hass, entry, tv_id),
+                    FrameArtOverrideExpiryEntity(hass, entry, tv_id),
+                    FrameArtMatchingImageCountEntity(hass, entry, tv_id),
+                    FrameArtActivitySensor(hass, entry, tv_id),
+                ]
+                tracked[tv_id] = tuple(tablet_entities)
+                new_entities.extend(tablet_entities)
+                continue
+
             # Create all sensors per TV
             current_artwork_entity = FrameArtTVEntity(hass, entry, tv_id)
             last_image_entity = FrameArtLastShuffleImageEntity(hass, entry, tv_id)
@@ -343,12 +364,7 @@ class FrameArtTVEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle and tagset signals for updates."""
@@ -445,6 +461,7 @@ class FrameArtTVEntity(SensorEntity):
         include_tags, exclude_tags = get_effective_tags(self._entry, self._tv_id)
         
         data = {
+            "kind": "tablet" if is_tablet(tv_config) else "tv",
             "ip": tv_config.get("ip"),
             "mac": tv_config.get("mac"),
             "tags": include_tags,
@@ -452,7 +469,12 @@ class FrameArtTVEntity(SensorEntity):
             "motion_sensors": tv_config.get("motion_sensors", []),
             "light_sensor": tv_config.get(CONF_LIGHT_SENSOR),
             "entity_picture": self.entity_picture,
+            # The image entity that serves this target's current pick (the tablet's ambient
+            # picture; works whether or not the library is published at /local).
+            "image_entity": self._image_entity_id(),
         }
+        if is_tablet(tv_config):
+            data["showing_entity"] = tv_config.get("showing_entity")
         
         # Add tagset information from GLOBAL tagsets
         # Expose full tagset definitions so add-on can display/edit them
@@ -480,18 +502,34 @@ class FrameArtTVEntity(SensorEntity):
             data["shuffle_frequency"] = shuffle.get(CONF_SHUFFLE_FREQUENCY)
         return data
 
+    def _image_entity_id(self) -> str | None:
+        from homeassistant.helpers import entity_registry as er
+
+        registry = er.async_get(self._hass)
+        return registry.async_get_entity_id(
+            "image", DOMAIN, f"{self._entry.entry_id}_{self._tv_id}_artwork_image"
+        )
+
     @property
-    def entity_picture(self) -> str:
+    def entity_picture(self) -> str | None:
         """Return the URL to the current artwork image for picture-entity card.
-        
-        Always returns a valid URL - uses black placeholder if no image available.
-        This ensures picture-entity card never fails due to missing image.
+
+        Only when the library is published under www (HA serves www at /local/ without login,
+        the layout of entries created before 0.4.0): a black placeholder when nothing is known.
+        A library outside www has no public URL; use the target's image entity instead.
         """
+        data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+        metadata_path = data.get("metadata_path")
+        if not metadata_path:
+            return None
+        base = public_library_url(self._hass.config.path("www"), metadata_path)
+        if base is None:
+            return None
         current = self.native_value
         if current and current != "Unknown":
-            return f"/local/frame_art/library/{current}"
+            return f"{base}{current}"
         # Return black placeholder so picture-entity card doesn't error
-        return "/local/frame_art/library/_black_placeholder.jpg"
+        return f"{base}_black_placeholder.jpg"
 
 
 class FrameArtLastShuffleImageEntity(SensorEntity):
@@ -511,12 +549,7 @@ class FrameArtLastShuffleImageEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle signal for updates."""
@@ -568,12 +601,7 @@ class FrameArtLastShuffleTimestampEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle signal for updates."""
@@ -644,12 +672,7 @@ class FrameArtAutoShuffleNextEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         @callback
@@ -704,12 +727,7 @@ class FrameArtIPEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -735,12 +753,7 @@ class FrameArtMACEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -766,12 +779,7 @@ class FrameArtMotionSensorEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -798,12 +806,7 @@ class FrameArtLightSensorEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -831,12 +834,7 @@ class FrameArtAutoBrightLastAdjustEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to brightness signal for updates."""
@@ -895,12 +893,7 @@ class FrameArtAutoBrightNextAdjustEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to brightness signal for updates."""
@@ -961,12 +954,7 @@ class FrameArtAutoBrightTargetEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
         self._unsubscribe_light_sensor: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -1051,12 +1039,7 @@ class FrameArtAutoBrightSensorLuxEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
         self._unsubscribe_light_sensor: Callable[[], None] | None = None
 
     async def async_added_to_hass(self) -> None:
@@ -1125,12 +1108,7 @@ class FrameArtAutoMotionLastMotionEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to motion detected signals for real-time updates."""
@@ -1197,12 +1175,7 @@ class FrameArtAutoMotionOffAtEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to off time update signals."""
@@ -1269,12 +1242,7 @@ class FrameArtCurrentMatteEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle signal for updates."""
@@ -1329,12 +1297,7 @@ class FrameArtCurrentFilterEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle signal for updates."""
@@ -1389,12 +1352,7 @@ class FrameArtMatteFilterEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle signal for updates."""
@@ -1448,12 +1406,7 @@ class FrameArtTagsCombinedEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -1516,12 +1469,7 @@ class FrameArtSelectedTagsetEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -1553,12 +1501,7 @@ class FrameArtSelectedTagsetWeightingEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -1587,12 +1530,7 @@ class FrameArtOverrideTagsetEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> str | None:  # type: ignore[override]
@@ -1624,12 +1562,7 @@ class FrameArtOverrideExpiryEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     @property
     def native_value(self) -> datetime | None:  # type: ignore[override]
@@ -1668,12 +1601,7 @@ class FrameArtMatchingImageCountEntity(SensorEntity):
         tv_config = get_tv_config(entry, tv_id)
         tv_name = tv_config.get("name", tv_id) if tv_config else tv_id
 
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, tv_id)},
-            name=tv_name,
-            manufacturer="Samsung",
-            model="Frame TV",
-        )
+        self._attr_device_info = target_device_info(entry, tv_id, tv_name)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to shuffle signal for updates."""

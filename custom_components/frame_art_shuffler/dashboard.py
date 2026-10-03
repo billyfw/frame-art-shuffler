@@ -272,11 +272,23 @@ def _build_tv_view(
     if not entities:
         return None
 
+    # The library's public URL when it sits under www (served at /local/ without login), else
+    # None: the artwork card then shows the target's image entity instead.
+    public_base: str | None = None
+    try:
+        from .targets import public_library_url
+
+        metadata_path = entry.data.get("metadata_path")
+        if metadata_path:
+            public_base = public_library_url(hass.config.path("www"), metadata_path)
+    except Exception:  # pylint: disable=broad-except
+        public_base = "/local/frame_art/library/"
+
     # === COLUMN 1: Artwork ===
     col1_cards = []
     
     # Combined Current Artwork (image + details)
-    artwork_card = _build_artwork_section(entities)
+    artwork_card = _build_artwork_section(entities, public_base)
     if artwork_card:
         col1_cards.append(artwork_card)
     
@@ -408,6 +420,8 @@ def _get_tv_entities(
         "override_tagset": f"{entry_id}_{tv_id}_override_tagset",
         "override_expiry": f"{entry_id}_{tv_id}_override_expiry",
         "matching_image_count": f"{entry_id}_{tv_id}_matching_image_count",
+        # Image
+        "artwork_image": f"{entry_id}_{tv_id}_artwork_image",
         # Numbers
         "shuffle_frequency": f"{tv_id}_shuffle_frequency",
         "brightness": f"{tv_id}_brightness",
@@ -449,6 +463,8 @@ def _get_tv_entities(
 def _get_platform_for_key(key: str) -> str:
     """Get the platform (domain) for an entity key."""
     binary_sensors = {"screen_on"}
+    if key == "artwork_image":
+        return "image"
     sensors = {
         "current_artwork", "last_shuffle_image", "last_shuffle_timestamp",
         "auto_shuffle_next",
@@ -556,15 +572,22 @@ def _build_power_controls_section(entities: dict[str, str]) -> dict[str, Any] | 
     }
 
 
-def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
+def _build_artwork_section(
+    entities: dict[str, str],
+    public_base: str | None = "/local/frame_art/library/",
+) -> dict[str, Any] | None:
     """Build artwork section with image on top, controls below.
     
     Structure:
-    - Markdown card with title "Artwork" and image
+    - Markdown card with title "Artwork" and image (a picture-entity card on the target's image
+      entity when the library is not published under www)
     - Entities card with shuffle button and details combined
     """
     if "current_artwork" not in entities:
         return None
+
+    if public_base is None and "artwork_image" in entities:
+        return _build_private_artwork_section(entities)
     
     artwork_entity = entities["current_artwork"]
     screen_on_entity = entities.get("screen_on")
@@ -572,17 +595,18 @@ def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
     cards = []
     
     # Build image template that includes screen off indicator and matte info
+    base = public_base or "/local/frame_art/library/"
     matte_entity = entities.get("current_matte")
     if screen_on_entity:
         image_template = f"""{{% if is_state('{screen_on_entity}', 'on') %}}
-![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})
+![Current Art]({base}{{{{ states('{artwork_entity}') }}}})
 {{% else %}}
-![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})
+![Current Art]({base}{{{{ states('{artwork_entity}') }}}})
 
 <center>***** Screen is off *****</center>
 {{% endif %}}"""
     else:
-        image_template = f"![Current Art](/local/frame_art/library/{{{{ states('{artwork_entity}') }}}})"
+        image_template = f"![Current Art]({base}{{{{ states('{artwork_entity}') }}}})"
 
     # Add matte info below the image, top left
     if matte_entity:
@@ -648,6 +672,28 @@ def _build_artwork_section(entities: dict[str, str]) -> dict[str, Any] | None:
         "type": "vertical-stack",
         "cards": cards,
     }
+
+
+def _build_private_artwork_section(entities: dict[str, str]) -> dict[str, Any]:
+    """Artwork section for a library outside www: the image entity, then the shuffle controls."""
+    cards: list[dict[str, Any]] = [{
+        "type": "picture-entity",
+        "entity": entities["artwork_image"],
+        "show_name": False,
+        "show_state": False,
+    }]
+    controls: list[dict[str, Any]] = [{"entity": entities["current_artwork"], "name": "Current Artwork"}]
+    for key, name in (
+        ("auto_shuffle_switch", "Auto Shuffle"),
+        ("shuffle", "Shuffle Image"),
+        ("shuffle_frequency", "Shuffle Frequency"),
+        ("auto_shuffle_next", "Next Auto Shuffle"),
+        ("screen_on", "Showing Art"),
+    ):
+        if key in entities:
+            controls.append({"entity": entities[key], "name": name})
+    cards.append({"type": "entities", "entities": controls})
+    return {"type": "vertical-stack", "title": "Artwork", "cards": cards}
 
 
 def _build_combined_brightness_section(entities: dict[str, str]) -> dict[str, Any] | None:
