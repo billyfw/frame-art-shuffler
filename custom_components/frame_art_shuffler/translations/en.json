@@ -100,7 +100,7 @@
         "data": {
           "name": "Tablet name",
           "short_name": "Short name (for dashboard tab)",
-          "tags": "Image tags to include (a tablet with no tags shows nothing)",
+          "tags": "Image tags to include (none = every picture, as for a TV)",
           "exclude_tags": "Image tags to exclude",
           "showing_entity": "Showing art (on while the tablet shows the ambient picture)",
           "shuffle_frequency_minutes": "New picture every (minutes)",

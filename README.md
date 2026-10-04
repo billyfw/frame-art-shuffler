@@ -272,8 +272,8 @@ fitted to 1920 x 1200 and cached beside the library. The tablet's dashboard show
 - **Showing entity**: a `binary_sensor` or `input_boolean` that is on while the tablet shows art.
   It is the tablet's "screen on": the display log counts only that time, and each switch to on
   brings a fresh pick (unless the last one is under a minute old).
-- **Tags are an allow-list**: a tablet with no include tags shows nothing. (For a TV an empty
-  include list means every picture.) Give the tablet's tagset explicit tags and exclude private ones.
+- **Tags work as for a TV**: no include tags means every picture. On a communal screen, give the
+  tablet's tagset explicit tags and exclude the private ones.
 - Entities: current artwork, last shuffle image and time, next auto-shuffle, screen on, the
   tagset sensors, shuffle frequency, auto-shuffle switch, shuffle-now button, the Artwork image.
   No power, brightness, motion, matte or token entities.
