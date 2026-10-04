@@ -38,6 +38,17 @@ on the LAN, the tailnet and the Nabu Casa remote URL (verified on Madrone, 2026-
 - Packaging: `hacs.json` at the repository root (it sat inside the component, where HACS does
   not look), manifest URLs to billyfw, version 0.4.0.
 
+## 0.4.2: entities from setup only (2026-10-04)
+
+Adding the first tablet on ha-lau through the options flow left the tablet's sensors and screen-on
+binary sensor as duplicates: the flow's coordinator refresh made the *old* instance's sensor and
+binary_sensor platforms create the new target's entities while the entry was reloading, so the
+new instance's entities were rejected ("does not generate unique IDs") and its showing-entity
+handler raised on the unregistered sensor ("Attribute hass is None"), skipping the shuffle. The
+zombies kept answering from the old platform until HA restarted. Fix: target entities are created at
+platform setup only (every target change already reloads the entry), and the handler writes the
+sensor only when it is registered. `test_a_coordinator_update_never_creates_entities` pins it.
+
 ## Not changed
 
 - Madrone's entry keeps its www library and its behaviour; moving it to `/media` (closing its

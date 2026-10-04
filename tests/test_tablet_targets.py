@@ -286,3 +286,37 @@ async def test_display_image_on_a_tv_uses_the_library_file(hass, tmp_path, tv_ca
         )
     sent_path = upload.call_args.args[1]
     assert sent_path == str(tmp_path / "media" / "frame_art" / "library" / "beach-1.jpg")
+
+
+async def test_adding_a_tablet_on_a_running_entry_then_showing_art(hass, tmp_path, tv_calls, caplog):
+    """The options flow's add reloads the entry; the old instance must not create the new target's
+    entities during that reload (ha-lau, 2026-10-04: duplicates rejected, the switch handler raised)."""
+    entry = await _setup(hass, tmp_path, {})
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {"action": "add_tablet"})
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"name": "Wall Test", "short_name": "Wall", "tags": "landscape", "exclude_tags": "private",
+         "showing_entity": SHOWING, "shuffle_frequency_minutes": 5, "enable_auto_shuffle": True},
+    )
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    assert "does not generate unique IDs" not in caplog.text
+    tablet_id = next(iter(entry.data["tvs"]))
+    screen = _entity(hass, "binary_sensor", f"{entry.entry_id}_{tablet_id}_screen_on")
+    sensor = _entity(hass, "sensor", f"{entry.entry_id}_{tablet_id}")
+    await _show_art(hass)
+    assert hass.states.get(screen).state == "on"  # written at once, not at the next poll
+    assert hass.states.get(sensor).state in ("beach-1.jpg", "beach-2.jpg", "ridge-3.png")
+    assert "Error while dispatching event" not in caplog.text
+
+
+async def test_a_coordinator_update_never_creates_entities(hass, tmp_path, tv_calls):
+    """Entities exist only from setup: every target change reloads the entry. An update that
+    creates them (the old platforms did) races the reload and leaves duplicates behind."""
+    entry = await _setup(hass, tmp_path, {})
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator.async_set_updated_data([_tablet()])
+    await hass.async_block_till_done()
+    assert _entity(hass, "binary_sensor", f"{entry.entry_id}_{TABLET_ID}_screen_on") is None
+    assert _entity(hass, "sensor", f"{entry.entry_id}_{TABLET_ID}") is None

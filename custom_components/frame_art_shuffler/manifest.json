@@ -1,7 +1,7 @@
 {
   "domain": "frame_art_shuffler",
   "name": "Frame Art Shuffler",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "documentation": "https://github.com/billyfw/frame-art-shuffler",
   "codeowners": [
     "@billyfw"

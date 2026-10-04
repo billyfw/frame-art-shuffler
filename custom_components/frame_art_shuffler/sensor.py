@@ -333,16 +333,12 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    # Process initial TVs from coordinator data
+    # Entities are created here only. Adding or removing a target changes entry.data, and the
+    # update listener reloads the entry (_get_structural_config), so setup sees every target.
+    # Creating them from coordinator updates too raced that reload: on ha-lau (2026-10-04) the
+    # old instance added a new tablet's entities while unloading, and the new instance's were
+    # rejected as duplicates.
     _process_tvs(coordinator.data or [])
-
-    # Listen for new TVs (coordinator still tracks TV list for entity creation)
-    @callback
-    def _handle_coordinator_update() -> None:
-        _process_tvs(coordinator.data or [])
-
-    unsubscribe = coordinator.async_add_listener(_handle_coordinator_update)
-    entry.async_on_unload(unsubscribe)
 
 
 class FrameArtTVEntity(SensorEntity):

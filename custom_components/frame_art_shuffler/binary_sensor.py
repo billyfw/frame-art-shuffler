@@ -118,8 +118,9 @@ async def async_setup_entry(
         if new_on == tv_status_cache[tv_id].get("screen_on"):
             return
         tv_status_cache[tv_id]["screen_on"] = new_on
-        if tv_id in tracked:
-            tracked[tv_id].async_write_ha_state()
+        screen_entity = tracked.get(tv_id)
+        if screen_entity is not None and screen_entity.hass is not None:
+            screen_entity.async_write_ha_state()
         tv_name = tv_config.get("name", tv_id)
         display_log = data.get("display_log")
         if not new_on:
@@ -180,14 +181,9 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
+    # Created at setup only (see sensor.py: target changes reload the entry; creating entities
+    # from coordinator updates raced that reload).
     _process_tvs(coordinator.data or [])
-
-    @callback
-    def _handle_coordinator_update() -> None:
-        _process_tvs(coordinator.data or [])
-
-    unsubscribe = coordinator.async_add_listener(_handle_coordinator_update)
-    entry.async_on_unload(unsubscribe)
 
     # Set up polling for TV status
     async def async_poll_tv_status(_now: Any) -> None:
