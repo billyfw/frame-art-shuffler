@@ -12,8 +12,9 @@ on the LAN, the tailnet and the Nabu Casa remote URL (verified on Madrone, 2026-
 - **`kind`** on each target (`entry.data["tvs"][id]["kind"]`): `tv` when absent, `tablet` for
   the new kind (`targets.py`). Nothing is migrated; every existing target stays a TV.
 - **Tablet shuffle** (`shuffle.py`): selection, recency, `shuffle_cache`, activity and display
-  log as for a TV; no upload, no matte or filter, no brightness sync. No include tags means no
-  pictures (an allow-list on a communal screen); the skip is logged once until tags appear.
+  log as for a TV; no upload, no matte or filter, no brightness sync. No include tags means every
+  picture, as for a TV (Billy, 2026-10-04; 0.4.0 had shown nothing instead), so a communal tablet's
+  tagset is what keeps private pictures off it.
 - **Tablet screen state** (`binary_sensor.py`): mirrors the showing entity; off, missing or
   unavailable all count as not showing. Off closes the display-log session; on restarts the
   interval and picks at once unless the last pick is under 60 s old (then it reopens the

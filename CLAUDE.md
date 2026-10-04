@@ -30,8 +30,8 @@ read it before starting Phase 2.
 ## Wall tablets and the private library (0.4.0, 2026-10-03)
 
 A target is a Frame TV or a **wall tablet** (`kind`, `targets.py`): a tablet is never contacted,
-its pick is served by its Artwork image entity, its "screen on" mirrors a showing entity, and no
-include tags means no pictures. New entries keep the library outside www (default
+its pick is served by its Artwork image entity, its "screen on" mirrors a showing entity, and its
+tags work as for a TV (no include tags = every picture; Billy, 2026-10-04). New entries keep the library outside www (default
 `/media/frame_art`) because HA publishes www at `/local/` without login: Madrone's www library
 (metadata.json and the private pictures) answered through its Nabu Casa URL with no credentials
 on 2026-10-03. Design and what did not change: `docs/TABLET_TARGETS.md`. Maui (ha-lau) is the

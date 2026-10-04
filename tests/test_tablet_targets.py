@@ -180,11 +180,13 @@ async def test_image_proxy_needs_login_or_token(hass, tmp_path, tv_calls, hass_c
     assert (await anonymous.get("/local/frame_art/metadata.json")).status == 404
 
 
-async def test_tablet_without_tags_shows_nothing(hass, tmp_path, tv_calls):
+async def test_tablet_without_tags_shows_every_picture(hass, tmp_path, tv_calls):
+    """No include tags means every picture, as for a TV (Billy, 2026-10-04)."""
     entry = await _setup(hass, tmp_path, {TABLET_ID: _tablet(selected_tagset=None)}, tagsets={})
     sensor = _entity(hass, "sensor", f"{entry.entry_id}_{TABLET_ID}")
     await _show_art(hass)
-    assert hass.states.get(sensor).state == "Unknown"
+    assert hass.states.get(sensor).state in LIBRARY
+    assert not tv_calls["set_art_on_tv_deleteothers"].called
 
 
 async def test_turning_off_closes_and_repicks_only_after_a_minute(hass, tmp_path, tv_calls):

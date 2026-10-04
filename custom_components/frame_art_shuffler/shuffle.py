@@ -446,23 +446,6 @@ async def _async_shuffle_tv_inner(
 
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
 
-    if tablet:
-        # On a communal screen the tags are an allow-list: no include tags, no pictures. (For a
-        # TV an empty include list means every picture, private ones included.)
-        warned: set[str] = entry_data.setdefault("tablet_no_tags_warned", set())
-        if not include_tags:
-            if tv_id not in warned:
-                warned.add(tv_id)
-                log_activity(
-                    hass,
-                    entry.entry_id,
-                    tv_id,
-                    "shuffle_skipped",
-                    "No tags chosen for this tablet yet; it shows nothing until its tagset has tags",
-                )
-            _notify("skipped", "No tags chosen for this tablet")
-            return False
-        warned.discard(tv_id)
     shuffle_cache = entry_data.setdefault("shuffle_cache", {})
     runtime_state = shuffle_cache.get(tv_id, {})
     current_image = runtime_state.get("current_image") or tv_config.get("current_image")

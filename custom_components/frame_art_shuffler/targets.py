@@ -7,7 +7,8 @@ A target is one entry in ``entry.data["tvs"]``; ``kind`` says what it is:
 - ``tablet``: a wall tablet showing a dashboard. Nothing is ever sent to the device. A shuffle only
   records the pick, which the tablet's dashboard loads through the target's image entity, and its
   "screen on" mirrors an HA entity (the showing entity) that is on while the tablet shows art.
-  A tablet with no include tags shows nothing: on a communal screen the tags are an allow-list.
+  Tags work as for a TV: no include tags means every picture (Billy, 2026-10-04), so a communal
+  tablet's tagset is what keeps private pictures off it.
 """
 
 from __future__ import annotations
