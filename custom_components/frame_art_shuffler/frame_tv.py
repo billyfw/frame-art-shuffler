@@ -62,6 +62,12 @@ _VALID_BRIGHTNESS = set(range(1, 11)) | {50}
 _WARN_FILE_MB = 10
 _LARGE_FILE_MB = 15
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+# The panel's own resolution. An upload larger than this wedged the 2026 Frame's art app (the second house Great
+# Room, 2026-10-22 22:26 and 2026-10-23 07:45 HST: both 4032x2268 iPhone shots; every upload at or
+# under 3840x2160 worked), and Samsung's own app resizes to the panel before sending. Nothing is lost:
+# the panel cannot show more pixels than this.
+_PANEL_MAX = (3840, 2160)
+_RESIZED_JPEG_QUALITY = 92
 _POWER_COMMAND_RETRIES = 4
 _POWER_RETRY_DELAY = 2
 _POWER_COMMAND_TIMEOUT = 8
@@ -193,6 +199,7 @@ def set_art_on_tv_deleteothers(
     _log_file_details(file_path, payload)
 
     file_type = _detect_file_type(file_path)
+    payload, file_type = _fit_to_panel(payload, file_type)
     file_size = len(payload)
 
     if file_size > _MAX_UPLOAD_BYTES:
@@ -414,10 +421,15 @@ def set_art_on_tv_deleteothers(
                 debug=debug,
             )
 
-            if not displayed:
-                _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
-            else:
+            if displayed is True:
                 _log_progress(f"Art {content_id} successfully displayed on {ip}")
+            elif displayed is None:
+                _log_progress(
+                    f"Art {content_id} selected on {ip}; this TV's current-artwork readback does not "
+                    "confirm displays, so the selection is trusted"
+                )
+            else:
+                _LOGGER.warning("Uploaded art %s but could not verify display; check TV manually", content_id)
 
             # Apply photo filter if specified
             if photo_filter is not None and photo_filter.lower() not in ("none", ""):
@@ -733,51 +745,82 @@ def _send_wake_on_lan(mac_address: str) -> None:
         raise FrameArtConnectionError(f"Failed to send Wake-on-LAN packet to {mac_address}: {err}") from err
 
 
-def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, debug: bool) -> bool:
-    # Method 1: try direct selection with retries mirroring the reference script
+_READBACK_STALE_NOTE = (
+    "The TV reports %s as current before and after selecting %s; its current-artwork readback does not "
+    "move (seen on the 2026 Frame), so the selection is trusted and not retried"
+)
+
+
+def _current_art_id(art) -> Optional[str]:
+    """The content id the TV reports as showing, or None when it does not answer."""
+    try:
+        current = art.get_current() or {}
+        return current.get("content_id") or None
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.debug("Could not read current art: %s", err)
+        return None
+
+
+_SELECT_REPLY_EVENTS = ("select_image", "image_selected")
+
+
+def _select_reply_confirms(reply: Any, content_id: str) -> bool:
+    """True when the TV's reply to select_image says it is now showing that image.
+
+    The 2026 Frame answers select_image with its own event name and the content id plus is_shown
+    ("select_image", "MY_F0011", "Yes", read on the second house Great Room 2026-10-23); the image_selected
+    broadcast carries the same fields. Firmware that answers with nothing useful leaves the decision to
+    the readback.
+    """
+    if not isinstance(reply, dict):
+        return False
+    if reply.get("event") not in _SELECT_REPLY_EVENTS or reply.get("content_id") != content_id:
+        return False
+    shown = reply.get("is_shown")
+    return shown is None or str(shown).strip().lower() in ("yes", "true", "1")
+
+
+def _display_uploaded_art(art, content_id: str, *, wait_after_upload: float, debug: bool) -> Optional[bool]:
+    """Select the uploaded image for display.
+
+    Returns True when the TV confirmed the selection (its reply or its current-artwork readback names
+    the image), None when the TV took the selection but its readback never moves, and False when the TV
+    would not take the selection at all. Only the uploaded image is ever selected: on a failure nothing
+    else goes on the screen, because a picture the user did not choose is worse than the old one staying
+    up. Until 2026-10-23 a failed verification fell back to the gallery's last entry, which on the second house
+    Great Room's 2026 Frame (whose readback never moves) swapped every shuffle back to the previous
+    picture 30 s after the right one went up, and the cleanup then deleted the picture on screen.
+    """
+    before = _current_art_id(art)
+    unchanged_reads = 0
     for attempt, delay in enumerate(_DISPLAY_RETRY_DELAYS):
         if attempt and delay:
             _LOGGER.debug("Waiting %ss before retrying display", delay)
+            time.sleep(delay)
         try:
-            art.select_image(content_id, show=True)
+            reply = art.select_image(content_id, show=True)
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.debug("select_image failed on attempt %s: %s", attempt + 1, err)
             continue
 
-        _wait_with_countdown(_POST_DISPLAY_VERIFY_DELAY, "Image selected. Verifying display")
-        if _verify_current_art(art, content_id, debug=debug):
+        if _select_reply_confirms(reply, content_id):
+            if debug:
+                _LOGGER.debug("TV confirmed %s in its select_image reply", content_id)
             return True
 
-    # Method 2: fallback to selecting the newest image from the gallery
-    try:
-        gallery = art.available() or []
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.debug("Fetching available art failed: %s", err)
-        gallery = []
-
-    if gallery:
-        newest = gallery[-1].get("content_id")
-        if newest:
-            try:
-                art.select_image(newest, show=True)
-                time.sleep(_POST_DISPLAY_VERIFY_DELAY)
-                return _verify_current_art(art, newest, debug=debug)
-            except Exception as err:  # pylint: disable=broad-except
-                _LOGGER.debug("Fallback select_image failed: %s", err)
+        _wait_with_countdown(_POST_DISPLAY_VERIFY_DELAY, "Image selected. Verifying display")
+        after = _current_art_id(art)
+        if debug:
+            _LOGGER.debug("Current art: %s (expected %s)", after, content_id)
+        if after == content_id:
+            return True
+        if after is not None and after == before:
+            unchanged_reads += 1
+            if unchanged_reads >= 2:
+                _LOGGER.info(_READBACK_STALE_NOTE, after, content_id)
+                return None
 
     return False
-
-
-def _verify_current_art(art, expected_content_id: str, *, debug: bool) -> bool:
-    try:
-        current = art.get_current()
-        current_id = current.get("content_id", "unknown")
-        if debug:
-            _LOGGER.debug("Current art: %s (expected %s)", current_id, expected_content_id)
-        return current_id == expected_content_id
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.debug("Could not verify current art: %s", err)
-        return False
 
 
 def _delete_other_images(art, keep_content_id: str, *, debug: bool) -> None:
@@ -786,13 +829,22 @@ def _delete_other_images(art, keep_content_id: str, *, debug: bool) -> None:
     except Exception as err:  # pylint: disable=broad-except
         raise FrameArtUploadError(f"Could not enumerate TV gallery: {err}") from err
 
-    deletions = [item.get("content_id") for item in available if item.get("content_id") and item.get("content_id") != keep_content_id]
-    
+    # Never delete the image the TV says it is showing. When the readback is stale that keeps one extra
+    # piece in the gallery; deleting the on-screen image instead drops the TV to its Art Mode menu at
+    # the next upload, and the art channel goes silent there (the second house Great Room, 2026-10-22).
+    keep = {keep_content_id}
+    current = _current_art_id(art)
+    if current and current != keep_content_id:
+        keep.add(current)
+        _log_progress(f"TV reports {current} as current; keeping it alongside {keep_content_id}")
+
+    deletions = [item.get("content_id") for item in available if item.get("content_id") and item.get("content_id") not in keep]
+
     # Log what we are keeping to help debug duplicate issues
     kept = [item.get("content_id") for item in available if item.get("content_id") == keep_content_id]
     if len(kept) > 1:
         _log_progress(f"Warning: Found {len(kept)} copies of active image {keep_content_id}. Keeping all to avoid accidental deletion.")
-    
+
     if not deletions:
         _LOGGER.debug("No other images to delete")
         return
@@ -863,6 +915,35 @@ def _log_file_details(file_path: Path, payload: bytes) -> None:
         )
     elif size_mb > _WARN_FILE_MB:
         _LOGGER.info("File %.2f MB; expect longer upload times", size_mb)
+
+
+def _fit_to_panel(payload: bytes, file_type: str, panel: tuple[int, int] = _PANEL_MAX) -> tuple[bytes, str]:
+    """Shrink an image that is larger than the panel to fit inside it; anything that already fits is
+    passed through byte for byte. A resized image is re-encoded as a baseline JPEG at quality 92 with
+    the EXIF orientation applied (what phones and Samsung's app send). An unreadable image is passed
+    through unchanged and the TV decides, as before."""
+    try:
+        import io
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(payload)) as img:
+            width, height = img.size
+            if width <= panel[0] and height <= panel[1]:
+                return payload, file_type
+            img = ImageOps.exif_transpose(img)
+            rgb = img.convert("RGB")
+            rgb.thumbnail(panel, Image.LANCZOS)
+            out = io.BytesIO()
+            rgb.save(out, format="JPEG", quality=_RESIZED_JPEG_QUALITY, subsampling="4:2:0", progressive=False)
+        resized = out.getvalue()
+        _log_progress(
+            f"Resized {width}x{height} to {rgb.width}x{rgb.height} for the panel "
+            f"({len(payload) // 1024} KB -> {len(resized) // 1024} KB)"
+        )
+        return resized, "JPEG"
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.warning("Could not check the image size before upload; sending it as is: %s", err)
+        return payload, file_type
 
 
 def _detect_file_type(path: Path) -> str:

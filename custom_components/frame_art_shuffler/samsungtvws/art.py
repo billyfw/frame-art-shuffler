@@ -417,7 +417,9 @@ class SamsungTVArt(SamsungTVWSConnection):
         return content_id_list == json.loads(data['content_id_list'])
 
     def select_image(self, content_id, category=None, show=True):
-        self._send_art_request(
+        # Local patch (frame-art-shuffler): return the TV's reply so the caller can read the
+        # image_selected confirmation; upstream discards it. See docs/VENDORING.md.
+        return self._send_art_request(
             {
                 "request": "select_image",
                 "category_id": category,

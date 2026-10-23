@@ -195,6 +195,48 @@ shutting down, the write fails silently. The image never makes it into `events.j
 **If this happens frequently**: investigate hardening `async_finalize_active_sessions()` to
 not rely on the executor (e.g., synchronous write path during shutdown).
 
+### Display swaps back 30 s after a shuffle, then the TV sticks on its Art Mode menu (2026 Frame, the second house Great Room, 2026-10-22)
+Symptoms: every auto shuffle shows the right picture and the previous one returns about 30 s later;
+`Uploaded art MY_F00xx but could not verify display; check TV manually` on every shuffle; then a shuffle
+fails mid upload and every later one fails with `TV <ip> is unreachable (timeout)` while the TV sits lit on
+its Art Mode menu (the menu also keeps the TV's own sleep timer from firing).
+
+Two causes, both on the 2026 Frame (QN85LS03H, art API 6.0.0.0):
+
+1. The swap: the TV answers `get_current_artwork` with the same stale id (`SAM-F0222`) whatever is on
+   screen. Until 0.4.3 `_display_uploaded_art` took a failed readback for a failed display and fell back
+   to selecting the gallery's last entry, which is the previous picture, and `_delete_other_images` then
+   deleted everything but the new upload.
+2. The menu: an upload larger than the panel (both wedges were 4032x2268 iPhone shots; every upload at
+   or under 3840x2160 worked, eight for eight) hangs the TV's art app about 14 s into `send_image`. The
+   TV drops to its Art Mode menu, the art channel answers nothing there (nor on the Smart Hub screen; a
+   `KEY_RETURN` over the remote channel was accepted and changed nothing), and it stays that way for
+   minutes to hours until the art app comes back by itself or the remote's power button relaunches it.
+   The first guess, that the TV dropped because the picture on screen had been deleted, was wrong: the
+   07:45 HST wedge happened with nothing deleted from the screen. 280 of the 665 library files were
+   oversize on 2026-10-23, so this hit roughly every other shuffle. The maintained Samsung integration
+   (TheFab21/ha-samsungtv-smart, `api/_image_prep.py`) caps every upload to the panel for the same
+   reason, as Samsung's own app does.
+
+What the TV actually says (read on that TV, 2026-10-23 07:25 HST): `get_current_artwork` answers
+`{"content_id": "SAM-F0222", "category_id": "DEFAULT_CATEGORY", "content_type": "artstore"}` before and
+after a select of a My Photos picture, so on this firmware that request reports the Art Store slot, not what
+is on the panel. The reply to `select_image` is the truthful signal: `{"event": "select_image",
+"content_id": "MY_F0011", "is_shown": "Yes", ...}`. The unfiltered `get_content_list` is the "recently
+set" list first (each entry labelled `MY-C0008`, newest first) followed by My Photos (`MY-C0002`), so the
+list's last entry is an arbitrary photo, never the newest upload (TheFab21's decompiled firmware notes,
+`notes/T-PTMDDEUC/ART_APP_3.50.106.md`, say the same for the 2025 art app).
+
+Fix (0.4.3): `_fit_to_panel` shrinks any upload larger than 3840x2160 to fit the panel (baseline JPEG,
+quality 92, EXIF orientation applied; an image that already fits is sent byte for byte); the display
+path only ever selects the uploaded image; the TV's reply to `select_image` (event `select_image` or the
+`image_selected` broadcast, naming the content id, `is_shown` not "No") counts as confirmation and skips
+the readback wait; two reads of an unmoving readback mean "trusted, unverified" (`None`, one info line)
+instead of failure; the cleanup keeps the image the TV reports as current as well as the new one. The
+vendored `select_image` returns the TV's reply for this (`docs/VENDORING.md`). Tests:
+`tests/test_frame_tv.py` (FakeArt, generated images). Not covered: other decode failures the maintained
+integration re-encodes for (CMYK, 16-bit, palette); none seen here, and a progressive JPEG displayed fine.
+
 ### HA Logging — No log file on disk (since HA 2025.11)
 
 HA removed `home-assistant.log` for HAOS/Supervised installs.

@@ -19,3 +19,10 @@ If Samsung releases a firmware update that breaks the API (e.g., authentication 
 2. If a fix exists, download the source code of the new version.
 3. Replace the contents of `custom_components/frame_art_shuffler/samsungtvws/` with the new source code.
 4. Verify that `frame_tv.py` imports still work correctly.
+
+### Local patches
+Re-apply these after replacing the vendored copy:
+
+- `art.py` `SamsungTVArt.select_image` returns the TV's reply (`return self._send_art_request(...)`) instead
+  of discarding it; `frame_tv._display_uploaded_art` reads the confirmation (event `select_image` or `image_selected`, the content id, `is_shown`) from it
+  (2026-10-23, the second house Great Room incident in CLAUDE.md).
