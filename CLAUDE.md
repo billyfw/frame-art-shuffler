@@ -1,5 +1,13 @@
 # CLAUDE.md
 
+> **This repository is public.** Nothing identifying goes in it, in any commit: no person's name, no email
+> address, no place name (the house ids used as configuration keys are the exception), no host or tailnet
+> name, no device serial or MAC, no token. The owner's private repositories hold those facts and point here.
+> `scripts/check_no_pii.py` scans the working tree and the whole history on every push (CI job `no-pii`); a
+> finding in history means a rewrite and a force-push, done once on 2026-10-24 (commit identities, names and
+> places). Commits here carry the owner's GitHub no-reply address.
+> `scripts/frame_tv_cli.py`'s default MAC is a documentation placeholder since that rewrite; pass your TV's.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Workflow Preferences
