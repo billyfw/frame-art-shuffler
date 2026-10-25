@@ -90,6 +90,7 @@ if _HA_AVAILABLE:
         CONF_TAGSETS,
         CONF_TOKEN_DIR,
         DOMAIN,
+        POWER_CONTROL_IP_CONTROL,
         SIGNAL_AUTO_SHUFFLE_NEXT,
     )
     from .display_log import DisplayLogManager
@@ -101,7 +102,7 @@ if _HA_AVAILABLE:
     from .dashboard import async_generate_dashboard
     from .activity import log_activity
     from .shuffle import async_guarded_upload, async_shuffle_tv
-    from .targets import is_tablet, resolve_library_file
+    from .targets import is_tablet, power_control, resolve_library_file
 
     PLATFORMS = [Platform.NUMBER, Platform.BUTTON, Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.IMAGE]
 else:
@@ -836,13 +837,15 @@ if _HA_AVAILABLE:
             ip = tv_data["ip"]
             mac = tv_data.get("mac")
             tv_name = tv_data.get("name", tv_id)
+            tv_config = get_tv_config(target_entry, tv_id)
+            method = power_control(tv_config or tv_data)
 
-            if not mac:
+            if not mac and method != POWER_CONTROL_IP_CONTROL:
                 raise ValueError(f"Cannot turn on {tv_name}: missing MAC address")
 
             try:
-                await hass.async_add_executor_job(tv_on, ip, mac)
-                _LOGGER.info(f"Sent Wake-on-LAN to {tv_name}")
+                await hass.async_add_executor_job(tv_on, ip, mac, method)
+                _LOGGER.info(f"Powered on {tv_name} ({method})")
 
                 await hass.async_add_executor_job(set_art_mode, ip)
                 _LOGGER.info(f"Switched {tv_name} to art mode")
@@ -916,10 +919,11 @@ if _HA_AVAILABLE:
                 )
             ip = tv_data["ip"]
             tv_name = tv_data.get("name", tv_id)
+            method = power_control(get_tv_config(target_entry, tv_id) or tv_data)
 
             try:
-                await hass.async_add_executor_job(tv_off, ip)
-                _LOGGER.info(f"Turned off {tv_name} screen")
+                await hass.async_add_executor_job(tv_off, ip, method)
+                _LOGGER.info(f"Turned off {tv_name} screen ({method})")
 
                 # Update status cache
                 data = hass.data.get(DOMAIN, {}).get(target_entry.entry_id, {})
@@ -2162,7 +2166,7 @@ if _HA_AVAILABLE:
 
                 try:
                     _LOGGER.info(f"Auto motion: Turning off {tv_name} ({ip}) due to no motion")
-                    await hass.async_add_executor_job(frame_tv.tv_off, ip)
+                    await hass.async_add_executor_job(frame_tv.tv_off, ip, power_control(tv_config))
                     _LOGGER.info(f"Auto motion: {tv_name} turned off successfully")
                     
                     # Build message with last sensor info if available
@@ -2270,12 +2274,13 @@ if _HA_AVAILABLE:
             # (The 15s wake sequence would otherwise leave the sensor 'unknown' for too long)
             start_motion_off_timer(tv_id)
 
-            # Turn on TV via Wake-on-LAN
-            if mac:
+            # Turn on the TV by its power control method (Wake-on-LAN for remote_keys)
+            method = power_control(current_tv_config)
+            if mac or method == POWER_CONTROL_IP_CONTROL:
                 try:
                     power_on_in_progress[tv_id] = True
-                    _LOGGER.info(f"Auto motion: Waking {tv_name} ({ip}) via WOL")
-                    await hass.async_add_executor_job(frame_tv.tv_on, ip, mac)
+                    _LOGGER.info(f"Auto motion: Waking {tv_name} ({ip}) via {method}")
+                    await hass.async_add_executor_job(frame_tv.tv_on, ip, mac, method)
                     sensor_short = _get_sensor_short_name(sensor_id) if sensor_id else "motion"
                     screen_on = await hass.async_add_executor_job(frame_tv.verify_screen_on, ip)
                     if screen_on:

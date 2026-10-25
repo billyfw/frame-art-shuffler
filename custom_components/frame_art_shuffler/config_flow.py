@@ -54,8 +54,12 @@ from .const import (
     DEFAULT_LIBRARY_DIR,
     DEFAULT_TABLET_SHUFFLE_MINUTES,
     KIND_TABLET,
+    CONF_POWER_CONTROL,
+    DEFAULT_POWER_CONTROL,
+    POWER_CONTROL_IP_CONTROL,
+    POWER_CONTROL_REMOTE_KEYS,
 )
-from .targets import is_tablet
+from .targets import is_tablet, power_control
 from .flow_utils import parse_tag_string, pair_tv, safe_token_filename, validate_host
 from .metadata import (
     MetadataStore,
@@ -65,6 +69,12 @@ from .metadata import (
 
 CONF_SKIP_PAIRING = "skip_pairing"
 CONF_REPAIR = "re_pair"
+
+# The power control choice on the TV forms (docs/POWER_CONTROL.md); the help text is in translations.
+POWER_CONTROL_LABELS = {
+    POWER_CONTROL_REMOTE_KEYS: "Remote keys + Wake-on-LAN",
+    POWER_CONTROL_IP_CONTROL: "Samsung IP Control (real standby)",
+}
 
 LOG_RETENTION_MIN = 1
 LOG_RETENTION_MAX = 12
@@ -494,7 +504,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_edit_tv(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
         """Handle editing an existing TV."""
-        from .config_entry import get_tv_config, update_tv_config
+        from .config_entry import get_tv_config
         
         tv_id = getattr(self, "_edit_tv_id", None)
         if not tv_id:
@@ -505,12 +515,16 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             return await self.async_step_menu()
 
         errors: Dict[str, str] = {}
+        if user_input is None:
+            # A save that ran after the IP Control step and failed to pair the WebSocket comes back here
+            errors.update(self.__dict__.pop("_edit_errors", None) or {})
 
         if user_input is not None:
             host_input = user_input.get(CONF_HOST, "")
             name = (user_input.get(CONF_NAME) or "").strip()
             short_name = (user_input.get(CONF_SHORT_NAME) or "").strip()
             mac_input = user_input.get(CONF_MAC, "")
+            chosen_power = user_input.get(CONF_POWER_CONTROL) or power_control(current_config)
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             motion_sensors = user_input.get(CONF_MOTION_SENSORS) or []
             light_sensor = user_input.get(CONF_LIGHT_SENSOR)
@@ -549,8 +563,8 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 old_ip = current_config.get("ip")
                 ip_changed = old_ip != host
 
-                # Update TV config (tags managed via services/add-on, not config flow)
-                update_tv_config(self.hass, self.config_entry, tv_id, {
+                # TV config updates (tags managed via services/add-on, not config flow)
+                updates = {
                     "name": name,
                     "short_name": short_name,
                     "ip": host,
@@ -566,28 +580,31 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                     "enable_dynamic_brightness": enable_dynamic_brightness,
                     "enable_motion_control": enable_motion_control,
                     "motion_off_delay": motion_off_delay,
-                })
+                    CONF_POWER_CONTROL: chosen_power,
+                }
+                ws_pair = bool(re_pair or ip_changed)
 
-                # Pair if requested OR if IP changed
-                if re_pair or ip_changed:
-                    token_dir = Path(self.config_entry.data[CONF_TOKEN_DIR])
-                    token_dir.mkdir(parents=True, exist_ok=True)
-                    token_path = token_dir / f"{safe_token_filename(host)}.token"
-                    
-                    # If IP changed, we might want to delete the old token? 
-                    # For now, just ensure we pair with the new one.
-                    
-                    success = await self.hass.async_add_executor_job(
-                        partial(pair_tv, host, token_path, mac=normalized_mac)
-                    )
-                    if not success:
-                        errors["base"] = "pairing_failed"
+                # IP Control needs a pairing for this address before the setting is saved: on a switch to
+                # it, a new address, a re-pair, or no stored key. A stored key is verified first (no prompt).
+                if chosen_power == POWER_CONTROL_IP_CONTROL:
+                    from .frame_tv import has_ip_control_token
 
-                if not errors:
-                    self._async_schedule_refresh()
-                    # The returned data BECOMES entry.options: keep them (data={} wiped the
-                    # library sync token and the logging settings on every TV edit).
-                    return self.async_create_entry(title="", data=dict(self.config_entry.options or {}))
+                    has_key = await self.hass.async_add_executor_job(has_ip_control_token, host)
+                    if power_control(current_config) != POWER_CONTROL_IP_CONTROL or re_pair or not has_key:
+                        self._pending_power = {
+                            "mode": "edit",
+                            "tv_id": tv_id,
+                            "name": name,
+                            "host": host,
+                            "mac": normalized_mac,
+                            "updates": updates,
+                            "ws_pair": ws_pair,
+                        }
+                        return await self.async_step_ip_control()
+
+                return await self._async_save_tv_edit(
+                    tv_id, updates, host=host, mac=normalized_mac, ws_pair=ws_pair, method=chosen_power
+                )
 
         schema = vol.Schema(
             {
@@ -595,12 +612,14 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_SHORT_NAME, default=current_config.get("short_name", "")): str,
                 vol.Required(CONF_HOST, default=current_config.get("ip", "")): str,
                 vol.Required(CONF_MAC, default=current_config.get("mac", "")): str,
+                vol.Required(CONF_POWER_CONTROL, default=power_control(current_config)): vol.In(POWER_CONTROL_LABELS),
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=current_config.get("shuffle_frequency_minutes", 30)): vol.Coerce(int),
                 vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=current_config.get("enable_auto_shuffle", False)): bool,
                 vol.Optional(CONF_MOTION_SENSORS, default=current_config.get("motion_sensors", [])): EntitySelector(
                     EntitySelectorConfig(domain="binary_sensor", device_class="motion", multiple=True)
                 ),
-                vol.Optional(CONF_LIGHT_SENSOR, default=current_config.get("light_sensor")): EntitySelector(
+                # No default when none is set: an EntitySelector rejects None ("Entity None is neither a valid entity ID")
+                vol.Optional(CONF_LIGHT_SENSOR, default=current_config.get("light_sensor") or vol.UNDEFINED): EntitySelector(
                     EntitySelectorConfig(domain="sensor")
                 ),
                 vol.Optional(CONF_ENABLE_DYNAMIC_BRIGHTNESS, default=current_config.get("enable_dynamic_brightness", False)): bool,
@@ -633,6 +652,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             name = (user_input.get(CONF_NAME) or "").strip()
             short_name = (user_input.get(CONF_SHORT_NAME) or "").strip()
             mac_input = user_input.get(CONF_MAC, "")
+            chosen_power = user_input.get(CONF_POWER_CONTROL) or DEFAULT_POWER_CONTROL
             freq = user_input.get(CONF_SHUFFLE_FREQUENCY, 30)
             tags_input = user_input.get(CONF_TAGS, "")
             exclude_input = user_input.get(CONF_EXCLUDE_TAGS, "")
@@ -692,52 +712,41 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                         errors["base"] = "pairing_failed"
 
                 if not errors:
-                    # Generate a new TV ID
-                    from uuid import uuid4
-                    tv_id = uuid4().hex
-                    
-                    # Create a GLOBAL tagset for this new TV
-                    # Name it after the TV's short_name (or name) + "_primary"
-                    from .config_entry import add_tv_config, generate_unique_tagset_name, get_global_tagsets, update_global_tagsets
-                    
-                    # Generate tagset name based on TV's short_name or name
-                    base_tagset_name = f"{short_name or name}_primary".lower().replace(" ", "_")
-                    tagset_name = generate_unique_tagset_name(self.config_entry, base_tagset_name)
-                    
-                    # Create the global tagset if tags provided
-                    if tags:
-                        global_tagsets = get_global_tagsets(self.config_entry).copy()
-                        global_tagsets[tagset_name] = {
-                            "tags": tags,
-                            "exclude_tags": exclude_tags,
-                        }
-                        update_global_tagsets(self.hass, self.config_entry, global_tagsets)
-                    
-                    # Add TV to config entry (no per-TV tagsets, only selected_tagset reference)
-                    add_tv_config(self.hass, self.config_entry, tv_id, {
+                    new_tv = {
                         "name": name,
                         "short_name": short_name,
-                        "ip": host,
-                        "mac": normalized_mac,
-                        "selected_tagset": tagset_name if tags else None,
-                        "shuffle_frequency_minutes": frequency,
-                        "motion_sensors": motion_sensors,
-                        "light_sensor": light_sensor,
-                        "min_lux": min_lux,
-                        "max_lux": max_lux,
-                        "min_brightness": min_brightness,
-                        "max_brightness": max_brightness,
-                        "enable_auto_shuffle": enable_auto_shuffle,
-                        "enable_dynamic_brightness": enable_dynamic_brightness,
-                        "enable_motion_control": enable_motion_control,
-                        "motion_off_delay": motion_off_delay,
-                    })
-                    
-                    self._async_schedule_refresh()
-                    return self.async_create_entry(
-                        title=f"{name} added as TV for Frame Art Shuffler",
-                        data=dict(self.config_entry.options or {}),
-                    )
+                        "tags": tags,
+                        "exclude_tags": exclude_tags,
+                        "config": {
+                            "name": name,
+                            "short_name": short_name,
+                            "ip": host,
+                            "mac": normalized_mac,
+                            "shuffle_frequency_minutes": frequency,
+                            "motion_sensors": motion_sensors,
+                            "light_sensor": light_sensor,
+                            "min_lux": min_lux,
+                            "max_lux": max_lux,
+                            "min_brightness": min_brightness,
+                            "max_brightness": max_brightness,
+                            "enable_auto_shuffle": enable_auto_shuffle,
+                            "enable_dynamic_brightness": enable_dynamic_brightness,
+                            "enable_motion_control": enable_motion_control,
+                            "motion_off_delay": motion_off_delay,
+                            CONF_POWER_CONTROL: chosen_power,
+                        },
+                    }
+                    if chosen_power == POWER_CONTROL_IP_CONTROL:
+                        # Pair (or verify a stored key) before the TV is added with this setting
+                        self._pending_power = {
+                            "mode": "add",
+                            "name": name,
+                            "host": host,
+                            "mac": normalized_mac,
+                            "new_tv": new_tv,
+                        }
+                        return await self.async_step_ip_control()
+                    return await self._async_finish_add_tv(new_tv)
 
         # Use preserved input as defaults when re-rendering form with errors
         schema = vol.Schema(
@@ -746,6 +755,9 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_SHORT_NAME, default=preserved_input.get(CONF_SHORT_NAME, "")): str,
                 vol.Required(CONF_HOST, default=preserved_input.get(CONF_HOST, "")): str,
                 vol.Required(CONF_MAC, default=preserved_input.get(CONF_MAC, "")): str,
+                vol.Required(
+                    CONF_POWER_CONTROL, default=preserved_input.get(CONF_POWER_CONTROL, DEFAULT_POWER_CONTROL)
+                ): vol.In(POWER_CONTROL_LABELS),
                 vol.Optional(CONF_TAGS, default=preserved_input.get(CONF_TAGS, "")): str,
                 vol.Optional(CONF_EXCLUDE_TAGS, default=preserved_input.get(CONF_EXCLUDE_TAGS, "")): str,
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=preserved_input.get(CONF_SHUFFLE_FREQUENCY, 30)): vol.Coerce(int),
@@ -753,7 +765,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Optional(CONF_MOTION_SENSORS, default=preserved_input.get(CONF_MOTION_SENSORS, [])): EntitySelector(
                     EntitySelectorConfig(domain="binary_sensor", device_class="motion", multiple=True)
                 ),
-                vol.Optional(CONF_LIGHT_SENSOR, default=preserved_input.get(CONF_LIGHT_SENSOR)): EntitySelector(
+                vol.Optional(CONF_LIGHT_SENSOR, default=preserved_input.get(CONF_LIGHT_SENSOR) or vol.UNDEFINED): EntitySelector(
                     EntitySelectorConfig(domain="sensor")
                 ),
                 vol.Optional(CONF_ENABLE_DYNAMIC_BRIGHTNESS, default=preserved_input.get(CONF_ENABLE_DYNAMIC_BRIGHTNESS, False)): bool,
@@ -771,6 +783,192 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=schema,
             errors=errors,
         )
+
+    async def _async_save_tv_edit(
+        self,
+        tv_id: str,
+        updates: Dict[str, Any],
+        *,
+        host: str,
+        mac: str,
+        ws_pair: bool,
+        method: str,
+    ) -> ConfigFlowResult:
+        """Save an edited TV, then pair its WebSocket when asked or when the address changed."""
+        from .config_entry import update_tv_config
+
+        update_tv_config(self.hass, self.config_entry, tv_id, updates)
+
+        if ws_pair:
+            token_dir = Path(self.config_entry.data[CONF_TOKEN_DIR])
+            token_dir.mkdir(parents=True, exist_ok=True)
+            token_path = token_dir / f"{safe_token_filename(host)}.token"
+            success = await self.hass.async_add_executor_job(
+                partial(pair_tv, host, token_path, mac=mac, power_control=method)
+            )
+            if not success:
+                # The edit form shows the error with the saved values (as before 0.5.0)
+                self._edit_errors = {"base": "pairing_failed"}
+                return await self.async_step_edit_tv()
+
+        self._async_schedule_refresh()
+        # The returned data BECOMES entry.options: keep them (data={} wiped the
+        # library sync token and the logging settings on every TV edit).
+        return self.async_create_entry(title="", data=dict(self.config_entry.options or {}))
+
+    async def _async_finish_add_tv(self, new_tv: Dict[str, Any]) -> ConfigFlowResult:
+        """Add a validated (and paired) TV to the entry, with its global tagset."""
+        from uuid import uuid4
+        from .config_entry import add_tv_config, generate_unique_tagset_name, get_global_tagsets, update_global_tagsets
+
+        name = new_tv["name"]
+        tags = new_tv["tags"]
+        tv_id = uuid4().hex
+
+        # Create a GLOBAL tagset for this new TV, named after its short_name (or name) + "_primary"
+        base_tagset_name = f"{new_tv['short_name'] or name}_primary".lower().replace(" ", "_")
+        tagset_name = generate_unique_tagset_name(self.config_entry, base_tagset_name)
+        if tags:
+            global_tagsets = get_global_tagsets(self.config_entry).copy()
+            global_tagsets[tagset_name] = {
+                "tags": tags,
+                "exclude_tags": new_tv["exclude_tags"],
+            }
+            update_global_tagsets(self.hass, self.config_entry, global_tagsets)
+
+        # Add TV to config entry (no per-TV tagsets, only selected_tagset reference)
+        add_tv_config(self.hass, self.config_entry, tv_id, {
+            **new_tv["config"],
+            "selected_tagset": tagset_name if tags else None,
+        })
+
+        self._async_schedule_refresh()
+        return self.async_create_entry(
+            title=f"{name} added as TV for Frame Art Shuffler",
+            data=dict(self.config_entry.options or {}),
+        )
+
+    async def _async_check_ip_control(self, host: str) -> str:
+        """Verify the stored IP Control key with a power read: ok, unpaired, unreachable or failed."""
+        from .frame_tv import check_ip_control
+        from .ip_control import (
+            IPControlAuthError,
+            IPControlError,
+            IPControlTransportError,
+            IPControlUnavailableError,
+        )
+
+        try:
+            await self.hass.async_add_executor_job(check_ip_control, host)
+        except IPControlAuthError:
+            return "unpaired"  # no key stored, or the TV rejected it
+        except IPControlUnavailableError:
+            return "ok"  # the TV took the key and refused only the read in its current state
+        except IPControlTransportError:
+            return "unreachable"
+        except IPControlError:
+            return "failed"
+        return "ok"
+
+    async def _async_pair_ip_control(self, host: str) -> str:
+        """Run the pairing (blocks until the prompt is accepted); returns ok or a form error key."""
+        from .frame_tv import pair_ip_control
+        from .ip_control import (
+            IPControlAuthError,
+            IPControlError,
+            IPControlTransportError,
+            IPControlUnavailableError,
+        )
+
+        try:
+            await self.hass.async_add_executor_job(pair_ip_control, host)
+        except IPControlTransportError:
+            return "ip_control_timeout"
+        except (IPControlUnavailableError, IPControlAuthError):
+            return "ip_control_refused"
+        except IPControlError:
+            return "ip_control_failed"
+        return "ok"
+
+    async def _async_finish_ip_control(self) -> ConfigFlowResult:
+        """The TV is paired for IP Control: save the edit or add the TV."""
+        pending = self.__dict__.pop("_pending_power", None)
+        if not pending:
+            return await self.async_step_menu()
+        if pending["mode"] == "edit":
+            return await self._async_save_tv_edit(
+                pending["tv_id"],
+                pending["updates"],
+                host=pending["host"],
+                mac=pending["mac"],
+                ws_pair=pending["ws_pair"],
+                method=POWER_CONTROL_IP_CONTROL,
+            )
+        return await self._async_finish_add_tv(pending["new_tv"])
+
+    async def async_step_ip_control(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Pair a TV for Samsung IP Control, or verify its stored key (docs/POWER_CONTROL.md).
+
+        First visit: a stored key that the TV accepts saves the setting at once, with no prompt. Otherwise
+        the form explains the TV-side settings; submitting it starts the pairing, which shows a prompt on
+        the TV and waits up to two minutes for someone to accept it.
+        """
+        pending = getattr(self, "_pending_power", None)
+        if not pending:
+            return await self.async_step_menu()
+        host = pending["host"]
+        errors: Dict[str, str] = dict(self.__dict__.pop("_ip_errors", None) or {})
+
+        if user_input is None and not errors and not pending.get("checked"):
+            pending["checked"] = True
+            outcome = await self._async_check_ip_control(host)
+            if outcome == "ok":
+                return await self._async_finish_ip_control()
+            if outcome == "unreachable":
+                errors["base"] = "ip_control_unreachable"
+            elif outcome == "failed":
+                errors["base"] = "ip_control_failed"
+        elif user_input is not None:
+            outcome = await self._async_check_ip_control(host)
+            if outcome == "ok":
+                return await self._async_finish_ip_control()
+            if outcome == "unpaired":
+                return await self.async_step_ip_control_pair()
+            errors["base"] = "ip_control_unreachable" if outcome == "unreachable" else "ip_control_failed"
+
+        return self.async_show_form(
+            step_id="ip_control",
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={"tv_name": pending["name"], "tv_host": host},
+        )
+
+    async def async_step_ip_control_pair(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """The pairing in progress: the TV shows a prompt until someone accepts it."""
+        pending = getattr(self, "_pending_power", None)
+        if not pending:
+            return await self.async_step_menu()
+        task = getattr(self, "_ip_pair_task", None)
+        if task is None:
+            task = self.hass.async_create_task(self._async_pair_ip_control(pending["host"]))
+            self._ip_pair_task = task
+        if not task.done():
+            return self.async_show_progress(
+                step_id="ip_control_pair",
+                progress_action="ip_control_pair",
+                progress_task=task,
+                description_placeholders={"tv_name": pending["name"]},
+            )
+        self._ip_pair_task = None
+        outcome = task.result()
+        if outcome == "ok":
+            return self.async_show_progress_done(next_step_id="ip_control_done")
+        self._ip_errors = {"base": outcome}
+        return self.async_show_progress_done(next_step_id="ip_control")
+
+    async def async_step_ip_control_done(self, user_input: Optional[Dict[str, Any]] = None) -> ConfigFlowResult:
+        """Paired: save the setting."""
+        return await self._async_finish_ip_control()
 
     def _tablet_schema(self, defaults: Dict[str, Any], *, with_tags: bool) -> vol.Schema:
         fields: Dict[Any, Any] = {

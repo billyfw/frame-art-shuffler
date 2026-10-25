@@ -1,5 +1,9 @@
 # TV State Reference Guide
 
+> The "off" below is the `remote_keys` power control (the screen off, Art Mode kept). A TV on `ip_control`
+> goes to a real standby instead and comes back in the mode it left; REST `PowerState` reads `standby`
+> (`docs/POWER_CONTROL.md`).
+
 ## Understanding TV States
 
 Samsung Frame TVs have **two independent states**:

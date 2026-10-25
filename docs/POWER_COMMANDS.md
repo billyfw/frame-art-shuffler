@@ -1,5 +1,8 @@
 # Frame TV Power Command Implementation
 
+> Since 0.5.0 this page is the `remote_keys` power control, the default. Frames that ignore the power-key hold
+> (2024 on) use `ip_control`, a real standby over Samsung IP Control: see `docs/POWER_CONTROL.md`.
+
 ## Overview
 
 This integration implements Frame TV-specific power commands that match the behavior of Home Assistant's Samsung Smart TV integration.

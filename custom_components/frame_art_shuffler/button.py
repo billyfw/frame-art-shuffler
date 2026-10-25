@@ -14,8 +14,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers import device_registry as dr
 
 from .config_entry import get_tv_config, update_tv_config
-from .const import DOMAIN, CONF_ENABLE_AUTO_SHUFFLE
-from .targets import is_tablet, target_device_info
+from .const import DOMAIN, CONF_ENABLE_AUTO_SHUFFLE, POWER_CONTROL_IP_CONTROL
+from .targets import is_tablet, power_control, target_device_info
 from .frame_tv import tv_on, tv_off, set_art_on_tv_deleteothers, set_art_mode, delete_token, FrameArtError
 from .shuffle import async_shuffle_tv
 from .activity import log_activity
@@ -190,16 +190,17 @@ class FrameArtOnArtModeButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Handle the button press - turn TV on and switch to art mode."""
-        if not self._tv_ip or not self._tv_mac:
+        method = power_control(get_tv_config(self._entry, self._tv_id))
+        if not self._tv_ip or (not self._tv_mac and method != POWER_CONTROL_IP_CONTROL):
             _LOGGER.error(f"Cannot turn on {self._tv_name}: missing IP or MAC address in config")
             return
 
         try:
             # First turn on the TV
-            await self.hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
-            _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}, waiting for TV to be ready...")
+            await self.hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac, method)
+            _LOGGER.info(f"Turned on {self._tv_name} ({method}), waiting for TV to be ready...")
             
-            # tv_on already includes the ~12 second wait for the TV to be ready
+            # tv_on already waits until the TV is ready (WoL: ~12 s; IP Control: until the art channel answers)
             # Now switch to art mode
             await self.hass.async_add_executor_job(set_art_mode, self._tv_ip)
             _LOGGER.info(f"Switched {self._tv_name} to art mode")
@@ -528,7 +529,7 @@ class FrameArtTriggerMotionOffButton(ButtonEntity):
         # Turn off the TV
         try:
             _LOGGER.info(f"Auto motion trigger: Turning off {self._tv_name} ({ip})")
-            await self._hass.async_add_executor_job(tv_off, ip)
+            await self._hass.async_add_executor_job(tv_off, ip, power_control(tv_config))
             _LOGGER.info(f"Auto motion trigger: {self._tv_name} turned off successfully")
             log_activity(
                 self._hass, self._entry.entry_id, self._tv_id,

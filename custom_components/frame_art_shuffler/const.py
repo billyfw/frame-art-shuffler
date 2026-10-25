@@ -73,3 +73,15 @@ DEFAULT_TABLET_SHUFFLE_MINUTES = 5
 CONF_LIBRARY_DIR = "library_dir"
 DEFAULT_LIBRARY_DIR = "/media/frame_art"
 DERIVATIVE_DIR_NAME = ".derivatives"
+
+# Power control (0.5.0): how the shuffler switches a TV's screen off and on. An explicit per-TV setting chosen in
+# the options flow, never inferred from the model or from a token on disk (docs/POWER_CONTROL.md).
+# - remote_keys: holds the remote's power key over the WebSocket (Art Mode screen sleep on the Frames that honor
+#   it) and wakes with Wake-on-LAN. The default, and every TV set up before 0.5.0.
+# - ip_control: Samsung IP Control (JSON-RPC over HTTPS, port 1516): a real standby and power-on. For Frames that
+#   ignore the power-key hold (2024 on: the hold flips them between Art Mode and TV mode instead).
+CONF_POWER_CONTROL = "power_control"
+POWER_CONTROL_REMOTE_KEYS = "remote_keys"
+POWER_CONTROL_IP_CONTROL = "ip_control"
+POWER_CONTROLS = (POWER_CONTROL_REMOTE_KEYS, POWER_CONTROL_IP_CONTROL)
+DEFAULT_POWER_CONTROL = POWER_CONTROL_REMOTE_KEYS

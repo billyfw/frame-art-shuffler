@@ -21,6 +21,7 @@ Without `layout-card`, the dashboard will show an error. You can still use all i
 Samsung Frame TVs have specific behavior regarding art mode and remote control commands:
 
 - **Art Mode is Standby**: When the TV displays artwork, it's in a low-power standby state, not fully on
+- **Power control is per TV** (0.5.0): `remote_keys`, the default, is the behavior below; Frames that ignore the power-key hold (2024 on) use `ip_control`, a real standby and power-on over Samsung IP Control, chosen and paired in the TV's settings form (`docs/POWER_CONTROL.md`)
 - **Power Off = Screen Off**: The `tv_off()` function holds `KEY_POWER` for 3 seconds, which turns the screen off while keeping the TV in art mode (matching the behavior of the Samsung Smart TV integration's `media_player.turn_off`)
 - **Power On = Wake via WOL**: The `tv_on(ip, mac_address)` function broadcasts a Wake-on-LAN packet to wake the TV's network interface. The TV will wake to its default state (typically art mode if that was the last active mode). This function intentionally does NOT send KEY_POWER to avoid unpredictable toggle behavior.
 - **Switching to Art Mode**: Use `set_art_mode()` to switch from TV mode to art mode programmatically. This function sends KEY_POWER to the TV, which switches it to art mode when the TV is showing content. This is reliable and works even when actively watching TV or using apps.

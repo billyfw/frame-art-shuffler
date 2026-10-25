@@ -5,16 +5,19 @@ This module provides art-focused functions for Frame TV control:
 - set_tv_brightness: Adjust art mode brightness (1-10, or 50 for max)
 - is_art_mode_enabled: Check if TV is in art mode (screen may be on/off)
 - is_screen_on: Check if screen is actually displaying content
-- tv_on/tv_off: Screen power control (stays in art mode)
+- tv_on/tv_off: Screen power control, by the TV's power control method
 - set_art_mode: Switch TV to art mode (from TV mode or other state)
 
-Power commands use the same KEY_POWER hold behavior as the Samsung Smart TV
-integration to turn the screen off while maintaining art mode.
+Power commands follow each TV's ``power_control`` setting (docs/POWER_CONTROL.md):
+``remote_keys`` uses the same KEY_POWER hold as the Samsung Smart TV integration to turn the
+screen off while maintaining art mode, and Wake-on-LAN to wake it; ``ip_control`` uses Samsung
+IP Control (ip_control.py) for a real standby and power-on.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import socket
 import time
@@ -38,7 +41,14 @@ except ImportError:
     from samsungtvws.remote import SamsungTVWS
     from samsungtvws.helper import get_ssl_context
 
-from .const import DEFAULT_PORT, DEFAULT_TIMEOUT
+from .const import DEFAULT_PORT, DEFAULT_TIMEOUT, POWER_CONTROL_IP_CONTROL, POWER_CONTROL_REMOTE_KEYS
+from .ip_control import (
+    PAIR_TIMEOUT as IP_CONTROL_PAIR_TIMEOUT,
+    IPControlAuthError,
+    IPControlClient,
+    IPControlError,
+    IPControlTransportError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -75,6 +85,16 @@ _SCREEN_CHECK_TIMEOUT = 6
 _WOL_BROADCAST_IP = "255.255.255.255"
 _WOL_BROADCAST_PORT = 9
 _WOL_WAKE_DELAY = 2
+# IP Control power (docs/POWER_CONTROL.md, the 2026 bench). The REST power state followed each
+# change within 3 s; right after a real off the TV once refused every port for 25 s to 2 min, so the
+# power-on keeps trying for a while; the art channel answered within about 15 s of a power-on.
+_IP_OFF_CONFIRM_SECONDS = 10
+_IP_ON_REACH_SECONDS = 90
+_IP_ON_RETRY_DELAY = 3
+_IP_ON_SCREEN_SECONDS = 15
+_IP_ON_ART_CHANNEL_SECONDS = 20
+_IP_POLL_INTERVAL = 1
+_IP_SCREEN_POLL_TIMEOUT = 3
 
 # Use a dedicated directory for integration data to keep /config clean
 # This matches the structure we want for tokens as well
@@ -573,9 +593,12 @@ def is_tv_on(ip: str) -> bool:
     return result is True  # Convert None to False for backwards compatibility
 
 
-def tv_on(ip: str, mac_address: str) -> bool:
-    """Wake Frame TV via Wake-on-LAN.
-    
+def tv_on(ip: str, mac_address: Optional[str], power_control: str = POWER_CONTROL_REMOTE_KEYS) -> bool:
+    """Wake Frame TV by its power control method.
+
+    ``ip_control``: Samsung IP Control power-on (no MAC needed), see _tv_on_ip_control. The rest of this
+    docstring is the ``remote_keys`` method, Wake-on-LAN:
+
     Samsung Frame TVs require a two-stage Wake-on-LAN approach with significant delay:
     
     1. First WOL wakes the network interface, but the TV enters a "network awake, 
@@ -602,6 +625,8 @@ def tv_on(ip: str, mac_address: str) -> bool:
     If you need to ensure the TV is in art mode after waking, call set_art_mode()
     separately.
     """
+    if power_control == POWER_CONTROL_IP_CONTROL:
+        return _tv_on_ip_control(ip)
 
     # First WOL: Wake network interface
     _send_wake_on_lan(mac_address)
@@ -686,12 +711,19 @@ def set_art_mode(ip: str) -> None:
         raise FrameArtUploadError(f"Failed to switch {ip} to art mode: {err}") from err
 
 
-def tv_off(ip: str) -> None:
-    """Power off Frame TV screen while staying in art mode (hold KEY_POWER for 3 seconds).
-    
+def tv_off(ip: str, power_control: str = POWER_CONTROL_REMOTE_KEYS) -> None:
+    """Power off Frame TV screen by its power control method.
+
+    ``remote_keys``: hold KEY_POWER for 3 seconds, the screen off while staying in art mode.
+    ``ip_control``: Samsung IP Control power-off, a real standby (see _tv_off_ip_control).
+
     This operation is idempotent - if the TV screen is already off (or unreachable),
     the function returns successfully without attempting to send a power command.
     """
+    if power_control == POWER_CONTROL_IP_CONTROL:
+        _tv_off_ip_control(ip)
+        return
+
     # Check if screen is already off before attempting power command
     # is_screen_on() returns False if screen is off OR if TV is unreachable
     if not is_screen_on(ip, timeout=_SCREEN_CHECK_TIMEOUT):
@@ -743,6 +775,129 @@ def _send_wake_on_lan(mac_address: str) -> None:
             sock.sendto(payload, (_WOL_BROADCAST_IP, _WOL_BROADCAST_PORT))
     except OSError as err:
         raise FrameArtConnectionError(f"Failed to send Wake-on-LAN packet to {mac_address}: {err}") from err
+
+
+# --- IP Control power (power_control "ip_control"; docs/POWER_CONTROL.md) ---------------------------
+
+
+def pair_ip_control(ip: str, timeout: float = IP_CONTROL_PAIR_TIMEOUT) -> None:
+    """Pair with the TV's IP Control and keep its token beside the WebSocket token.
+
+    Blocks until someone accepts the prompt on the TV (which has to be out of Art Mode) or the timeout
+    passes. Raises an IPControlError subclass; IPControlTransportError on a timeout or no answer.
+    """
+    token = IPControlClient(ip).pair(timeout=timeout)
+    save_ip_control_token(ip, token)
+    _LOGGER.info("IP Control paired for %s", ip)
+
+
+def check_ip_control(ip: str) -> str:
+    """Read the TV's power state with its stored IP Control token: ``powerOn`` or ``powerOff``.
+
+    Raises IPControlAuthError when no token is stored or the TV rejects it, IPControlTransportError
+    when IP Control does not answer, IPControlUnavailableError when the TV refuses the read just now.
+    """
+    token = read_ip_control_token(ip)
+    if not token:
+        raise IPControlAuthError("IP Control is not paired")
+    return IPControlClient(ip, token).power_state()
+
+
+def _ip_control_client(ip: str) -> IPControlClient:
+    token = read_ip_control_token(ip)
+    if not token:
+        raise FrameArtConnectionError(
+            f"TV {ip} uses IP Control power but is not paired for it: pair it in the integration's "
+            "Configure > Edit a TV (power control: Samsung IP Control)"
+        )
+    return IPControlClient(ip, token)
+
+
+def _ip_control_failure(ip: str, action: str, err: IPControlError) -> FrameArtConnectionError:
+    if isinstance(err, IPControlAuthError):
+        return FrameArtConnectionError(
+            f"TV {ip} rejected its IP Control key ({action}): pair it again in Configure > Edit a TV"
+        )
+    if isinstance(err, IPControlTransportError):
+        return FrameArtConnectionError(
+            f"IP Control on TV {ip} did not answer ({action}): is the TV on the network, with IP Remote "
+            "on in its Expert Settings?"
+        )
+    return FrameArtConnectionError(f"IP Control {action} failed on TV {ip}: {err}")
+
+
+def _wait_until(check: Any, seconds: float, interval: float = _IP_POLL_INTERVAL) -> bool:
+    """Poll ``check`` until it returns True or ``seconds`` pass."""
+    deadline = time.monotonic() + seconds
+    while True:
+        if check():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
+
+
+def _tv_off_ip_control(ip: str) -> None:
+    """A real standby over IP Control, from Art Mode or TV mode.
+
+    Idempotent like the remote-keys path: a TV whose REST power state is already off (or that does not
+    answer) is left alone. A failure to send raises FrameArtConnectionError with what to check.
+    """
+    if not is_screen_on(ip, timeout=_SCREEN_CHECK_TIMEOUT):
+        _LOGGER.info("TV %s screen is already off or unreachable, skipping power command", ip)
+        return
+
+    client = _ip_control_client(ip)
+    try:
+        client.power_off()
+    except IPControlError as err:
+        raise _ip_control_failure(ip, "power off", err) from err
+
+    if _wait_until(lambda: not is_screen_on(ip, timeout=_IP_SCREEN_POLL_TIMEOUT), _IP_OFF_CONFIRM_SECONDS):
+        _LOGGER.info("TV %s is in standby (IP Control power off)", ip)
+    else:
+        _LOGGER.warning(
+            "TV %s accepted the IP Control power off but still reports its screen on after %s s",
+            ip, _IP_OFF_CONFIRM_SECONDS,
+        )
+
+
+def _tv_on_ip_control(ip: str) -> bool:
+    """Power on over IP Control, then wait until the TV can take an Art Mode command.
+
+    The TV comes back in the mode it was switched off in (Art Mode or TV mode), so callers follow this
+    with set_art_mode() as they do after Wake-on-LAN. Right after a real off the TV can refuse every
+    port for a while, so the power-on is retried for up to _IP_ON_REACH_SECONDS.
+    """
+    if is_screen_on(ip, timeout=_SCREEN_CHECK_TIMEOUT):
+        _LOGGER.info("TV %s screen is already on, skipping power command", ip)
+        return True
+
+    client = _ip_control_client(ip)
+    deadline = time.monotonic() + _IP_ON_REACH_SECONDS
+    while True:
+        try:
+            client.power_on()
+            break
+        except IPControlAuthError as err:
+            raise _ip_control_failure(ip, "power on", err) from err
+        except IPControlError as err:  # no answer yet, or refused in a transitional state
+            if time.monotonic() >= deadline:
+                raise _ip_control_failure(ip, "power on", err) from err
+            _LOGGER.debug("IP Control on %s not ready (%s), retrying", ip, err)
+            time.sleep(_IP_ON_RETRY_DELAY)
+    _LOGGER.info("IP Control power on sent to TV %s", ip)
+
+    if not _wait_until(lambda: is_screen_on(ip, timeout=_IP_SCREEN_POLL_TIMEOUT), _IP_ON_SCREEN_SECONDS):
+        raise FrameArtConnectionError(
+            f"TV {ip} accepted the IP Control power on but its screen did not come on within "
+            f"{_IP_ON_SCREEN_SECONDS} s"
+        )
+    if not _wait_until(lambda: is_art_mode_enabled(ip) is not None, _IP_ON_ART_CHANNEL_SECONDS):
+        _LOGGER.warning(
+            "TV %s is on but its art channel did not answer within %s s", ip, _IP_ON_ART_CHANNEL_SECONDS
+        )
+    return True
 
 
 _READBACK_STALE_NOTE = (
@@ -970,6 +1125,44 @@ def _token_path(ip: str) -> Path:
     return TOKEN_DIR / f"{safe_ip}.token"
 
 
+def _ip_control_token_path(ip: str) -> Path:
+    """The TV's IP Control token, beside its WebSocket token and named the same way."""
+    TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+    safe_ip = re.sub(r"[^A-Za-z0-9]+", "_", ip)
+    return TOKEN_DIR / f"{safe_ip}.ipcontrol.token"
+
+
+def read_ip_control_token(ip: str) -> Optional[str]:
+    """The stored IP Control token for this TV, or None."""
+    path = _ip_control_token_path(ip)
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    except OSError as err:
+        _LOGGER.warning("Could not read the IP Control token for %s (%s)", ip, type(err).__name__)
+        return None
+    return token or None
+
+
+def has_ip_control_token(ip: str) -> bool:
+    return read_ip_control_token(ip) is not None
+
+
+def save_ip_control_token(ip: str, token: str) -> None:
+    """Write the token atomically, readable by its owner only."""
+    path = _ip_control_token_path(ip)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    os.replace(tmp, path)
+
+
 def _build_client(ip: str, token_path: Path, timeout: Optional[float] = None) -> SamsungTVWS:
     try:
         return SamsungTVWS(
@@ -1028,7 +1221,7 @@ def _set_brightness_value(art: Any, brightness: int) -> None:
 
 
 def delete_token(ip: str) -> None:
-    """Delete the token file for the given IP address."""
+    """Delete the token files (WebSocket, and IP Control if paired) for the given IP address."""
     token_path = _token_path(ip)
     if token_path.exists():
         try:
@@ -1038,6 +1231,14 @@ def delete_token(ip: str) -> None:
             raise FrameArtError(f"Failed to delete token file for {ip}: {err}") from err
     else:
         _LOGGER.info("No token file found for %s", ip)
+
+    ip_token_path = _ip_control_token_path(ip)
+    if ip_token_path.exists():
+        try:
+            ip_token_path.unlink()
+            _LOGGER.info("Deleted IP Control token for %s", ip)
+        except OSError as err:
+            raise FrameArtError(f"Failed to delete the IP Control token for {ip}: {err}") from err
 
 
 def _upload_chunked(

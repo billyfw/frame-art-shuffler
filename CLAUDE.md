@@ -45,6 +45,18 @@ tags work as for a TV (no include tags = every picture; the owner, 2026-10-04). 
 on 2026-10-03. Design and what did not change: `docs/TABLET_TARGETS.md`. the second house (ha-lau) is the
 first house to run it (house2-tablets `docs/frame-art-plan.md`).
 
+## Power control per TV (0.5.0, 2026-10-25)
+
+Each TV target carries an explicit `power_control` (`targets.power_control`, default `remote_keys`), chosen in the
+options flow and never inferred from a model or a token file: `remote_keys` is the old path (3 s `KEY_POWER` hold,
+two Wake-on-LAN packets, unchanged), `ip_control` is Samsung IP Control over HTTPS port 1516 (`ip_control.py`), a
+real standby and power-on, for Frames that ignore the hold (2024 on: the hold flips Art Mode and TV mode). Every
+power call site passes the TV's method to `tv_on`/`tv_off`; pairing is the options flow's `ip_control` steps, and
+the key sits beside the WebSocket token as `<address>.ipcontrol.token`. The TV needs IP Remote and Power On with
+Mobile on, and Access Notification Off (on Always On it re-asks to allow the WebSocket after every real off).
+Design, bench results and gaps: `docs/POWER_CONTROL.md`; `tests/test_ip_control.py`, `tests/test_power_control.py`,
+`tests/test_power_control_flow.py`.
+
 ## Commands
 
 ### Testing
@@ -140,6 +152,7 @@ Feature design docs in `/docs/`:
 - `TAG_WEIGHTS_FEATURE.md` - Tag weighting algorithm
 - `SHUFFLE_FEATURE.md` - Shuffle mechanics
 - `TV_STATES.md` - Samsung Frame TV state machine
+- `POWER_CONTROL.md` - Per-TV power control: remote keys or Samsung IP Control (0.5.0)
 - `MATTE_BEHAVIOR.md` - Matte upload workarounds
 
 ## SSH Access to Home Assistant

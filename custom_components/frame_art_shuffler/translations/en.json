@@ -21,7 +21,12 @@
       "invalid_retention": "Retention must be between 1 and 12 months.",
       "invalid_flush": "Flush interval must be between 1 and 60 minutes.",
       "showing_entity_required": "Choose the entity that is on while the tablet shows art.",
-      "name_required": "A name is required."
+      "name_required": "A name is required.",
+      "ip_control_unreachable": "IP Control did not answer. Check that the TV is on the network with IP Remote and Power On with Mobile on in its Expert Settings, then submit again.",
+      "ip_control_timeout": "No pairing within two minutes: the prompt was not accepted, or the TV did not show it (it has to be out of Art Mode). Submit to try again.",
+      "ip_control_refused": "The TV refused to pair just now. Take it out of Art Mode (press the remote's power button once) and submit again.",
+      "ip_control_failed": "IP Control answered something unexpected (see the log). Submit to try again.",
+      "pairing_failed": "Pairing with the TV failed. Check that it is on and on the network, then try again."
     },
     "step": {
       "add_tv": {
@@ -42,7 +47,11 @@
           "min_brightness": "Auto-Bright Min Level (1-10)",
           "max_brightness": "Auto-Bright Max Level (1-10)",
           "enable_motion_control": "Enable Auto Motion (TV on/off)",
-          "motion_off_delay": "Auto-Motion Off Delay (minutes)"
+          "motion_off_delay": "Auto-Motion Off Delay (minutes)",
+          "power_control": "Power control"
+        },
+        "data_description": {
+          "power_control": "How the shuffler switches this TV's screen off and on. Remote keys + Wake-on-LAN: holds the remote's power key, which older Frames treat as an Art Mode screen sleep, and wakes the TV with Wake-on-LAN. Frames from 2024 on ignore that hold and flip between Art Mode and TV mode instead: choose Samsung IP Control, a real standby and power-on over the TV's IP Control channel (port 1516). It needs Power On with Mobile and IP Remote on in the TV's Settings > All Settings > Connections > Network > Expert Settings, and pairs once with a prompt on the TV."
         }
       },
       "edit_tv": {
@@ -63,7 +72,11 @@
           "max_brightness": "Auto-Bright Max Level (1-10)",
           "enable_motion_control": "Enable Auto Motion (TV on/off)",
           "motion_off_delay": "Auto-Motion Off Delay (minutes)",
-          "re_pair": "Re-pair TV (force new token exchange)"
+          "re_pair": "Re-pair TV (force new token exchange)",
+          "power_control": "Power control"
+        },
+        "data_description": {
+          "power_control": "How the shuffler switches this TV's screen off and on. Remote keys + Wake-on-LAN: holds the remote's power key, which older Frames treat as an Art Mode screen sleep, and wakes the TV with Wake-on-LAN. Frames from 2024 on ignore that hold and flip between Art Mode and TV mode instead: choose Samsung IP Control, a real standby and power-on over the TV's IP Control channel (port 1516). It needs Power On with Mobile and IP Remote on in the TV's Settings > All Settings > Connections > Network > Expert Settings, and pairs once with a prompt on the TV."
         }
       },
       "logging_settings": {
@@ -117,7 +130,14 @@
           "shuffle_frequency_minutes": "New picture every (minutes)",
           "enable_auto_shuffle": "Auto-shuffle"
         }
+      },
+      "ip_control": {
+        "title": "Pair {tv_name} for Samsung IP Control",
+        "description": "One-time pairing for {tv_name} ({tv_host}).\n\n1. On the TV, Settings > All Settings > Connections > Network > Expert Settings: turn on Power On with Mobile and IP Remote.\n2. Settings > All Settings > Connections > Device Connection Manager > Access Notification: Off or First Time Only. On Always On the TV asks again to allow the shuffler after every real power-off, and nobody is there to answer.\n3. Take the TV out of Art Mode (press the remote's power button once) and stay at it.\n4. Submit, then accept the prompt on the TV. It waits up to two minutes."
       }
+    },
+    "progress": {
+      "ip_control_pair": "Waiting for the prompt on {tv_name} to be accepted (up to two minutes)."
     }
   },
   "entity": {

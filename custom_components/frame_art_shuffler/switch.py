@@ -16,8 +16,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .config_entry import get_tv_config, update_tv_config
-from .const import DOMAIN, CONF_ENABLE_AUTO_SHUFFLE
-from .targets import is_tablet, target_device_info
+from .const import DOMAIN, CONF_ENABLE_AUTO_SHUFFLE, POWER_CONTROL_IP_CONTROL
+from .targets import is_tablet, power_control, target_device_info
 from .frame_tv import tv_on, tv_off, set_art_mode, is_screen_on, FrameArtError
 from .activity import log_activity
 
@@ -141,16 +141,17 @@ class FrameArtPowerSwitch(SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the TV and switch to art mode."""
-        if not self._tv_ip or not self._tv_mac:
+        method = power_control(get_tv_config(self._entry, self._tv_id))
+        if not self._tv_ip or (not self._tv_mac and method != POWER_CONTROL_IP_CONTROL):
             _LOGGER.error(f"Cannot turn on {self._tv_name}: missing IP or MAC address in config")
             return
 
         try:
-            # First turn on the TV via Wake-on-LAN
-            await self._hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac)
-            _LOGGER.info(f"Sent Wake-on-LAN to {self._tv_name}, waiting for TV to be ready...")
+            # First turn on the TV by its power control method (Wake-on-LAN or IP Control)
+            await self._hass.async_add_executor_job(tv_on, self._tv_ip, self._tv_mac, method)
+            _LOGGER.info(f"Turned on {self._tv_name} ({method}), waiting for TV to be ready...")
             
-            # tv_on already includes the ~12 second wait for the TV to be ready
+            # tv_on already waits until the TV is ready (WoL: ~12 s; IP Control: until the art channel answers)
             # Now switch to art mode
             await self._hass.async_add_executor_job(set_art_mode, self._tv_ip)
             _LOGGER.info(f"Switched {self._tv_name} to art mode")
@@ -187,14 +188,15 @@ class FrameArtPowerSwitch(SwitchEntity):
             _LOGGER.error(f"Failed to turn on {self._tv_name}: {err}")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn off the TV screen (stays in art mode)."""
+        """Turn off the TV screen (remote keys: stays in art mode; IP Control: a real standby)."""
         if not self._tv_ip:
             _LOGGER.error(f"Cannot turn off {self._tv_name}: missing IP address in config")
             return
 
         try:
-            await self._hass.async_add_executor_job(tv_off, self._tv_ip)
-            _LOGGER.info(f"Turned off {self._tv_name} screen")
+            method = power_control(get_tv_config(self._entry, self._tv_id))
+            await self._hass.async_add_executor_job(tv_off, self._tv_ip, method)
+            _LOGGER.info(f"Turned off {self._tv_name} screen ({method})")
             
             # Optimistically update the status cache so UI doesn't flip back
             data = self._hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})

@@ -8,6 +8,10 @@ import logging
 import re
 import time
 
+# const.POWER_CONTROL_*: spelled out because this module also loads standalone (tests/test_flow_utils.py).
+POWER_CONTROL_REMOTE_KEYS = "remote_keys"
+POWER_CONTROL_IP_CONTROL = "ip_control"
+
 HOSTNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9-]{1,63})*$")
 
 _LOGGER = logging.getLogger(__name__)
@@ -54,12 +58,14 @@ def pair_tv(
     attempts: int = 2,
     timeout: float = 12.0,
     retry_delay: float = 4.0,
+    power_control: str = POWER_CONTROL_REMOTE_KEYS,
 ) -> bool:
     """Attempt to pair with a TV, returning True on success.
 
-    The helper can optionally wake the TV via Wake-on-LAN before attempting to
-    open the websocket pairing channel. It retries a limited number of times
-    so failures surface quickly in the UI.
+    The helper can optionally wake the TV (by its power control method: Wake-on-LAN,
+    or IP Control once paired for it) before attempting to open the websocket
+    pairing channel. It retries a limited number of times so failures surface
+    quickly in the UI.
     """
     _LOGGER.info("Attempting to pair with %s. Token path: %s", host, token_path)
 
@@ -69,7 +75,7 @@ def pair_tv(
         _LOGGER.debug("Unable to import samsungtvws for pairing: %s", err)
         return False
 
-    if wake and mac:
+    if wake and (mac or power_control == POWER_CONTROL_IP_CONTROL):
         # Check if TV is already reachable before waking
         is_reachable = False
         try:
@@ -87,7 +93,7 @@ def pair_tv(
                 _LOGGER.debug("Unable to import wake helper for %s: %s", host, err)
             else:
                 try:
-                    tv_on(host, mac)
+                    tv_on(host, mac, power_control)
                 except Exception as err:  # pragma: no cover - best effort wake
                     _LOGGER.debug("Wake-on-LAN for %s failed: %s", host, err)
 

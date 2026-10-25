@@ -16,7 +16,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .const import CONF_KIND, DOMAIN, KIND_TABLET, KIND_TV
+from .const import (
+    CONF_KIND,
+    CONF_POWER_CONTROL,
+    DEFAULT_POWER_CONTROL,
+    DOMAIN,
+    KIND_TABLET,
+    KIND_TV,
+    POWER_CONTROLS,
+)
 
 
 def target_kind(tv_config: dict[str, Any] | None) -> str:
@@ -28,6 +36,18 @@ def target_kind(tv_config: dict[str, Any] | None) -> str:
 def is_tablet(tv_config: dict[str, Any] | None) -> bool:
     """True for a wall tablet target."""
     return target_kind(tv_config) == KIND_TABLET
+
+
+def power_control(tv_config: dict[str, Any] | None) -> str | None:
+    """How the shuffler switches this target's screen off and on (docs/POWER_CONTROL.md).
+
+    ``remote_keys`` (the default, and every TV set up before 0.5.0) or ``ip_control``, as chosen for the
+    TV in the options flow. None for a wall tablet: it is never contacted, its screen is Home Assistant's.
+    """
+    if is_tablet(tv_config):
+        return None
+    method = (tv_config or {}).get(CONF_POWER_CONTROL) or DEFAULT_POWER_CONTROL
+    return method if method in POWER_CONTROLS else DEFAULT_POWER_CONTROL
 
 
 def target_device_info(entry: Any, tv_id: str, name: str) -> Any:
