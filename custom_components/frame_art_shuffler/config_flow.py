@@ -67,6 +67,11 @@ from .metadata import (
     normalize_mac,
 )
 
+# Sensors that can wake a TV and keep it on: a motion sensor pulses on with each movement, an occupancy or
+# presence sensor (mmWave, a ceiling occupancy sensor) stays on while someone is in the room. Every one
+# of them reads on while the room is in use, which is all the motion control reads.
+MOTION_SENSOR_CLASSES = ["motion", "occupancy", "presence"]
+
 CONF_SKIP_PAIRING = "skip_pairing"
 CONF_REPAIR = "re_pair"
 
@@ -616,7 +621,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=current_config.get("shuffle_frequency_minutes", 30)): vol.Coerce(int),
                 vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=current_config.get("enable_auto_shuffle", False)): bool,
                 vol.Optional(CONF_MOTION_SENSORS, default=current_config.get("motion_sensors", [])): EntitySelector(
-                    EntitySelectorConfig(domain="binary_sensor", device_class="motion", multiple=True)
+                    EntitySelectorConfig(domain="binary_sensor", device_class=MOTION_SENSOR_CLASSES, multiple=True)
                 ),
                 # No default when none is set: an EntitySelector rejects None ("Entity None is neither a valid entity ID")
                 vol.Optional(CONF_LIGHT_SENSOR, default=current_config.get("light_sensor") or vol.UNDEFINED): EntitySelector(
@@ -763,7 +768,7 @@ class FrameArtOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(CONF_SHUFFLE_FREQUENCY, default=preserved_input.get(CONF_SHUFFLE_FREQUENCY, 30)): vol.Coerce(int),
                 vol.Optional(CONF_ENABLE_AUTO_SHUFFLE, default=preserved_input.get(CONF_ENABLE_AUTO_SHUFFLE, False)): bool,
                 vol.Optional(CONF_MOTION_SENSORS, default=preserved_input.get(CONF_MOTION_SENSORS, [])): EntitySelector(
-                    EntitySelectorConfig(domain="binary_sensor", device_class="motion", multiple=True)
+                    EntitySelectorConfig(domain="binary_sensor", device_class=MOTION_SENSOR_CLASSES, multiple=True)
                 ),
                 vol.Optional(CONF_LIGHT_SENSOR, default=preserved_input.get(CONF_LIGHT_SENSOR) or vol.UNDEFINED): EntitySelector(
                     EntitySelectorConfig(domain="sensor")

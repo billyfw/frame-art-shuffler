@@ -57,6 +57,16 @@ Mobile on, and Access Notification Off (on Always On it re-asks to allow the Web
 Design, bench results and gaps: `docs/POWER_CONTROL.md`; `tests/test_ip_control.py`, `tests/test_power_control.py`,
 `tests/test_power_control_flow.py`.
 
+## Presence sensors and motion control (0.6.0, 2026-10-27)
+
+Motion control's sensors may be `occupancy` or `presence` binary sensors as well as `motion` (the forms'
+`MOTION_SENSOR_CLASSES`), and the screen stays on while any of them reads on: the off delay counts from the moment
+every sensor reads clear (`_sensor_in_use`; the off callback starts over while one reads on, and a clear restarts a
+pending countdown). Before, the countdown ran from each turn to on, so an occupancy sensor holding on (an mmWave
+radar, someone sitting still) had the screen turned off one delay after they sat down, and the forms offered no
+occupancy sensor at all. Unloading the entry now cancels pending countdowns (after a reload the old one fired
+once). Design and gaps: `docs/MOTION_CONTROL.md`; tests `tests/test_motion_presence.py`.
+
 ## Commands
 
 ### Testing
@@ -153,6 +163,7 @@ Feature design docs in `/docs/`:
 - `SHUFFLE_FEATURE.md` - Shuffle mechanics
 - `TV_STATES.md` - Samsung Frame TV state machine
 - `POWER_CONTROL.md` - Per-TV power control: remote keys or Samsung IP Control (0.5.0)
+- `MOTION_CONTROL.md` - Motion control: wake, hold while a sensor reads on, off delay from the clear (0.6.0)
 - `MATTE_BEHAVIOR.md` - Matte upload workarounds
 
 ## SSH Access to Home Assistant

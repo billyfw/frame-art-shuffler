@@ -39,7 +39,7 @@
           "exclude_tags": "Image tags to exclude [spaces ok] (e.g. gore, landscape,lions)",
           "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
           "skip_pairing": "Skip pairing TV (will require prompt/token exchange later)",
-          "motion_sensors": "Motion Sensors (optional)",
+          "motion_sensors": "Motion or presence sensors (optional)",
           "light_sensor": "Light Sensor (optional)",
           "enable_dynamic_brightness": "Enable Auto Brightness",
           "min_lux": "Auto-Bright Min Lux (darkest room)",
@@ -51,7 +51,9 @@
           "power_control": "Power control"
         },
         "data_description": {
-          "power_control": "How the shuffler switches this TV's screen off and on. Remote keys + Wake-on-LAN: holds the remote's power key, which older Frames treat as an Art Mode screen sleep, and wakes the TV with Wake-on-LAN. Frames from 2024 on ignore that hold and flip between Art Mode and TV mode instead: choose Samsung IP Control, a real standby and power-on over the TV's IP Control channel (port 1516). It needs Power On with Mobile and IP Remote on in the TV's Settings > All Settings > Connections > Network > Expert Settings, and pairs once with a prompt on the TV."
+          "power_control": "How the shuffler switches this TV's screen off and on. Remote keys + Wake-on-LAN: holds the remote's power key, which older Frames treat as an Art Mode screen sleep, and wakes the TV with Wake-on-LAN. Frames from 2024 on ignore that hold and flip between Art Mode and TV mode instead: choose Samsung IP Control, a real standby and power-on over the TV's IP Control channel (port 1516). It needs Power On with Mobile and IP Remote on in the TV's Settings > All Settings > Connections > Network > Expert Settings, and pairs once with a prompt on the TV.",
+          "motion_sensors": "Any of these reading on wakes the screen and keeps it on. A motion sensor pulses on with each movement; an occupancy or presence sensor (mmWave, a ceiling occupancy sensor) stays on while someone is in the room, even sitting still, and the screen stays on with it.",
+          "motion_off_delay": "Minutes after every sensor above reads clear before the screen turns off."
         }
       },
       "edit_tv": {
@@ -63,7 +65,7 @@
           "tags": "Image tags to include [spaces ok] (e.g. family, abc,cars ,xyz)",
           "exclude_tags": "Image tags to exclude [spaces ok] (e.g. gore, landscape,lions)",
           "shuffle_frequency_minutes": "Shuffle Frequency (minutes)",
-          "motion_sensors": "Motion Sensors (optional)",
+          "motion_sensors": "Motion or presence sensors (optional)",
           "light_sensor": "Light Sensor (optional)",
           "enable_dynamic_brightness": "Enable Auto Brightness",
           "min_lux": "Auto-Bright Min Lux (darkest room)",
@@ -76,7 +78,9 @@
           "power_control": "Power control"
         },
         "data_description": {
-          "power_control": "How the shuffler switches this TV's screen off and on. Remote keys + Wake-on-LAN: holds the remote's power key, which older Frames treat as an Art Mode screen sleep, and wakes the TV with Wake-on-LAN. Frames from 2024 on ignore that hold and flip between Art Mode and TV mode instead: choose Samsung IP Control, a real standby and power-on over the TV's IP Control channel (port 1516). It needs Power On with Mobile and IP Remote on in the TV's Settings > All Settings > Connections > Network > Expert Settings, and pairs once with a prompt on the TV."
+          "power_control": "How the shuffler switches this TV's screen off and on. Remote keys + Wake-on-LAN: holds the remote's power key, which older Frames treat as an Art Mode screen sleep, and wakes the TV with Wake-on-LAN. Frames from 2024 on ignore that hold and flip between Art Mode and TV mode instead: choose Samsung IP Control, a real standby and power-on over the TV's IP Control channel (port 1516). It needs Power On with Mobile and IP Remote on in the TV's Settings > All Settings > Connections > Network > Expert Settings, and pairs once with a prompt on the TV.",
+          "motion_sensors": "Any of these reading on wakes the screen and keeps it on. A motion sensor pulses on with each movement; an occupancy or presence sensor (mmWave, a ceiling occupancy sensor) stays on while someone is in the room, even sitting still, and the screen stays on with it.",
+          "motion_off_delay": "Minutes after every sensor above reads clear before the screen turns off."
         }
       },
       "logging_settings": {

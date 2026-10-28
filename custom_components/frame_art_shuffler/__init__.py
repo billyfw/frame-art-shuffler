@@ -2061,6 +2061,19 @@ if _HA_AVAILABLE:
                 return sensor_id.split(".", 1)[1]
             return sensor_id
 
+        def _sensor_in_use(tv_config: dict) -> str | None:
+            """The first of the TV's motion sensors that reads on, or None when every one reads clear.
+
+            A motion sensor reads on for a moment after each movement; an occupancy or presence sensor
+            (mmWave, a ceiling occupancy sensor) reads on for as long as someone is in the room, sitting
+            still included. Either way, on means the room is in use.
+            """
+            for sensor_id in tv_config.get("motion_sensors", []):
+                state = hass.states.get(sensor_id)
+                if state is not None and state.state == "on":
+                    return sensor_id
+            return None
+
         def cancel_motion_off_timer(tv_id: str) -> None:
             """Cancel the motion off timer for a specific TV."""
             _LOGGER.debug(f"Auto motion: Cancelling off timer for {tv_id}")
@@ -2135,6 +2148,15 @@ if _HA_AVAILABLE:
                     return
 
                 tv_name = tv_config.get("name", tv_id)
+
+                # The room still in use: an occupancy sensor holds on while someone sits still, so
+                # no off; the countdown starts over, and the sensor clearing restarts it from then.
+                in_use = _sensor_in_use(tv_config)
+                if in_use:
+                    _LOGGER.debug("Auto motion: %s still in use (%s reads on), off deferred", tv_name, in_use)
+                    start_motion_off_timer(tv_id)
+                    return
+
                 ip = tv_config.get("ip")
                 if not ip:
                     _LOGGER.warning(f"Auto motion: No IP for {tv_name}")
@@ -2358,12 +2380,31 @@ if _HA_AVAILABLE:
                 if not new_state:
                     return
 
-                # Only trigger on motion detected (state = "on")
-                # Any sensor in the list reporting "on" will wake the TV (OR logic)
+                # Any sensor in the list reporting "on" wakes the TV (OR logic)
                 if new_state.state == "on":
                     sensor_id = new_state.entity_id
                     _LOGGER.debug(f"Auto motion: Motion detected for {tv_name} (sensor: {sensor_id})")
                     hass.async_create_task(async_handle_motion(tv_id, tv_config, sensor_id))
+                    return
+
+                # A sensor clearing: once every sensor reads clear, the off delay counts from now. A
+                # pending countdown is restarted (an occupancy sensor clears when the room empties,
+                # long after the "on" that started it); with none pending the screen is off or in TV
+                # mode, and nothing is started.
+                old_state = event.data.get("old_state")
+                if old_state is None or old_state.state != "on":
+                    return
+                current_config = list_tv_configs(entry).get(tv_id, tv_config)
+                if _sensor_in_use(current_config) is not None or tv_id not in motion_off_times:
+                    return
+                cleared_at = datetime.now(timezone.utc).isoformat()
+                motion_cache = hass.data[DOMAIN][entry.entry_id].setdefault("motion_cache", {})
+                motion_cache[tv_id] = cleared_at
+                motion_cache[f"{tv_id}_last_sensor"] = new_state.entity_id
+                motion_cache[f"{tv_id}_last_sensor_time"] = cleared_at
+                async_dispatcher_send(hass, f"{DOMAIN}_motion_detected_{entry.entry_id}_{tv_id}")
+                _LOGGER.debug(f"Auto motion: {tv_name} clear ({new_state.entity_id}), off delay from now")
+                start_motion_off_timer(tv_id)
 
             # Subscribe to state changes for all configured motion sensors
             from homeassistant.helpers.event import async_track_state_change_event
@@ -2401,6 +2442,15 @@ if _HA_AVAILABLE:
         hass.data[DOMAIN][entry.entry_id]["stop_motion_listener"] = stop_motion_listener
         hass.data[DOMAIN][entry.entry_id]["start_motion_off_timer"] = start_motion_off_timer
         hass.data[DOMAIN][entry.entry_id]["cancel_motion_off_timer"] = cancel_motion_off_timer
+
+        @callback
+        def _cancel_motion_off_timers_on_unload() -> None:
+            """A reload or unload ends this setup's countdowns (the next setup starts its own); left
+            running, an old countdown fired once after a reload and could darken a TV just woken."""
+            for tv_id in list(motion_off_timers):
+                motion_off_timers.pop(tv_id)()
+
+        entry.async_on_unload(_cancel_motion_off_timers_on_unload)
 
         # Start motion listeners for all TVs that have motion control enabled
         tv_configs = list_tv_configs(entry)
