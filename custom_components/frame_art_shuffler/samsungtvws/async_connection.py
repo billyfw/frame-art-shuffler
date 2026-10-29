@@ -52,7 +52,7 @@ class SamsungTVWSAsyncConnection(connection.SamsungTVWSBaseConnection):
 
         url = self._format_websocket_url(self.endpoint)
 
-        _LOGGING.debug("WS url %s", url)
+        _LOGGING.debug("WS url %s", exceptions.redact_tokens(url))
         connect_kwargs: Dict[str, Any] = {}
         if self._is_ssl_connection():
             connect_kwargs["ssl"] = get_ssl_context()

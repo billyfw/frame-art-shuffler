@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import socket
+import threading
 import time
 import random
 import uuid
@@ -95,6 +96,16 @@ _IP_ON_SCREEN_SECONDS = 15
 _IP_ON_ART_CHANNEL_SECONDS = 20
 _IP_POLL_INTERVAL = 1
 _IP_SCREEN_POLL_TIMEOUT = 3
+# One art-channel session per TV at a time (_FrameTVSession takes the TV's lock). Of two sessions opened
+# in the same second on the 2026 Frame, one still in its handshake receives the TV's
+# ms.channel.clientConnect notice about the other where samsungtvws waits for ms.channel.ready, and
+# fails. The 10-minute brightness timer and the 15-minute shuffle timer start together and met every
+# 30 minutes (the second house Great Room, 2026-10-28 and 29: four failed shuffles, brightness sets or
+# art-mode checks in 16 hours). A session still waiting after this long fails like an unreachable TV,
+# and its caller's retry takes over.
+_SESSION_WAIT_SECONDS = 180
+_session_locks: dict[str, threading.RLock] = {}
+_session_locks_guard = threading.Lock()
 
 # Use a dedicated directory for integration data to keep /config clean
 # This matches the structure we want for tokens as well
@@ -152,11 +163,21 @@ def set_token_directory(path: Path) -> None:
     _LOGGER.info("Token directory set to: %s", TOKEN_DIR)
 
 
+def _session_lock(ip: str) -> threading.RLock:
+    """The lock an art-channel session to this TV holds while it is open (see _SESSION_WAIT_SECONDS)."""
+    with _session_locks_guard:
+        return _session_locks.setdefault(ip, threading.RLock())
+
+
 class _FrameTVSession:
-    """Context manager that mirrors the helper scripts connection flow."""
+    """Context manager that mirrors the helper scripts connection flow.
+
+    Entering it waits for any other session to the same TV to close first (_SESSION_WAIT_SECONDS).
+    """
 
     def __init__(self, ip: str, timeout: Optional[float] = None) -> None:
         self.ip = ip
+        self._lock: Optional[threading.RLock] = None
         self.token_path = _token_path(ip)
         _LOGGER.debug("Using token path: %s (exists: %s)", self.token_path, self.token_path.exists())
         self._remote = _build_client(ip, self.token_path, timeout=timeout)
@@ -187,10 +208,22 @@ class _FrameTVSession:
                 pass
 
     def __enter__(self) -> "_FrameTVSession":
+        lock = _session_lock(self.ip)
+        if not lock.acquire(timeout=_SESSION_WAIT_SECONDS):
+            self.close()
+            raise FrameArtConnectionError(
+                f"TV {self.ip} is busy: another session to it is still open after {_SESSION_WAIT_SECONDS} s"
+            )
+        self._lock = lock
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[override]
-        self.close()
+        try:
+            self.close()
+        finally:
+            lock, self._lock = self._lock, None
+            if lock is not None:
+                lock.release()
 
 
 def set_art_on_tv_deleteothers(

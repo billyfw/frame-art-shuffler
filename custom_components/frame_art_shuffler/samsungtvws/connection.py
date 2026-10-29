@@ -98,9 +98,9 @@ class SamsungTVWSBaseConnection:
             return self.token
 
     def _set_token(self, token: str) -> None:
-        _LOGGING.info("New token %s", token)
+        _LOGGING.info("New token received")
         if self.token_file is not None:
-            _LOGGING.debug("Save token to file: %s", token)
+            _LOGGING.debug("Save token to file %s", self.token_file)
             with open(self.token_file, "w") as token_file:
                 token_file.write(token)
         else:
@@ -109,7 +109,7 @@ class SamsungTVWSBaseConnection:
     def _check_for_token(self, response: Dict[str, Any]) -> None:
         token = response.get("data", {}).get("token")
         if token:
-            _LOGGING.debug("Got token %s", token)
+            _LOGGING.debug("Got token")
             self._set_token(token)
 
     def _websocket_event(self, event: str, response: Dict[str, Any]) -> None:
@@ -121,8 +121,8 @@ class SamsungTVWSBaseConnection:
                 _LOGGING.error(
                     "Your TV does not seem to support v2 API, please try v1 API"
                 )
-        else:
-            _LOGGING.debug("SamsungTVWS websocket event: %s", response)
+        elif _LOGGING.isEnabledFor(logging.DEBUG):
+            _LOGGING.debug("SamsungTVWS websocket event: %s", exceptions.redact_tokens(str(response)))
 
 
 class SamsungTVWSConnection(SamsungTVWSBaseConnection):
@@ -148,7 +148,7 @@ class SamsungTVWSConnection(SamsungTVWSBaseConnection):
         url = self._format_websocket_url(self.endpoint)
         sslopt = {"cert_reqs": ssl.CERT_NONE} if self._is_ssl_connection() else {}
 
-        _LOGGING.debug("WS url %s", url)
+        _LOGGING.debug("WS url %s", exceptions.redact_tokens(url))
         # Only for debug use!
         # websocket.enableTrace(True)
         connection = websocket.create_connection(

@@ -269,6 +269,25 @@ vendored `select_image` returns the TV's reply for this (`docs/VENDORING.md`). T
 `tests/test_frame_tv.py` (FakeArt, generated images). Not covered: other decode failures the maintained
 integration re-encodes for (CMYK, 16-bit, palette); none seen here, and a progressive JPEG displayed fine.
 
+### A shuffle, brightness set or art-mode check fails on the TV's clientConnect notice (2026 Frame, the second house Great Room, 2026-10-28)
+Symptoms: `Shuffle attempt 1/2 failed ... TV <ip> is unreachable (timeout): {'data': {'attributes': {'name':
+'RnJhbWVBcnRTaHVmZmxlcg==', ...}, ...}, 'event': 'ms.channel.clientConnect'}` (the name is this integration's, base64),
+or the same reply in `Brightness attempt 1/2 failed` or `Could not verify art mode status`, at the same minute every
+half hour; the retry a minute later usually works. Four in the first 16 hours with dynamic brightness on.
+
+Cause: two art-channel sessions to one TV opened in the same second. One still in its handshake receives the TV's
+notice that the other connected where samsungtvws waits for `ms.channel.ready`, and fails. The 10-minute brightness
+timer and the 15-minute shuffle timer are armed together at setup, so they meet every 30 minutes; at a reload the
+immediate brightness adjust met a `turn_on`'s art-mode check. One meeting also met the motion-off countdown: the off
+waited 30 s for the upload as designed, found the shuffle in its 60 s retry pause and went ahead, and the retry failed
+against the standby TV (nothing was cut mid-upload; `docs/MOTION_CONTROL.md`). The replies also carried the TV's
+pairing token into the log (the notice includes the connecting client's token).
+
+Fix (0.6.1): `_FrameTVSession` holds a per-TV lock while open (`_session_lock`; it waits up to `_SESSION_WAIT_SECONDS`,
+180, then fails as a connection error the callers retry), so uploads, brightness and art-mode checks take turns.
+`ConnectionFailure`'s text and the vendored library's log lines redact the token (`docs/VENDORING.md`). Tests:
+`tests/test_frame_tv.py`. Not covered: another app's session (the phone's SmartThings) opening in the same second.
+
 ### HA Logging — No log file on disk (since HA 2025.11)
 
 HA removed `home-assistant.log` for HAOS/Supervised installs.

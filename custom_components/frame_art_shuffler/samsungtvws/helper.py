@@ -26,7 +26,8 @@ def serialize_string(string: Union[str, bytes]) -> str:
 
 
 def process_api_response(response: Union[str, bytes]) -> Dict[str, Any]:
-    _LOGGING.debug("Processing API response: %s", response)
+    if _LOGGING.isEnabledFor(logging.DEBUG):
+        _LOGGING.debug("Processing API response: %s", exceptions.redact_tokens(str(response)))
     try:
         return json.loads(response)  # type:ignore[no-any-return]
     except json.JSONDecodeError as err:

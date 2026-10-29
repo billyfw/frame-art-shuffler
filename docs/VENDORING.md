@@ -26,3 +26,8 @@ Re-apply these after replacing the vendored copy:
 - `art.py` `SamsungTVArt.select_image` returns the TV's reply (`return self._send_art_request(...)`) instead
   of discarding it; `frame_tv._display_uploaded_art` reads the confirmation (event `select_image` or `image_selected`, the content id, `is_shown`) from it
   (2026-10-23, the second house Great Room incident in CLAUDE.md).
+- The TV's pairing token stays out of messages (0.6.1; CLAUDE.md, the clientConnect failure): `exceptions.py`
+  gains `redact_tokens` and `ConnectionFailure.__str__` returns its text through it (the error still carries the
+  TV's reply in `args`); `connection.py` logs "New token received", "Got token" and the token file's path
+  instead of the token, and the websocket event and the WS url through `redact_tokens`; `async_connection.py`
+  the WS url likewise; `helper.process_api_response` logs the response through it (only when debug is on).

@@ -43,6 +43,10 @@ new setup had just woken or was holding on. Since 0.6.0 unloading cancels them; 
 - A sensor stuck on keeps the screen lit until something else turns it off (a house rule, a person, the power
   switch); before 0.6.0 the countdown ended in an off regardless. An mmWave sensor can read a moving fan or
   curtain as presence: set its detection zone and height limits before listing it.
+- The off waits while an upload is in flight (30 s at a time, five minutes at most), but not through a shuffle's
+  60 s pause between its two attempts: an off that lands in the pause goes ahead, and the second attempt then
+  fails against the standby TV ("Shuffle failed ... unreachable"; harmless, nothing was mid-transfer; the second
+  house, 2026-10-28 17:41).
 - Presence of a pet counts like a person's. A house that wants no wake at night can switch Auto-Motion Enable off
   for the night from an automation (a runtime change, no reload).
 

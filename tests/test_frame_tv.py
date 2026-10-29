@@ -1,7 +1,13 @@
 """Tests for the post-wake screen verification in frame_tv."""
+import logging
+import threading
+import time
 from unittest.mock import patch
 
+import pytest
+
 from custom_components.frame_art_shuffler import frame_tv
+from custom_components.frame_art_shuffler.samsungtvws import connection, exceptions, helper
 
 
 def test_verify_screen_on_retries_then_succeeds():
@@ -232,3 +238,145 @@ def test_fit_to_panel_passes_unreadable_bytes_through(monkeypatch):
     monkeypatch.setattr(frame_tv, "_log_progress", lambda msg: None)
     payload, file_type = frame_tv._fit_to_panel(b"not an image", "JPEG")
     assert payload == b"not an image" and file_type == "JPEG"
+
+
+# --- One art-channel session per TV, and the TV's token kept out of messages (0.6.1) ---------------------
+
+
+class _FakeRemote:
+    """Stands in for SamsungTVWS and its art channel; nothing is contacted."""
+
+    def art(self):
+        return self
+
+    def open(self):
+        return None
+
+    def close(self):
+        return None
+
+
+def _offline_sessions(monkeypatch, tmp_path):
+    token = tmp_path / "token"
+    token.write_text("fake")
+    monkeypatch.setattr(frame_tv, "_token_path", lambda ip: token)
+    monkeypatch.setattr(frame_tv, "_build_client", lambda ip, token_path, timeout=None: _FakeRemote())
+    monkeypatch.setattr(frame_tv, "_SESSION_WAIT_SECONDS", 5)
+
+
+def test_sessions_to_one_tv_take_turns(monkeypatch, tmp_path):
+    """The brightness and shuffle timers firing in the same second: the second session opens only after the
+    first has closed. Two open at once failed on the 2026 Frame (the second got the first's clientConnect)."""
+    _offline_sessions(monkeypatch, tmp_path)
+    order: list[str] = []
+    first_open = threading.Event()
+    let_first_close = threading.Event()
+
+    def first():
+        with frame_tv._FrameTVSession("10.0.0.21"):
+            order.append("first opens")
+            first_open.set()
+            let_first_close.wait(5)
+            order.append("first closes")
+
+    def second():
+        first_open.wait(5)
+        with frame_tv._FrameTVSession("10.0.0.21"):
+            order.append("second opens")
+
+    threads = [threading.Thread(target=first), threading.Thread(target=second)]
+    for thread in threads:
+        thread.start()
+    first_open.wait(5)
+    time.sleep(0.2)  # the second session is waiting by now
+    assert order == ["first opens"]
+    let_first_close.set()
+    for thread in threads:
+        thread.join(5)
+    assert order == ["first opens", "first closes", "second opens"]
+
+
+def test_sessions_to_different_tvs_do_not_wait(monkeypatch, tmp_path):
+    _offline_sessions(monkeypatch, tmp_path)
+    opened = threading.Event()
+
+    def other_tv():
+        with frame_tv._FrameTVSession("10.0.0.23"):
+            opened.set()
+
+    with frame_tv._FrameTVSession("10.0.0.22"):
+        thread = threading.Thread(target=other_tv)
+        thread.start()
+        thread.join(5)
+        assert opened.is_set()
+
+
+def test_a_session_kept_waiting_fails_like_an_unreachable_tv(monkeypatch, tmp_path):
+    """A session held open past the wait makes the next one fail as a connection error, which every caller
+    already retries; the TV is free again once the long one closes."""
+    _offline_sessions(monkeypatch, tmp_path)
+    monkeypatch.setattr(frame_tv, "_SESSION_WAIT_SECONDS", 0.1)
+    outcomes: list[str] = []
+
+    def second():
+        try:
+            with frame_tv._FrameTVSession("10.0.0.24"):
+                outcomes.append("opened")
+        except frame_tv.FrameArtConnectionError as err:
+            outcomes.append(str(err))
+
+    with frame_tv._FrameTVSession("10.0.0.24"):
+        thread = threading.Thread(target=second)
+        thread.start()
+        thread.join(5)
+    assert len(outcomes) == 1 and "is busy" in outcomes[0]
+    with frame_tv._FrameTVSession("10.0.0.24"):
+        pass
+
+
+def test_a_session_whose_work_fails_still_frees_the_tv(monkeypatch, tmp_path):
+    _offline_sessions(monkeypatch, tmp_path)
+    with pytest.raises(RuntimeError):
+        with frame_tv._FrameTVSession("10.0.0.25"):
+            raise RuntimeError("the TV hung up")
+    opened = threading.Event()
+
+    def next_session():
+        with frame_tv._FrameTVSession("10.0.0.25"):
+            opened.set()
+
+    thread = threading.Thread(target=next_session)
+    thread.start()
+    thread.join(5)
+    assert opened.is_set()
+
+
+def test_a_connection_failure_never_shows_the_tvs_token():
+    """The failed shuffle's warning printed the TV's clientConnect notice with the token in it (2026-10-28)."""
+    notice = {
+        "data": {"attributes": {"name": "RnJhbWVBcnRTaHVmZmxlcg==", "token": "11112222"}, "connectTime": 1},
+        "event": "ms.channel.clientConnect",
+    }
+    err = exceptions.ConnectionFailure(notice)
+    assert "11112222" not in str(err) and "ms.channel.clientConnect" in str(err)
+    assert "11112222" not in f"TV is unreachable (timeout): {err}"
+    assert err.args[0] is notice
+    connect = exceptions.UnauthorizedError({"data": {"id": "x", "token": 11112222}, "event": "ms.channel.connect"})
+    assert "11112222" not in str(connect)
+
+
+def test_the_token_stays_out_of_the_librarys_log_and_still_works(caplog, tmp_path):
+    token_file = tmp_path / "token"
+    conn = connection.SamsungTVWSConnection(
+        "10.0.0.27", endpoint="samsung.remote.control", token_file=str(token_file), port=8002
+    )
+    caplog.set_level(logging.DEBUG)
+    conn._check_for_token({"data": {"token": "11112222"}, "event": "ms.channel.connect"})
+    conn._websocket_event(
+        "ms.channel.clientConnect", {"data": {"attributes": {"token": "11112222"}}, "event": "ms.channel.clientConnect"}
+    )
+    helper.process_api_response('{"data": {"token": "11112222"}, "event": "ms.channel.connect"}')
+    url = conn._format_websocket_url("samsung.remote.control")
+    assert "11112222" not in caplog.text and "<redacted>" in caplog.text
+    assert token_file.read_text() == "11112222" and url.endswith("token=11112222")
+    assert exceptions.redact_tokens(url).endswith("token=<redacted>")
