@@ -354,5 +354,10 @@ The house side has a matching phone alert in ha-config (`alert_if_officeframe_st
 - Single-instance integration (only one config entry allowed)
 - Token files stored in `tokens/` directory (gitignored, device-specific)
 - Services raise `ServiceValidationError` for user-visible errors
+- The central manager reads two of this integration's error texts as states and rewords them for its page
+  (ha-frame-art-manager `display_failure.js`, 2026-11-03): `frame_tv.py` "Art file not found" (the picture is not
+  in this house's library yet) and `__init__.py` "another upload is already in progress" (the TV is mid-upload).
+  Rewording either phrase needs a matching change there. The texts reach the manager over HA's WebSocket API;
+  HA's REST service endpoint answers any raised error with a bare 500 and no message.
 - Custom exceptions: `FrameArtError` → `FrameArtConnectionError`, `FrameArtUploadError`
 - Dashboard auto-regenerates when TVs change; requires `layout-card` frontend component
