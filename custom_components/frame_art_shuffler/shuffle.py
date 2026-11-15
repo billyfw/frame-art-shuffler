@@ -106,6 +106,73 @@ def _build_tag_pools(
     return tag_pools
 
 
+def _shown_this_round(history: list[str], pool: set[str]) -> set[str]:
+    """Pictures of ``pool`` already shown in the current round of an override.
+
+    ``history`` is every picture shuffled onto this screen since the override began,
+    oldest first. A round ends when every picture in the pool has shown once, and the
+    next round starts empty. Pictures outside the pool are ignored; one added to the
+    pool during a round has simply not shown yet.
+    """
+    shown: set[str] = set()
+    for filename in history:
+        if filename in pool:
+            shown.add(filename)
+            if len(shown) == len(pool):
+                shown = set()
+    return shown
+
+
+def _choose(
+    candidates: list[dict[str, Any]],
+    pool: set[str],
+    recent_images: set[str] | None,
+    round_history: list[str] | None,
+    avoid: set[str] | None,
+) -> tuple[dict[str, Any], int, bool, int | None]:
+    """Pick one of ``candidates`` (the pool without the picture on screen).
+
+    Outside an override (``round_history`` is None) this is the recency preference:
+    a picture not in ``recent_images`` if there is one, else any candidate.
+
+    During an override the pool is shown in rounds: a picture shown in the current
+    round waits until every other picture in the pool has shown, and when a round
+    is complete the next one begins. Two softer preferences follow, each dropped if
+    it would leave nothing: not one of the pool's last ``len(pool) // 2`` showings
+    (so a round's first pictures are not its predecessor's last ones), and not a
+    picture another screen shows now (``avoid``).
+
+    Returns (selected, fresh_count, used_fallback, round_position): ``fresh_count``
+    counts the candidates preferred (not recent, or not yet shown this round);
+    ``used_fallback`` is True when none were (all recent, or a new round began
+    because only the picture on screen was left); ``round_position`` is the pick's
+    place in its round (1 = the round's first), None outside an override.
+    """
+    if round_history is None:
+        if recent_images:
+            fresh = [img for img in candidates if img["filename"] not in recent_images]
+        else:
+            fresh = []
+        if fresh:
+            return random.choice(fresh), len(fresh), False, None
+        return random.choice(candidates), 0, bool(recent_images), None
+
+    shown = _shown_this_round(round_history, pool)
+    fresh = [img for img in candidates if img["filename"] not in shown]
+    new_round = not fresh
+    if new_round:
+        fresh = candidates
+
+    spacing = len(pool) // 2
+    pool_history = [filename for filename in round_history if filename in pool]
+    last_shown = set(pool_history[-spacing:]) if spacing else set()
+    spaced = [img for img in fresh if img["filename"] not in last_shown] or fresh
+    apart = [img for img in spaced if img["filename"] not in (avoid or set())] or spaced
+
+    position = 1 if new_round else len(shown) + 1
+    return random.choice(apart), len(fresh), new_round, position
+
+
 def _select_random_image(
     metadata_path: Path,
     include_tags: list[str],
@@ -115,7 +182,9 @@ def _select_random_image(
     current_image: str | None,
     tv_name: str,
     recent_images: set[str] | None = None,
-) -> tuple[dict[str, Any] | None, int, str | None, int, bool]:
+    round_history: list[str] | None = None,
+    avoid: set[str] | None = None,
+) -> tuple[dict[str, Any] | None, int, str | None, int, bool, int, int | None]:
     """Select a random eligible image.
 
     Two modes based on weighting_type:
@@ -124,6 +193,11 @@ def _select_random_image(
 
     Recency preference: If recent_images is provided, prefers images not in that set.
     Falls back to full candidate pool if all candidates are recent.
+
+    Override rounds: If round_history is provided (the pictures shuffled onto this
+    screen since its tagset override began, oldest first), the chosen pool (the tag's,
+    or every eligible picture without tag weighting) is shown in rounds; see _choose.
+    recent_images is then ignored.
 
     Args:
         metadata_path: Path to metadata.json
@@ -134,14 +208,21 @@ def _select_random_image(
         current_image: Currently displayed image filename (to exclude)
         tv_name: TV name for logging
         recent_images: Set of filenames recently shown (for recency preference)
+        round_history: Pictures shown since the override began (override rounds)
+        avoid: Pictures other screens show now (override rounds only)
 
     Returns:
-        Tuple of (selected_image_dict, eligible_count, selected_tag_name, fresh_count, used_fallback)
+        Tuple of (selected_image_dict, eligible_count, selected_tag_name, fresh_count,
+        used_fallback, pool_size, round_position)
         - selected_image_dict: The chosen image, or None if no eligible images
         - eligible_count: Total number of eligible images
         - selected_tag_name: Only populated in "tag" weighting mode
-        - fresh_count: Number of non-recent candidates (0 if recency not applied)
-        - used_fallback: True if recency preference couldn't be applied (all recent)
+        - fresh_count: Number of non-recent candidates (0 if recency not applied);
+          during an override, the candidates not yet shown this round
+        - used_fallback: True if recency preference couldn't be applied (all recent);
+          during an override, True when a new round began early
+        - pool_size: Pictures in the pool the pick came from (the tag's pool in "tag" mode)
+        - round_position: The pick's place in its round, None outside an override
     """
     with open(metadata_path, "r", encoding="utf-8") as file:
         metadata = json.load(file)
@@ -149,7 +230,7 @@ def _select_random_image(
     images = metadata.get("images", {})
     if not images:
         _LOGGER.warning("No images found in metadata for %s", tv_name)
-        return None, 0, None, 0, False
+        return None, 0, None, 0, False, 0, None
 
     # Handle case where no include tags means "all images" (image-weighted flat selection)
     if not include_tags:
@@ -169,7 +250,7 @@ def _select_random_image(
                 include_tags,
                 exclude_tags,
             )
-            return None, 0, None, 0, False
+            return None, 0, None, 0, False, 0, None
 
         candidates = [img for img in eligible_images if img["filename"] != current_image]
         if not candidates:
@@ -180,23 +261,15 @@ def _select_random_image(
                     eligible_images[0]["filename"],
                     tv_name,
                 )
-                return None, eligible_count, None, 0, False
+                return None, eligible_count, None, 0, False, 0, None
             _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
-            return None, eligible_count, None, 0, False
+            return None, eligible_count, None, 0, False, 0, None
 
-        # Apply recency preference
-        if recent_images:
-            fresh_candidates = [img for img in candidates if img["filename"] not in recent_images]
-        else:
-            fresh_candidates = []
-
-        fresh_count = len(fresh_candidates)
-        if fresh_candidates:
-            selected = random.choice(fresh_candidates)
-            used_fallback = False
-        else:
-            selected = random.choice(candidates)
-            used_fallback = bool(recent_images)  # Only true fallback if recency was attempted
+        # Apply recency preference (or the override's rounds)
+        pool = {img["filename"] for img in eligible_images}
+        selected, fresh_count, used_fallback, round_position = _choose(
+            candidates, pool, recent_images, round_history, avoid
+        )
 
         _LOGGER.info(
             "%s selected for TV %s from %d eligible images (no tag filtering, %d fresh)",
@@ -205,7 +278,7 @@ def _select_random_image(
             eligible_count,
             fresh_count,
         )
-        return selected, eligible_count, None, fresh_count, used_fallback
+        return selected, eligible_count, None, fresh_count, used_fallback, len(pool), round_position
 
     # IMAGE-WEIGHTED MODE: All eligible images have equal probability
     if weighting_type == "image":
@@ -232,7 +305,7 @@ def _select_random_image(
                 include_tags,
                 exclude_tags,
             )
-            return None, 0, None, 0, False
+            return None, 0, None, 0, False, 0, None
 
         candidates = [img for img in eligible_images if img["filename"] != current_image]
         if not candidates:
@@ -243,23 +316,15 @@ def _select_random_image(
                     eligible_images[0]["filename"],
                     tv_name,
                 )
-                return None, eligible_count, None, 0, False
+                return None, eligible_count, None, 0, False, 0, None
             _LOGGER.warning("No candidate images for %s after removing current image", tv_name)
-            return None, eligible_count, None, 0, False
+            return None, eligible_count, None, 0, False, 0, None
 
-        # Apply recency preference
-        if recent_images:
-            fresh_candidates = [img for img in candidates if img["filename"] not in recent_images]
-        else:
-            fresh_candidates = []
-
-        fresh_count = len(fresh_candidates)
-        if fresh_candidates:
-            selected = random.choice(fresh_candidates)
-            used_fallback = False
-        else:
-            selected = random.choice(candidates)
-            used_fallback = bool(recent_images)  # Only true fallback if recency was attempted
+        # Apply recency preference (or the override's rounds)
+        pool = {img["filename"] for img in eligible_images}
+        selected, fresh_count, used_fallback, round_position = _choose(
+            candidates, pool, recent_images, round_history, avoid
+        )
 
         _LOGGER.info(
             "%s selected for TV %s from %d eligible images (image-weighted, %d fresh)",
@@ -268,7 +333,7 @@ def _select_random_image(
             eligible_count,
             fresh_count,
         )
-        return selected, eligible_count, None, fresh_count, used_fallback
+        return selected, eligible_count, None, fresh_count, used_fallback, len(pool), round_position
 
     # TAG-WEIGHTED MODE: Select tag first (by weight), then random image from that tag
     # Build per-tag pools
@@ -288,7 +353,7 @@ def _select_random_image(
             include_tags,
             exclude_tags,
         )
-        return None, 0, None, 0, False
+        return None, 0, None, 0, False, 0, None
 
     # Weighted tag selection with re-roll on empty
     remaining_tags = list(include_tags)  # Copy to avoid modifying original
@@ -343,23 +408,15 @@ def _select_random_image(
                 " No shuffle performed.",
                 tv_name,
             )
-            return None, eligible_count, None, 0, False
+            return None, eligible_count, None, 0, False, 0, None
         _LOGGER.warning("No candidate images for %s after weighted selection", tv_name)
-        return None, eligible_count, None, 0, False
+        return None, eligible_count, None, 0, False, 0, None
 
-    # Apply recency preference within the selected tag's candidates
-    if recent_images:
-        fresh_candidates = [img for img in candidates if img["filename"] not in recent_images]
-    else:
-        fresh_candidates = []
-
-    fresh_count = len(fresh_candidates)
-    if fresh_candidates:
-        selected = random.choice(fresh_candidates)
-        used_fallback = False
-    else:
-        selected = random.choice(candidates)
-        used_fallback = bool(recent_images)  # Only true fallback if recency was attempted
+    # Apply recency preference (or the override's rounds) within the selected tag's candidates
+    pool = {img["filename"] for img in tag_pools.get(selected_tag, [])}
+    selected, fresh_count, used_fallback, round_position = _choose(
+        candidates, pool, recent_images, round_history, avoid
+    )
 
     # Calculate percentage for logging
     total_weight = sum(tag_weights.get(t, 1.0) for t in include_tags)
@@ -374,7 +431,7 @@ def _select_random_image(
         eligible_count,
         fresh_count,
     )
-    return selected, eligible_count, selected_tag, fresh_count, used_fallback
+    return selected, eligible_count, selected_tag, fresh_count, used_fallback, len(pool), round_position
 
 
 async def async_shuffle_tv(
@@ -386,8 +443,14 @@ async def async_shuffle_tv(
     skip_if_screen_off: bool = False,
     status_callback: StatusCallback | None = None,
     recent_images: set[str] | None = None,
+    round_history: list[str] | None = None,
 ) -> bool:
-    """Shuffle a TV's artwork selection, enforcing the upload guard."""
+    """Shuffle a TV's artwork selection, enforcing the upload guard.
+
+    ``round_history`` (during a tagset override) is the list of pictures shuffled onto
+    this screen since the override began, oldest first; the pick then follows the
+    override's rounds (see ``_choose``) instead of the recency preference.
+    """
     def _notify(status: str, message: str) -> None:
         if status_callback:
             status_callback(status, message)
@@ -399,7 +462,7 @@ async def async_shuffle_tv(
     try:
         return await _async_shuffle_tv_inner(
             hass, entry, tv_id, tv_config, tv_name, reason, skip_if_screen_off, _notify,
-            recent_images,
+            recent_images, round_history,
         )
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.error("Shuffle failed for %s: %s", tv_name, err)
@@ -424,6 +487,7 @@ async def _async_shuffle_tv_inner(
     skip_if_screen_off: bool,
     _notify: Callable[[str, str], None],
     recent_images: set[str] | None = None,
+    round_history: list[str] | None = None,
 ) -> bool:
     """Inner implementation of shuffle - exceptions bubble up to caller."""
     if not tv_config:
@@ -469,7 +533,26 @@ async def _async_shuffle_tv_inner(
             _notify("skipped", message)
             return False
 
-    selected_image, matching_count, selected_tag, fresh_count, used_fallback = await hass.async_add_executor_job(
+    # During an override, the pictures the other screens show now (the rounds' last preference).
+    avoid: set[str] | None = None
+    if round_history is not None:
+        avoid = set()
+        for other_id, other_config in (entry.data.get("tvs") or {}).items():
+            if other_id == tv_id:
+                continue
+            other_image = shuffle_cache.get(other_id, {}).get("current_image") or other_config.get("current_image")
+            if other_image:
+                avoid.add(other_image)
+
+    (
+        selected_image,
+        matching_count,
+        selected_tag,
+        fresh_count,
+        used_fallback,
+        pool_size,
+        round_position,
+    ) = await hass.async_add_executor_job(
         _select_random_image,
         metadata_path,
         include_tags,
@@ -479,6 +562,8 @@ async def _async_shuffle_tv_inner(
         current_image,
         tv_name,
         recent_images,
+        round_history,
+        avoid,
     )
 
     if not selected_image:
@@ -521,8 +606,13 @@ async def _async_shuffle_tv_inner(
             "selected_tag": selected_tag,
         }
 
-        # Build activity message with recency and tag info
-        if selected_tag:
+        # Build activity message with recency (or round) and tag info
+        if round_position is not None:
+            tag_part = f"tag: {selected_tag}, " if selected_tag else ""
+            activity_msg = (
+                f"Shuffled to {image_filename} ({tag_part}{round_position} of {pool_size} this round)"
+            )
+        elif selected_tag:
             if used_fallback:
                 activity_msg = f"Shuffled to {image_filename} (tag: {selected_tag}, all in tag were recent)"
             elif fresh_count > 0:

@@ -95,7 +95,7 @@ if _HA_AVAILABLE:
     )
     from .display_log import DisplayLogManager
     from .coordinator import FrameArtCoordinator
-    from .config_entry import get_tv_config, get_global_tagsets, list_tv_configs, remove_tv_config, update_tv_config, update_global_tagsets, get_effective_tags
+    from .config_entry import get_tv_config, get_global_tagsets, list_tv_configs, remove_tv_config, update_tv_config, update_global_tagsets, get_effective_tags, get_active_tagset_name
     from . import frame_tv
     from .frame_tv import TOKEN_DIR as DEFAULT_TOKEN_DIR, set_token_directory, tv_on, tv_off, set_art_mode, is_screen_on
     from .metadata import MetadataStore
@@ -970,6 +970,16 @@ if _HA_AVAILABLE:
         # Timer management for tagset override expiry
         tagset_override_timers: dict[str, Callable[[], None]] = {}
 
+        @callback
+        def _cancel_all_tagset_override_timers() -> None:
+            for unsubscribe_timer in list(tagset_override_timers.values()):
+                unsubscribe_timer()
+            tagset_override_timers.clear()
+
+        # A reload re-arms each override from its stored expiry; without this the old
+        # timer stayed armed beside the new one and the expiry ran twice.
+        entry.async_on_unload(_cancel_all_tagset_override_timers)
+
         def cancel_tagset_override_timer(tv_id: str) -> None:
             """Cancel the tagset override expiry timer for a TV."""
             if tv_id in tagset_override_timers:
@@ -1266,9 +1276,19 @@ if _HA_AVAILABLE:
             )
             async_dispatcher_send(hass, f"{DOMAIN}_tagset_updated_{target_entry.entry_id}_{tv_id}")
             
-            # Trigger immediate shuffle to apply the override tagset
-            # Skip recency - user deliberately chose this tagset, don't constrain the pool
-            await async_shuffle_tv(hass, target_entry, tv_id, reason="override", recent_images=None)
+            # Trigger immediate shuffle to apply the override tagset. No recency window: the
+            # everyday tagset's history must not hold back the override's pictures. The pick
+            # starts the override's rounds instead (or continues them, when the same override
+            # is applied again while it runs).
+            display_log = hass.data.get(DOMAIN, {}).get(target_entry.entry_id, {}).get("display_log")
+            round_history = (
+                await display_log.async_get_tagset_run(tv_id, get_active_tagset_name(target_entry, tv_id))
+                if display_log
+                else None
+            )
+            await async_shuffle_tv(
+                hass, target_entry, tv_id, reason="override", recent_images=None, round_history=round_history
+            )
 
         async def async_handle_clear_tagset_override(call: ServiceCall) -> None:
             """Clear an active tagset override early."""
@@ -1964,11 +1984,20 @@ if _HA_AVAILABLE:
                 )
                 return
 
-            # Check if override is active - skip recency during overrides
-            # (user deliberately chose a different tagset, don't constrain their pool)
+            # During an override the recency windows are off (they would carry the everyday
+            # tagset's history into the override and hold back its pictures). The override
+            # goes through its pictures in rounds instead, counted from this screen's own
+            # shuffles since the override began, read from the display log so they hold
+            # across a restart (shuffle._choose, docs/TAGSETS_FEATURE.md).
             has_override = tv_config.get("override_tagset")
+            round_history: list[str] | None = None
             if has_override:
                 recent_images = None
+                display_log = data.get("display_log")
+                if display_log:
+                    round_history = await display_log.async_get_tagset_run(
+                        tv_id, get_active_tagset_name(entry, tv_id)
+                    )
             else:
                 # Get recent images for recency preference using dual time windows:
                 # - Same-TV: 120 hours (5 days) — "don't show what I've seen on this TV recently"
@@ -1993,6 +2022,7 @@ if _HA_AVAILABLE:
                 reason="auto",
                 skip_if_screen_off=True,
                 recent_images=recent_images,
+                round_history=round_history,
             )
 
         def start_auto_shuffle_timer(tv_id: str) -> None:

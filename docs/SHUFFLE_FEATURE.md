@@ -81,8 +81,31 @@ Shuffled to sunset.jpg (tag: Nature, all 3 in tag were recent)
 - **Cold start / empty log**: All images are considered "fresh"
 - **Logging disabled**: Recency preference is skipped, all images equally likely
 - **Small image pools**: Will naturally fall back to full pool more often
-- **Tagset overrides**: Recency is disabled entirely during an active tagset override. The user deliberately chose a different tagset, so the pool shouldn't be constrained by images from the previous tagset's recency window.
+- **Tagset overrides**: The recency windows are off during an active tagset override. The user deliberately chose a different tagset, so the pool shouldn't be constrained by images from the previous tagset's recency window (shown under the everyday tagset in the last few days, about half an override's pictures would be held back). Since 0.6.2 an override goes through its pictures in rounds instead: see Override Rounds below.
 - **Tagset changes (permanent)**: Only images in the new tagset that were previously shown are filtered
+
+### Override Rounds (0.6.2)
+
+From 2026-01-31 to 0.6.2 an override picked at random within the rolled tag, which was fine for an override of a few hours. Once the manager offered overrides of up to a week (2026-11-15), a Frame shuffling every 15 minutes through a set of about a hundred pictures showed one picture three times in four hours. Over a week such a Frame shows over 400 pictures from that set, so repeats are certain; the rounds space them evenly.
+
+**The rule, per screen and per pool** (a tag's pool under tag weighting, every eligible picture otherwise; the tag itself is still rolled by weight first):
+
+1. A picture shown in the current round is not picked again until every other picture in the pool has shown once; then the next round begins. Never the picture already on screen.
+2. Two softer preferences, each dropped when it would leave nothing to pick: not one of the pool's last `pool_size // 2` showings, so a round does not open with the previous round's closing pictures; and not a picture another screen shows now.
+
+**The history** is read from the display log at each pick (`DisplayLogManager.async_get_tagset_run`): this screen's shuffles, of any kind (the override's first, auto, the button), since the screen last showed a picture under another tagset. Pictures shown under the everyday tagset are therefore never counted, which is what the recency bypass protected. A session that names no tagset (a manual `display_image`, the screen-on session opened at startup) neither counts nor ends the run, and a screen-on session (the same picture resumed) does not count. The read includes the sessions not yet flushed and the picture on screen, so the round carries across a restart of Home Assistant; the log keeps 1 to 12 months, far longer than any override. Applying the same override again while it runs continues its rounds.
+
+**Each screen keeps its own rounds.** One shared round would make each screen's own sequence uneven: a tablet shuffling every 10 minutes would use up most of each round, and the Frame would see its share at random. The "not what another screen shows now" preference covers the two screens in one room.
+
+**Activity line:** `Shuffled to sunset.jpg (tag: beach, 3 of 24 this round)`, or `(3 of 102 this round)` without tag weighting. The pool-health trend still records nothing during an override (`recent_images` stays None there).
+
+**Measured** against the second house's week-long override of 2026-11-14 (102 pictures in four tags weighted 7, 4, 4 and 0.6, a Frame every 15 minutes and a wall tablet every 10, both screens on 15.5 hours a day; a simulated week through this code, eight seeds): repeats within 4 hours on the Frame went from about 64 a week to about 3; each picture comes back after a median 21 hours in the 24-picture tag, 44 in the 31-picture tag and 58 in the 45-picture tag, at the shortest 5, 9 and 23 hours (at random: 30 minutes in each); both screens showed the same picture 0.1% of the time instead of 1.5%.
+
+**Gaps:**
+- A tag with two pictures still repeats within hours: the tag itself comes up at random (the 0.6-weight tag above, about 3 such repeats a week).
+- Display logging off: no history, so an override picks as before 0.6.2.
+- A session lost at shutdown (Known Failure Modes in `CLAUDE.md`) is a picture the round does not know was shown; it can come once more in that round.
+- The pool is read at each pick: a picture added to the override's tags joins the current round, and one removed stops counting.
 
 ### Logging
 

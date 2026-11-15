@@ -67,6 +67,21 @@ radar, someone sitting still) had the screen turned off one delay after they sat
 occupancy sensor at all. Unloading the entry now cancels pending countdowns (after a reload the old one fired
 once). Design and gaps: `docs/MOTION_CONTROL.md`; tests `tests/test_motion_presence.py`.
 
+## Override rounds (0.6.2, 2026-11-15)
+
+During a tagset override the recency windows stay off: they carried the everyday tagset's history into the override
+and held back about half its pictures (the bypass of 2026-01-31, still right). Until 0.6.2 nothing replaced them, and
+once the manager offered week-long overrides the second house's Frame showed one picture three times in four hours.
+Now each screen goes through each pool of the override (a tag's, under tag weighting) in rounds: nothing repeats until
+the whole pool has shown, a round does not open with the last round's closing pictures, and a screen avoids the picture
+another screen shows (`shuffle._choose`). The history is the display log's, read at each pick
+(`DisplayLogManager.async_get_tagset_run`: this screen's shuffles since it last showed another tagset, unflushed sessions
+and the one on screen included), so the rounds hold across a restart. The pool-health trend stays out of overrides
+(`recent_images` is still None there); outside an override nothing changed (a test replays 0.6.1's random draws).
+Design, the week's numbers and gaps: `docs/SHUFFLE_FEATURE.md` "Override Rounds"; tests `tests/test_override_rounds.py`.
+The same release cancels the override expiry timers when the entry unloads (a reload left the old timer armed beside
+the new one, so the expiry ran twice).
+
 ## Commands
 
 ### Testing
@@ -77,6 +92,9 @@ uv venv --python 3.14 .venv && VIRTUAL_ENV=.venv uv pip install -r requirements_
 .venv/bin/python -m pytest tests/test_tablet_targets.py  # the integration inside HA
 ```
 `pytest.ini` sets `asyncio_mode = auto` so the pure tests run beside HA's test plugin.
+The harness's `hass.config.config_dir` is one folder shared by every test (inside the venv), so the display log's
+`events.json` carries over from test to test: a test that reads the log sets `hass.config.config_dir = str(tmp_path)`
+first (`tests/test_override_rounds.py`). `pytest.ini` already passes `-q`: read the exit code, or add `-rfE`.
 
 ### Development Deployment
 ```bash

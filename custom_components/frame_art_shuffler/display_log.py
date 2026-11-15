@@ -834,6 +834,55 @@ class DisplayLogManager:
 
         return recent
 
+    async def async_get_tagset_run(self, tv_id: str, tagset_name: str) -> list[str] | None:
+        """Pictures shuffled onto a screen in its current run of one tagset, oldest first.
+
+        Used for a tagset override's rounds. The run is every session since the screen
+        last showed a picture under another tagset; a session that names no tagset (a
+        manual display, the screen-on session opened at startup) neither ends the run
+        nor counts in it, and a screen-on session (the same picture resumed) does not
+        count. Reads the stored log, the sessions not yet flushed to it and the picture
+        on screen now, so the run carries across a restart of Home Assistant.
+
+        Returns None when display logging is off (the override then picks as before).
+        """
+        if not self._ready or not self._enabled:
+            return None
+
+        # Under the flush lock the stored log and the queue never hold the same session.
+        async with self._flush_lock:
+            stored = await self._hass.async_add_executor_job(self._read_events_file)
+            pending = [session.to_dict() for session in self._queue]
+
+        sessions = [event for event in stored + pending if event.get("tv_id") == tv_id]
+        active = self._active_sessions.get(tv_id)
+        if active is not None:
+            sessions.append(
+                {
+                    "filename": active.filename,
+                    "source": active.source,
+                    "tagset_name": active.tagset_name,
+                    "started_at": active.started_at.isoformat(),
+                }
+            )
+
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+        sessions.sort(
+            key=lambda event: _parse_timestamp(event.get("started_at") or event.get("completed_at")) or oldest
+        )
+
+        run: list[str] = []
+        for event in reversed(sessions):
+            name = event.get("tagset_name")
+            if name is None:
+                continue
+            if name != tagset_name:
+                break
+            if event.get("source") == "shuffle" and event.get("filename"):
+                run.append(event["filename"])
+        run.reverse()
+        return run
+
     def get_pool_health(
         self,
         tv_id: str,
